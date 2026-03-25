@@ -32,7 +32,7 @@ class TestPresetRegistration:
 
     def test_cifar_preset_uses_trivial_augment(self):
         presets = get_dataset_presets("cifar10")
-        assert presets["aug_kwargs"]["augment_type"] == "trivial_augment"
+        assert presets["aug_kwargs"]["augment_type"] == "trivial_augment_wide"
 
     def test_cifar100_normalization_differs_from_cifar(self):
         cifar = get_dataset_presets("cifar10")

@@ -101,6 +101,14 @@ def get_augment_strategy(name: str) -> AugmentStrategyFn:
     )
 
 
+def list_crop_strategies() -> tuple[str, ...]:
+    return tuple(sorted(_CROP_STRATEGIES))
+
+
+def list_augment_strategies() -> tuple[str, ...]:
+    return tuple(sorted(_AUGMENT_STRATEGIES))
+
+
 def get_crop_strategy_metadata(name: str) -> AugmentationMetadata:
     if name not in _CROP_STRATEGY_METADATA:
         raise ValueError(

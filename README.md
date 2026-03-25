@@ -1,6 +1,6 @@
 # justdata
 
-A TensorFlow-native data pipeline library with a modality-neutral core and first-class computer vision recipes. `justdata.core` owns loading, adapter, preset, and pipeline execution machinery; `justdata.vision` owns image schemas, transforms, augmentations, corruptions, tasks, and vision presets. `justdata.acoustic` owns audio config schemas, registries, presets, and placeholder pipeline registration for future DSP implementations.
+A TensorFlow-native data pipeline library with a modality-neutral core and first-class computer vision and acoustic recipes. `justdata.core` owns loading, adapter, preset, metadata, padding, and seeded execution machinery; `justdata.vision` owns image schemas, transforms, augmentations, corruptions, tasks, and vision presets. `justdata.acoustic` owns audio schemas, decoding, resampling, segmentation, frontends, augmentations, corruptions, DCASE helpers, stats, metadata/JAX helpers, and acoustic presets.
 
 ______________________________________________________________________
 
@@ -16,8 +16,10 @@ ______________________________________________________________________
 1. [Self-Supervised Learning Pipeline (DINOv2)](#self-supervised-learning-pipeline-dinov2)
 1. [Registry System](#registry-system)
 1. [Presets and Smart Merging](#presets-and-smart-merging)
+1. [Acoustic Pipelines](#acoustic-pipelines)
 1. [Dataset Adapters](#dataset-adapters)
 1. [Mini-C Corruption Benchmark](#mini-c-corruption-benchmark)
+1. [Audio Corruption Benchmark](#audio-corruption-benchmark)
 1. [Usage](#usage)
 1. [Development](#development)
 
@@ -56,6 +58,8 @@ The strict ordering reflects the execution domain requirements articulated throu
 | `justdata.core.fetch_ds(dataset_names, splits_info, data_dir)`        | Raw dataset loading through registered source loaders. Returns a `tf.data.Dataset` in canonical schema.        |
 | `justdata.core.load_ds(...)`                                         | Full pipeline for training or evaluation. Handles caching, augmentation, shuffling, batching, and prefetching. |
 | `justdata.vision.minic.create_minic_datasets(...)`                   | Constructs Mini-C corruption benchmark datasets from a preprocessed, cached base dataset.                      |
+| `justdata.acoustic.corruptions.create_audio_corruption_datasets(...)` | Constructs acoustic corruption benchmark datasets from a preprocessed, cached base dataset.                    |
+| `justdata.acoustic.dcase2025.make_source_dataset(...)`               | Builds DCASE Task 1 source-domain datasets with split-safety checks.                                           |
 
 Import `justdata.vision` before resolving built-in vision datasets or pipelines. Hugging Face vision datasets are referenced with the `hf:` prefix (e.g., `hf:cifar10`) and are registered by the vision package.
 
@@ -412,7 +416,7 @@ All extensible components in `justdata` use a decorator-based registry pattern w
 
 **Built-in augment strategies:** `rand_augment`, `trivial_augment`, `trivial_augment_wide`, `color_jitter`, `none`.
 
-The acoustic package registers placeholder audio decoders, resamplers, channel strategies, segment strategies, frontends, augmentations, normalizations, eval views, postprocessors, and corruptions. These establish stable names and extension points without implementing real DSP algorithms yet.
+The acoustic package registers audio decoders, resamplers, channel strategies, segment strategies, frontends, augmentations, normalizations, eval views, postprocessors, and corruptions. Use `list_audio_*` helpers to inspect registered acoustic components.
 
 ______________________________________________________________________
 
@@ -438,6 +442,8 @@ ______________________________________________________________________
 Resolved presets are serializable and hashable across modalities. Use `get_resolved_preset(name)` from `justdata.vision.presets`, `justdata.acoustic.presets`, or `justdata.core.presets` to obtain an object with `.to_json()` and `.hash()`. Hashes use canonical JSON with sorted keys and a 16-character SHA-256 prefix.
 
 Acoustic presets are typed with `AudioPreset` and nested frozen config dataclasses for preprocessing, segmentation, frontends, labels, normalization, train augment settings, eval views, layout, and metadata policy. The `justdata.audio` namespace is a compatibility alias for `justdata.acoustic`.
+
+See [docs/presets.md](docs/presets.md) for acoustic preset contracts, including EfficientAT/DyMN, PaSST, and CED.
 
 ### Automatic preset resolution
 
@@ -495,6 +501,41 @@ val_ds, N = load_ds(
 
 ______________________________________________________________________
 
+## Acoustic Pipelines
+
+Import `justdata.acoustic` before resolving built-in acoustic datasets or pipelines. Acoustic samples use the canonical keys `waveform`, `sample_rate`, optional `label`, `features`, `duration`, and `metadata`.
+
+```python
+import justdata.acoustic
+from justdata.core.loader import load_ds
+from justdata.core.registry import get_pipeline
+
+pipeline = get_pipeline(
+    dataset="dcase2025_task1",
+    preset="dcase2025_task1_efficientat_32k_1s",
+)
+
+ds, n = load_ds(
+    dataset_names_arg=["dcase2025:task1"],
+    splits_arg={"dcase2025:task1": ["dev_train_25"]},
+    dataset_type="train",
+    batch_size=64,
+    seed=0,
+    pipeline=pipeline,
+    num_classes=10,
+    metadata_mode="numeric_only",
+    as_numpy=True,
+)
+```
+
+Acoustic documentation:
+
+- [docs/acoustic.md](docs/acoustic.md): canonical schema, four stages, metadata modes, golden tests, corruption benchmark, and parity matrix.
+- [docs/dcase2025.md](docs/dcase2025.md): DCASE Task 1 source/target helpers and split safety.
+- [docs/golden_tests.md](docs/golden_tests.md): optional golden compatibility test workflow.
+
+______________________________________________________________________
+
 ## Dataset Adapters
 
 Adapters map raw dataset schemas to the canonical schema expected by all pipeline stages (`image`, `label`, and optionally `mask`, `depth`). The identity adapter is applied by default when no specific adapter is registered for a dataset.
@@ -541,6 +582,36 @@ datasets = create_minic_datasets(
     seed=0,
     pipeline=pipeline,
     num_classes=1000,
+)
+```
+
+______________________________________________________________________
+
+## Audio Corruption Benchmark
+
+`create_audio_corruption_datasets` mirrors Mini-C for acoustic evaluation. It applies deterministic severity 1-5 corruptions in the waveform or spectrogram domain, attaches corruption metadata, runs the normal postprocessing stage, and preserves `padding_mask`.
+
+```python
+import justdata.acoustic
+from justdata.acoustic.corruptions.datasets import create_audio_corruption_datasets
+from justdata.core.registry import get_pipeline
+
+pipeline = get_pipeline(
+    dataset="dcase2025_task1",
+    preset="dcase2025_task1_efficientat_32k_1s",
+)
+
+datasets, n = create_audio_corruption_datasets(
+    corruption_types=["additive_white_noise", "clipping"],
+    severity=3,
+    base_dataset="dcase2025:task1",
+    preset="dcase2025_task1_efficientat_32k_1s",
+    split="dev_test",
+    pipeline=pipeline,
+    batch_size=64,
+    seed=0,
+    num_classes=10,
+    metadata_mode="numeric_only",
 )
 ```
 

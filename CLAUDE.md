@@ -23,7 +23,7 @@ The project targets Python 3.12 (see `.python-version`). `LD_LIBRARY_PATH` is co
 
 - `justdata.core`: modality-neutral loading, adapters, source loaders, presets, dataset metadata, pipeline resolution, batching, padding, caching, and seeded execution.
 - `justdata.vision`: computer vision schemas, transforms, stages, augmentations, corruptions, encodings, task pipelines, presets, Mini-C helpers, and Hugging Face vision source loading.
-- `justdata.acoustic`: registration skeleton for future acoustic support. Do not add real audio decoding/features unless explicitly requested.
+- `justdata.acoustic`: audio schemas, decoding, resampling, channel handling, segmentation, frontends, augmentations, corruptions, DCASE helpers, stats, presets, metadata/JAX helpers, and task pipelines.
 
 Top-level `justdata` intentionally does not re-export old flat-module APIs. Use explicit namespace imports.
 
@@ -91,13 +91,21 @@ Vision registries:
 | Augment strategies | `@register_augment_strategy(name)` | `get_augment_strategy(name)` |
 | Corruptions | `@register_corruption(name)` | `apply_minic_corruption(...)` |
 
+Acoustic registries:
+
+| Registry | Decorator/API | Lookup |
+|---|---|---|
+| Decoders/resamplers/channels/segments/frontends | `@register_audio_*(name)` | `get_audio_*`, `list_audio_*`, `has_audio_*` |
+| Waveform/spectrogram/batch augmentations | `@register_audio_*_augment(name)` | `get_audio_*_augment(...)` |
+| Corruptions | `@register_audio_corruption(name)` | `apply_audio_corruption(...)` |
+
 Registries use locks and should raise descriptive errors on duplicate registration.
 
 ## Presets And Dependencies
 
-Presets are modality-scoped in `justdata.core.presets`. Vision convenience wrappers live in `justdata.vision.presets` and register under `modality="vision"`.
+Presets are modality-scoped in `justdata.core.presets`. Vision convenience wrappers live in `justdata.vision.presets` and register under `modality="vision"`. Acoustic wrappers live in `justdata.acoustic.presets` and register typed `AudioPreset` contracts under `modality="acoustic"`.
 
-The base dependency set should stay as modality-neutral as practical. Vision-only dependencies, such as `datasets[vision]`, belong in the `vision` optional extra and dev dependencies.
+The base dependency set should stay as modality-neutral as practical. Vision-only dependencies, such as `datasets[vision]`, belong in the `vision` optional extra and dev dependencies. Audio source dependencies, such as `datasets[audio]`, `soundfile`, `soxr`, and `librosa`, belong in the `acoustic` optional extra and dev dependencies. Golden compatibility dependencies belong in the `golden` optional extra.
 
 ## Vision Package
 
@@ -115,7 +123,24 @@ Hugging Face vision datasets are referenced with the `hf:` prefix and must expos
 
 ## Acoustic Package
 
-`justdata.acoustic` is a skeleton only. It currently registers `acoustic/identity` to prove the core can resolve non-vision pipelines independently. Future acoustic work should add dataset adapters, decoding, resampling, channel handling, clip/window selection, waveform/spectrogram augmentations, feature normalization, batching, metadata propagation, deterministic evaluation views, and DCASE-style split/device handling under `justdata.acoustic`.
+Current acoustic behavior should remain functionally equivalent unless a task explicitly asks to change behavior.
+
+Important locations:
+
+- `justdata.acoustic.pipelines`: registers `acoustic/default`, `acoustic/classification`, and `acoustic/identity`.
+- `justdata.acoustic.presets`: owns hashable acoustic preset registration and model-family contracts.
+- `justdata.acoustic.frontends`: owns waveform, STFT, mel, log-mel, Kaldi fbank, MFCC, and PCEN frontend implementations.
+- `justdata.acoustic.dcase2025`: owns DCASE Task 1 parsing, split safety, source/target builders, and metrics helpers.
+- `justdata.acoustic.corruptions`: owns audio corruption registration and corruption dataset helpers.
+- `justdata.acoustic.metadata` and `justdata.acoustic.jax`: own numeric metadata and NumPy/JAX-friendly output helpers.
+
+Preserve the canonical acoustic schema (`waveform`, `sample_rate`, optional `label`, `features`, `duration`, and `metadata`). Keep `justdata.core` schema-neutral.
+
+## Cross-Modal Parity
+
+Vision and acoustic must keep parity for hashable presets, metadata propagation, deterministic eval views, stateless stochastic transforms, corruption datasets, numeric metadata for JAX, golden preprocessing tests, `padding_mask`, and `as_numpy`.
+
+When changing shared loader behavior, run `tests/test_cross_modal_parity.py`. When changing a modality-specific implementation, update the corresponding parity docs if the contract changes.
 
 ## Tests
 
@@ -127,9 +152,12 @@ uv run pytest
 
 Targeted tests:
 
-- `tests/test_modalities.py`: core/vision import boundary and acoustic skeleton.
+- `tests/test_modalities.py`: core/vision import boundary and acoustic registration.
+- `tests/test_cross_modal_parity.py`: final parity checks across vision and acoustic.
 - `tests/test_registry.py`: modality-aware dataset and pipeline resolution.
 - `tests/test_loader.py`: core loader plus vision Mini-C integration.
 - `tests/test_pipelines.py`: vision recipes and augmentation behavior.
+- `tests/acoustic`: acoustic tests, automatically marked `acoustic`.
+- `tests/acoustic/test_golden_*`: optional golden compatibility tests, marked `golden`.
 
 When changing dependencies, run `uv lock` and then `uv run pytest`.

@@ -1218,7 +1218,7 @@ requires-dist = [
     { name = "tensorflow", specifier = ">=2.18.1" },
     { name = "tensorflow-datasets", specifier = ">=4.9.9" },
 ]
-provides-extras = ["vision", "acoustic", "dev"]
+provides-extras = ["vision", "acoustic", "golden", "dev"]
 
 [package.metadata.requires-dev]
 dev = [

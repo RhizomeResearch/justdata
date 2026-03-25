@@ -24,6 +24,7 @@ acoustic = [
     "soxr>=0.5",
     "librosa>=0.11",
 ]
+golden = []
 dev = [
     "datasets[audio]>=4.5.0",
     "datasets[vision]>=4.5.0",
@@ -50,6 +51,9 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
+addopts = ["-m", "not golden"]
 markers = [
-    "golden: optional compatibility tests against external reference frontends/checkpoints",
+    "acoustic: acoustic pipeline tests",
+    "golden: optional tests requiring external reference packages/checkpoints",
+    "slow: long-running tests",
 ]

@@ -25,3 +25,9 @@ def _write_wav(path: Path, data, sample_rate: int = 16000) -> Path:
 @pytest.fixture
 def write_wav_file():
     return _write_wav
+
+
+def pytest_collection_modifyitems(items):
+    acoustic = pytest.mark.acoustic
+    for item in items:
+        item.add_marker(acoustic)

@@ -21,7 +21,6 @@ def mixup_cutmix(
         switch_prob = 1.0
 
     batch_size = tf.shape(images)[0]
-    labels = tf.reshape(labels, [-1])
     seeds = tf.random.split(seed, 5)
 
     augment_cond = tf.less(
@@ -42,11 +41,27 @@ def mixup_cutmix(
         return sample_a / (sample_a + sample_b + 1e-8)
 
     def _smooth_labels(lbls):
-        off_value = label_smoothing / float(num_classes)
-        on_value = 1.0 - label_smoothing + off_value
-        return tf.one_hot(
-            tf.cast(lbls, tf.int32), num_classes, on_value=on_value, off_value=off_value
+        is_one_hot = tf.logical_and(
+            tf.equal(tf.rank(lbls), 2),
+            tf.equal(tf.shape(lbls)[-1], num_classes)
         )
+
+        def _apply_one_hot():
+            lbls_f = tf.cast(lbls, tf.float32)
+            if label_smoothing > 0:
+                off_value = label_smoothing / float(num_classes)
+                return lbls_f * (1.0 - label_smoothing) + off_value
+            return lbls_f
+
+        def _apply_int():
+            flat_lbls = tf.reshape(lbls, [-1])
+            off_value = label_smoothing / float(num_classes)
+            on_value = 1.0 - label_smoothing + off_value
+            return tf.one_hot(
+                tf.cast(flat_lbls, tf.int32), num_classes, on_value=on_value, off_value=off_value
+            )
+
+        return tf.cond(is_one_hot, _apply_one_hot, _apply_int)
 
     def _update_labels(imgs, lbls, lam):
         labels_1 = _smooth_labels(lbls)

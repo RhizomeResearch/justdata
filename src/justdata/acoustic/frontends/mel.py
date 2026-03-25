@@ -67,7 +67,7 @@ def mel_weight_matrix(config: FrontendConfig | dict) -> tf.Tensor:
             dtype=tf.float32,
         )
 
-    if mel.filterbank_impl == "librosa":
+    if mel.filterbank_impl in {"librosa", "torchaudio_or_kaldi_compatible"}:
         try:
             import librosa
         except ImportError as exc:

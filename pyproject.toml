@@ -48,3 +48,8 @@ dev = [
     "soundfile>=0.12",
     "soxr>=0.5",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "golden: optional compatibility tests against external reference frontends/checkpoints",
+]

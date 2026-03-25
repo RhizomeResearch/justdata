@@ -204,7 +204,13 @@ class MelConfig(_SerializableConfig):
     f_max: float | None = None
     mel_scale: Literal["htk", "slaney"] = "htk"
     mel_norm: Literal["none", "slaney"] = "none"
-    filterbank_impl: Literal["tf", "librosa", "torchaudio", "kaldi_compatible"] = "tf"
+    filterbank_impl: Literal[
+        "tf",
+        "librosa",
+        "torchaudio",
+        "kaldi_compatible",
+        "torchaudio_or_kaldi_compatible",
+    ] = "tf"
 
     def validate(self) -> MelConfig:
         _ensure_positive("n_mels", self.n_mels)
@@ -215,7 +221,15 @@ class MelConfig(_SerializableConfig):
         _ensure_literal("mel_scale", self.mel_scale, {"htk", "slaney"})
         _ensure_literal("mel_norm", self.mel_norm, {"none", "slaney"})
         _ensure_literal(
-            "filterbank_impl", self.filterbank_impl, {"tf", "librosa", "torchaudio", "kaldi_compatible"}
+            "filterbank_impl",
+            self.filterbank_impl,
+            {
+                "tf",
+                "librosa",
+                "torchaudio",
+                "kaldi_compatible",
+                "torchaudio_or_kaldi_compatible",
+            },
         )
         return self
 
@@ -409,6 +423,7 @@ class AudioPreset(_SerializableConfig):
     dtype: Literal["float32", "float16", "bfloat16"] = "float32"
     train_augment: dict[str, Any] = field(default_factory=dict)
     eval_views: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     metadata_mode: Literal["full", "numeric_only", "none"] = "numeric_only"
 
     def __post_init__(self) -> None:
@@ -427,6 +442,7 @@ class AudioPreset(_SerializableConfig):
         object.__setattr__(self, "static_shape", _tuple_value(self.static_shape))
         object.__setattr__(self, "train_augment", dict(self.train_augment))
         object.__setattr__(self, "eval_views", dict(self.eval_views))
+        object.__setattr__(self, "metadata", dict(self.metadata))
         self.validate()
 
     @classmethod

@@ -415,12 +415,19 @@ def assert_stats_allowed(split: str, *, allow_override: bool = False) -> None:
 
 
 def _register_presets() -> None:
-    base = {
-        "name": "dcase2025_task1_efficientat_32k_1s",
+    from justdata.acoustic.compat.efficientat import (
+        dcase2025_task1_efficientat_32k_1s,
+    )
+
+    base = dcase2025_task1_efficientat_32k_1s().to_dict()
+    register_preset("dcase2025_task1_efficientat_32k_1s", base)
+
+    native = {
+        "name": "dcase2025_task1_native_44k_1s",
         "input_duration": 1.0,
-        "target_sample_rate": 32000,
+        "target_sample_rate": 44100,
         "preprocess": {
-            "target_sample_rate": 32000,
+            "target_sample_rate": 44100,
             "resampler": "tensorflow",
             "channel_strategy": "mono_mean",
         },
@@ -434,7 +441,7 @@ def _register_presets() -> None:
         "frontend": {
             "name": "logmel",
             "stft": {
-                "sample_rate": 32000,
+                "sample_rate": 44100,
                 "n_fft": 1024,
                 "win_length": 1024,
                 "hop_length": 320,
@@ -453,14 +460,6 @@ def _register_presets() -> None:
         "dtype": "float32",
         "metadata_mode": "numeric_only",
     }
-    register_preset("dcase2025_task1_efficientat_32k_1s", base)
-
-    native = dict(base)
-    native["name"] = "dcase2025_task1_native_44k_1s"
-    native["target_sample_rate"] = 44100
-    native["preprocess"] = dict(base["preprocess"], target_sample_rate=44100)
-    native["frontend"] = dict(base["frontend"])
-    native["frontend"]["stft"] = dict(base["frontend"]["stft"], sample_rate=44100)
     register_preset("dcase2025_task1_native_44k_1s", native)
 
 

@@ -35,7 +35,8 @@ def mixup_cutmix(
         return tf.gather(tensor, shuffled_indices)
 
     def _sample_from_beta(alpha, shape, s):
-        s1, s2 = tf.random.split(s, 2)[:2]
+        splits = tf.unstack(tf.random.split(s, 2))
+        s1, s2 = splits[0], splits[1]
         sample_a = tf.random.stateless_gamma(shape, alpha=alpha, seed=s1)
         sample_b = tf.random.stateless_gamma(shape, alpha=alpha, seed=s2)
         return sample_a / (sample_a + sample_b + 1e-8)

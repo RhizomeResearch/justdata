@@ -26,7 +26,7 @@ in
 
   # enterShell = "";
 
-  # enterTest = ''
-  #   uv run pytest
-  # '';
+  enterTest = ''
+    uv run pytest
+  '';
 }

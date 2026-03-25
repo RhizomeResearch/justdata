@@ -15,6 +15,7 @@ def default_pipeline(
     static_shape: tuple[int | None, ...] = None,
     input_duration: float = None,
     target_sample_rate: int = None,
+    label_transform: dict = None,
     **kwargs,
 ) -> PipelineFuncs:
     preproc_kwargs = preproc_kwargs or {}
@@ -40,6 +41,9 @@ def default_pipeline(
         postproc_kwargs.setdefault("input_duration", input_duration)
         postproc_kwargs.setdefault("target_sample_rate", target_sample_rate)
         postproc_kwargs.setdefault("preprocess", preprocess)
+
+    if label_transform is not None:
+        postproc_kwargs.setdefault("label_transform", label_transform)
 
     from justdata.acoustic.tasks import (
         make_augmentations,

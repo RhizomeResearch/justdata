@@ -1,12 +1,16 @@
 from justdata.acoustic import (
     adapters,
+    batching,
     channel,
     configs,
     datasets,
     decoding,
     eval_views,
     frontends,
+    jax,
+    labels,
     layouts,
+    metadata,
     normalization,
     pipelines,
     postprocessing,
@@ -29,6 +33,7 @@ from justdata.acoustic.adapters import (
     standardize_waveform_layout,
     to_float32_waveform,
 )
+from justdata.acoustic.batching import pad_nested
 from justdata.acoustic.configs import (
     AudioPreset,
     AudioPreprocessConfig,
@@ -75,7 +80,14 @@ from justdata.acoustic.frontends import (
     stft_magnitude,
     stft_power_spectrogram,
 )
+from justdata.acoustic.jax import as_numpy_iterator, to_numpy
+from justdata.acoustic.labels import transform_label
 from justdata.acoustic.layouts import convert_audio_layout
+from justdata.acoustic.metadata import (
+    MetadataEncoder,
+    MetadataSidecar,
+    stable_int64_hash,
+)
 from justdata.acoustic.normalization import apply_feature_normalization
 from justdata.acoustic.postprocessing import (
     default_output_key,
@@ -160,6 +172,7 @@ __all__ = [
     "AudioPreset",
     "AudioPreprocessConfig",
     "apply_channel_strategy",
+    "as_numpy_iterator",
     "FeatureNormConfig",
     "FrontendConfig",
     "LabelTransformConfig",
@@ -170,6 +183,7 @@ __all__ = [
     "adapt_acoustic_sample",
     "adapters",
     "apply_feature_normalization",
+    "batching",
     "channel",
     "compress_log",
     "compute_num_frames",
@@ -214,7 +228,9 @@ __all__ = [
     "has_audio_spectrogram_augment",
     "has_audio_waveform_augment",
     "infer_duration",
+    "jax",
     "kaldi_fbank",
+    "labels",
     "layouts",
     "list_audio_batch_augments",
     "list_audio_channel_strategies",
@@ -236,6 +252,9 @@ __all__ = [
     "make_preprocessing",
     "make_preprocessing_stage",
     "make_segment_stage",
+    "metadata",
+    "MetadataEncoder",
+    "MetadataSidecar",
     "mono_left",
     "mono_mean",
     "mono_right",
@@ -246,6 +265,7 @@ __all__ = [
     "keep",
     "normalization",
     "normalize_waveform",
+    "pad_nested",
     "pad_waveform",
     "pcen_mel",
     "pipelines",
@@ -278,8 +298,11 @@ __all__ = [
     "stages",
     "stft_magnitude",
     "stft_power_spectrogram",
+    "stable_int64_hash",
     "standardize_waveform_layout",
     "remove_dc_offset",
     "tasks",
+    "to_numpy",
     "to_float32_waveform",
+    "transform_label",
 ]

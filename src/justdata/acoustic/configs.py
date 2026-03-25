@@ -366,6 +366,10 @@ class LabelTransformConfig(_SerializableConfig):
     class_names: tuple[str, ...] | None = None
     smoothing: float = 0.0
     keep_hard_label_in_metadata: bool = True
+    num_frames: int | None = None
+    frame_hop_seconds: float | None = None
+    hop_length: int | None = None
+    sample_rate: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "class_names", _tuple_value(self.class_names))
@@ -379,6 +383,14 @@ class LabelTransformConfig(_SerializableConfig):
             raise ValueError("class_names must be a tuple or None")
         if not 0.0 <= self.smoothing < 1.0:
             raise ValueError("smoothing must be in [0, 1)")
+        if self.num_frames is not None:
+            _ensure_positive("num_frames", self.num_frames)
+        if self.frame_hop_seconds is not None:
+            _ensure_positive("frame_hop_seconds", self.frame_hop_seconds)
+        if self.hop_length is not None:
+            _ensure_positive("hop_length", self.hop_length)
+        if self.sample_rate is not None:
+            _ensure_positive("sample_rate", self.sample_rate)
         return self
 
 

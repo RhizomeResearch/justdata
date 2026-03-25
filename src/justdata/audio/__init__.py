@@ -6,12 +6,16 @@ from justdata import acoustic as _acoustic
 
 for _name in (
     "adapters",
+    "batching",
     "configs",
     "datasets",
     "decoding",
     "pipelines",
     "frontends",
+    "jax",
+    "labels",
     "layouts",
+    "metadata",
     "normalization",
     "postprocessing",
     "presets",

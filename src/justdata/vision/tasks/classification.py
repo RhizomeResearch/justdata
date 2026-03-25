@@ -15,6 +15,31 @@ from justdata.vision.stages import apply_eval_views, normalize_image_format, res
 from justdata.vision.transforms import nhwc_to_nchw, normalize
 
 
+def _is_dense_label_vector(label: tf.Tensor, num_classes: int) -> bool:
+    if label.shape.rank != 1:
+        return False
+    return label.shape[-1] == num_classes if label.shape[-1] is not None else False
+
+
+def _add_hard_label_metadata(
+    metadata: dict,
+    label: tf.Tensor,
+    class_names: tuple[str, ...] | list[str] | None,
+) -> dict:
+    if label.shape.rank not in (0, None):
+        return metadata
+
+    hard_label = tf.cast(tf.reshape(label, []), tf.int64)
+    metadata = dict(metadata)
+    metadata["hard_label"] = hard_label
+    if class_names is not None:
+        metadata["class_name"] = tf.gather(
+            tf.constant(tuple(class_names), dtype=tf.string),
+            tf.cast(hard_label, tf.int32),
+        )
+    return metadata
+
+
 def make_preprocessing(image_key: str = "image"):
     def preprocessing(sample):
         return normalize_image_format(sample, image_key=image_key)
@@ -191,6 +216,8 @@ def make_postprocessing(
     one_hot_labels: bool = False,
     num_classes: int | None = None,
     label_smoothing: float = 0.0,
+    class_names: tuple[str, ...] | list[str] | None = None,
+    keep_hard_label_in_metadata: bool = True,
     image_keys: list[str] = None,
     label_keys: list[str] = None,
     val_resize_size: int | None | Literal["auto"] = "auto",
@@ -244,13 +271,24 @@ def make_postprocessing(
             if key not in sample:
                 continue
             label = sample[key]
+            original_label = label
+
+            if keep_hard_label_in_metadata and not is_training:
+                res["metadata"] = _add_hard_label_metadata(
+                    res.get("metadata", {}),
+                    tf.convert_to_tensor(original_label),
+                    class_names,
+                )
 
             if one_hot_labels:
                 if num_classes is None:
                     raise ValueError(
                         "`num_classes` must be provided when `one_hot_labels=True`"
                     )
-                if label_smoothing > 0:
+                label = tf.convert_to_tensor(label)
+                if _is_dense_label_vector(label, num_classes):
+                    label = tf.cast(label, tf.float32)
+                elif label_smoothing > 0:
                     off_value = label_smoothing / float(num_classes)
                     on_value = 1.0 - label_smoothing + off_value
                     label = tf.one_hot(

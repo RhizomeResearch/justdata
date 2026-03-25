@@ -7,9 +7,15 @@ from justdata.acoustic.registry import (
     register_audio_spectrogram_augment,
     register_audio_waveform_augment,
 )
-from justdata.acoustic.configs import AudioPreprocessConfig, SegmentStrategyConfig
+from justdata.acoustic.configs import (
+    AudioPreprocessConfig,
+    LabelTransformConfig,
+    SegmentStrategyConfig,
+)
+from justdata.acoustic.labels import transform_label
 from justdata.acoustic.postprocessing import make_model_input_stage, preset_info
 from justdata.acoustic.preprocessing import make_preprocessing as _make_preprocessing
+from justdata.acoustic.schema import LABEL, METADATA
 from justdata.acoustic.stages import make_segment_stage
 
 
@@ -72,6 +78,7 @@ def make_postprocessing(
     input_duration: float | None = None,
     target_sample_rate: int | None = None,
     preprocess: dict | None = None,
+    label_transform: LabelTransformConfig | dict | None = None,
     **kwargs,
 ):
     original_segment_config = segment_config
@@ -115,13 +122,28 @@ def make_postprocessing(
             )
         )
 
-    if not stages:
+    label_config = (
+        LabelTransformConfig.from_dict(label_transform)
+        if label_transform is not None
+        else None
+    )
+
+    if not stages and label_config is None:
         return _identity_sample
 
     def postprocessing(sample, num_classes=None):
         result = sample
         for stage in stages:
             result = stage(result)
+        if label_config is not None and LABEL in result:
+            label, metadata = transform_label(
+                result[LABEL],
+                label_config,
+                metadata=result.get(METADATA),
+            )
+            result = dict(result)
+            result[LABEL] = label
+            result[METADATA] = metadata
         return result
 
     return postprocessing

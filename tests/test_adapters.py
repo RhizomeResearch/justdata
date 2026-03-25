@@ -24,6 +24,11 @@ class TestAdapterRegistry:
         assert adapter is _default_adapter
 
     def test_register_and_retrieve(self):
+        from justdata.adapters import _ADAPTERS
+
+        # Clean up in case of re-runs
+        _ADAPTERS.pop("test_ds_adapter", None)
+
         @register_adapter("test_ds_adapter")
         def my_adapter(sample):
             return {"image": sample["photo"], "label": sample["class"]}

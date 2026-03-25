@@ -50,5 +50,10 @@ def test_vision_resolved_preset_serializes_and_hashes():
     data = json.loads(resolved.to_json())
 
     assert data["postproc_kwargs"]["image_size"] == 32
+    assert data["model_input"]["output_key"] == "image"
+    assert data["model_input"]["layout"] == "bchw"
+    assert data["model_input"]["dtype"] == "float32"
+    assert data["model_input"]["static_shape"] == [3, 32, 32]
+    assert data["model_input"]["normalization"]["kind"] == "mean_std"
     assert len(resolved.hash()) == 16
     assert resolved.hash() == get_vision_resolved_preset("cifar10").hash()

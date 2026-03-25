@@ -1,3 +1,4 @@
+import copy
 from typing import Any, Dict
 
 from justdata.core.presets import (
@@ -9,8 +10,45 @@ from justdata.core.presets import (
 )
 
 
+def _normalization_contract(postproc_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    if not postproc_kwargs.get("normalize_image", True):
+        return {"kind": "none"}
+
+    mean, std = postproc_kwargs.get(
+        "normalization_params",
+        ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+    )
+    return {
+        "kind": "mean_std",
+        "mean": tuple(mean),
+        "std": tuple(std),
+    }
+
+
+def _with_model_input_contract(config: Dict[str, Any]) -> Dict[str, Any]:
+    resolved = copy.deepcopy(config)
+    postproc_kwargs = resolved.get("postproc_kwargs", {})
+    image_size = postproc_kwargs.get("image_size")
+    permute_image = postproc_kwargs.get("permute_image", True)
+    layout = "bchw" if permute_image else "bhwc"
+    static_shape = None
+    if image_size is not None:
+        static_shape = (3, image_size, image_size) if permute_image else (image_size, image_size, 3)
+
+    contract = {
+        "output_key": "image",
+        "layout": layout,
+        "dtype": "float32",
+        "static_shape": static_shape,
+        "normalization": _normalization_contract(postproc_kwargs),
+    }
+    contract.update(resolved.get("model_input", {}))
+    resolved["model_input"] = contract
+    return resolved
+
+
 def register_preset(dataset: str, config: Dict[str, Any]):
-    _register_preset(dataset, config, modality="vision")
+    _register_preset(dataset, _with_model_input_contract(config), modality="vision")
 
 
 def get_dataset_presets(dataset: str) -> Dict[str, Any]:

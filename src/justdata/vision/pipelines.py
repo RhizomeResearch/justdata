@@ -7,6 +7,7 @@ def default_classification_pipeline(
     aug_kwargs: dict = None,
     laug_kwargs: dict = None,
     postproc_kwargs: dict = None,
+    **kwargs,
 ) -> PipelineFuncs:
     preproc_kwargs = preproc_kwargs or {}
     aug_kwargs = aug_kwargs or {}
@@ -42,6 +43,7 @@ def default_segmentation_pipeline(
     aug_kwargs: dict = None,
     laug_kwargs: dict = None,
     postproc_kwargs: dict = None,
+    **kwargs,
 ) -> PipelineFuncs:
     preproc_kwargs = preproc_kwargs or {}
     aug_kwargs = aug_kwargs or {}

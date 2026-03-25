@@ -41,6 +41,12 @@ def _tuple_value(value: Any) -> Any:
     return value
 
 
+def _tuple_or_scalar_value(value: Any) -> Any:
+    if isinstance(value, list):
+        return tuple(value)
+    return value
+
+
 class _SerializableConfig:
     def __post_init__(self) -> None:
         self.validate()
@@ -162,12 +168,20 @@ class STFTConfig(_SerializableConfig):
     win_length: int
     hop_length: int
     window: Literal["hann", "hamming", "povey", "rectangular"] = "hann"
+    window_periodic: bool = True
+    periodic: bool | None = None
     center: bool = True
     pad_mode: Literal["reflect", "constant"] = "reflect"
     power: float = 2.0
     normalized: bool = False
     onesided: bool = True
     eps: float = 1e-10
+
+    def __post_init__(self) -> None:
+        if self.periodic is not None:
+            object.__setattr__(self, "window_periodic", bool(self.periodic))
+            object.__setattr__(self, "periodic", None)
+        self.validate()
 
     def validate(self) -> STFTConfig:
         _ensure_positive("sample_rate", self.sample_rate)
@@ -213,6 +227,11 @@ class LogCompressionConfig(_SerializableConfig):
     ref: float | Literal["max"] = 1.0
     top_db: float | None = None
     log_offset: float = 0.0
+    alpha: float = 0.98
+    delta: float = 2.0
+    r: float = 0.5
+    smooth_coef: float = 0.025
+    eps: float = 1e-6
 
     def validate(self) -> LogCompressionConfig:
         _ensure_literal("kind", self.kind, {"log", "log10", "db", "pcen"})
@@ -223,6 +242,14 @@ class LogCompressionConfig(_SerializableConfig):
             _ensure_positive("top_db", self.top_db)
         if self.log_offset < 0:
             raise ValueError("log_offset must be non-negative")
+        _ensure_positive("delta", self.delta)
+        _ensure_positive("eps", self.eps)
+        if not 0.0 <= self.alpha <= 1.0:
+            raise ValueError("alpha must be in [0, 1]")
+        if not 0.0 < self.r <= 1.0:
+            raise ValueError("r must be in (0, 1]")
+        if not 0.0 < self.smooth_coef <= 1.0:
+            raise ValueError("smooth_coef must be in (0, 1]")
         return self
 
 
@@ -239,11 +266,16 @@ class FeatureNormConfig(_SerializableConfig):
     ] = "none"
     mean: tuple[float, ...] | str | None = None
     std: tuple[float, ...] | str | None = None
+    scale: tuple[float, ...] | float | None = None
+    bias: tuple[float, ...] | float | None = None
     axes: tuple[str, ...] = ()
+    eps: float = 1e-6
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "mean", _tuple_value(self.mean))
         object.__setattr__(self, "std", _tuple_value(self.std))
+        object.__setattr__(self, "scale", _tuple_or_scalar_value(self.scale))
+        object.__setattr__(self, "bias", _tuple_or_scalar_value(self.bias))
         object.__setattr__(self, "axes", _tuple_value(self.axes))
         self.validate()
 
@@ -264,8 +296,12 @@ class FeatureNormConfig(_SerializableConfig):
         for field_name, value in (("mean", self.mean), ("std", self.std)):
             if value is not None and not isinstance(value, (tuple, str)):
                 raise ValueError(f"{field_name} must be a tuple, string, or None")
+        for field_name, value in (("scale", self.scale), ("bias", self.bias)):
+            if value is not None and not isinstance(value, (tuple, int, float)):
+                raise ValueError(f"{field_name} must be a tuple, number, or None")
         if not isinstance(self.axes, tuple):
             raise ValueError("axes must be a tuple")
+        _ensure_positive("eps", self.eps)
         return self
 
 
@@ -284,6 +320,7 @@ class FrontendConfig(_SerializableConfig):
     mel: MelConfig | None = None
     log: LogCompressionConfig | None = None
     norm: FeatureNormConfig = FeatureNormConfig()
+    n_mfcc: int = 13
 
     def __post_init__(self) -> None:
         if isinstance(self.stft, Mapping):
@@ -318,6 +355,7 @@ class FrontendConfig(_SerializableConfig):
             raise ValueError("log must be a LogCompressionConfig or None")
         if not isinstance(self.norm, FeatureNormConfig):
             raise ValueError("norm must be a FeatureNormConfig")
+        _ensure_positive("n_mfcc", self.n_mfcc)
         return self
 
 
@@ -354,6 +392,8 @@ class AudioPreset(_SerializableConfig):
     frontend: FrontendConfig
     label_transform: LabelTransformConfig
     layout: Literal["bt", "btc", "btf", "bft", "bcft", "btfc"]
+    output_key: str | None = None
+    static_shape: tuple[int | None, ...] | None = None
     dtype: Literal["float32", "float16", "bfloat16"] = "float32"
     train_augment: dict[str, Any] = field(default_factory=dict)
     eval_views: dict[str, Any] = field(default_factory=dict)
@@ -372,6 +412,7 @@ class AudioPreset(_SerializableConfig):
                 "label_transform",
                 LabelTransformConfig.from_dict(self.label_transform),
             )
+        object.__setattr__(self, "static_shape", _tuple_value(self.static_shape))
         object.__setattr__(self, "train_augment", dict(self.train_augment))
         object.__setattr__(self, "eval_views", dict(self.eval_views))
         self.validate()
@@ -401,6 +442,10 @@ class AudioPreset(_SerializableConfig):
         if self.preprocess.target_sample_rate != self.target_sample_rate:
             raise ValueError("target_sample_rate must match preprocess.target_sample_rate")
         _ensure_literal("layout", self.layout, {"bt", "btc", "btf", "bft", "bcft", "btfc"})
+        if self.output_key is not None and not self.output_key:
+            raise ValueError("output_key must be non-empty when set")
+        if self.static_shape is not None and not isinstance(self.static_shape, tuple):
+            raise ValueError("static_shape must be a tuple or None")
         _ensure_literal("dtype", self.dtype, {"float32", "float16", "bfloat16"})
         _ensure_literal("metadata_mode", self.metadata_mode, {"full", "numeric_only", "none"})
         return self

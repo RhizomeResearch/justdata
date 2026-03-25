@@ -1,6 +1,6 @@
 # justdata
 
-A TensorFlow-native data pipeline library with a modality-neutral core and first-class computer vision recipes. `justdata.core` owns loading, adapter, preset, and pipeline execution machinery; `justdata.vision` owns image schemas, transforms, augmentations, corruptions, tasks, and vision presets. A `justdata.acoustic` namespace exists as a registration skeleton for future audio support.
+A TensorFlow-native data pipeline library with a modality-neutral core and first-class computer vision recipes. `justdata.core` owns loading, adapter, preset, and pipeline execution machinery; `justdata.vision` owns image schemas, transforms, augmentations, corruptions, tasks, and vision presets. `justdata.acoustic` owns audio config schemas, registries, presets, and placeholder pipeline registration for future DSP implementations.
 
 ______________________________________________________________________
 
@@ -29,7 +29,7 @@ ______________________________________________________________________
 pip install justdata
 ```
 
-**Requirements:** Python ≥ 3.11, TensorFlow ≥ 2.18.1, TensorFlow Datasets ≥ 4.9.9, Hugging Face `datasets[vision]` ≥ 4.5.0.
+**Requirements:** Python ≥ 3.11, TensorFlow ≥ 2.18.1, TensorFlow Datasets ≥ 4.9.9. Install optional modality extras with `justdata[vision]` for Hugging Face vision datasets or `justdata[acoustic]` for audio dataset/source dependencies.
 
 ______________________________________________________________________
 
@@ -403,12 +403,16 @@ All extensible components in `justdata` use a decorator-based registry pattern w
 | Source loaders        | `@register_source_loader(prefix)`   | `justdata.core.get_source_loader(dataset_name)` |
 | Pipelines             | `@register_pipeline("modality/task")` | `justdata.core.get_pipeline(...)` |
 | Dataset metadata      | `register_dataset(name, task_type, modality=...)` | `justdata.core.get_dataset_info(name)` |
+| Audio frontends       | `@register_audio_frontend(name)`    | `justdata.acoustic.get_audio_frontend(name)` |
+| Audio components      | `@register_audio_*` decorators      | `justdata.acoustic.get_audio_*`, `list_audio_*`, `has_audio_*` |
 
 `get_pipeline` is the high-level resolver: it infers the task type from the dataset name, merges preset defaults with user-supplied kwargs (via smart merge; see below), and invokes the appropriate pipeline factory.
 
 **Built-in crop strategies:** `random_resized`, `random_pad`.
 
 **Built-in augment strategies:** `rand_augment`, `trivial_augment`, `trivial_augment_wide`, `color_jitter`, `none`.
+
+The acoustic package registers placeholder audio decoders, resamplers, channel strategies, segment strategies, frontends, augmentations, normalizations, eval views, postprocessors, and corruptions. These establish stable names and extension points without implementing real DSP algorithms yet.
 
 ______________________________________________________________________
 
@@ -430,6 +434,10 @@ ______________________________________________________________________
 | `dinov2`          | Asymmetric multi-crop SSL pipeline                        |
 
 `merge_with_presets(dataset, user_kwargs)` implements a **smart merge**: user-supplied kwargs that are identical to the `_default` preset values are treated as "not explicitly overridden," allowing dataset-specific preset values to take precedence. Only kwargs that genuinely differ from the defaults are considered intentional user overrides.
+
+Resolved presets are serializable and hashable across modalities. Use `get_resolved_preset(name)` from `justdata.vision.presets`, `justdata.acoustic.presets`, or `justdata.core.presets` to obtain an object with `.to_json()` and `.hash()`. Hashes use canonical JSON with sorted keys and a 16-character SHA-256 prefix.
+
+Acoustic presets are typed with `AudioPreset` and nested frozen config dataclasses for preprocessing, segmentation, frontends, labels, normalization, train augment settings, eval views, layout, and metadata policy. The `justdata.audio` namespace is a compatibility alias for `justdata.acoustic`.
 
 ### Automatic preset resolution
 

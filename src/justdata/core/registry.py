@@ -120,6 +120,14 @@ def register_pipeline(name: str):
     return decorator
 
 
+def list_pipelines() -> tuple[str, ...]:
+    return tuple(sorted(_PIPELINES))
+
+
+def has_pipeline(name: str) -> bool:
+    return name in _PIPELINES
+
+
 def get_pipeline(
     dataset: str | None = None,
     preset: str | None = None,

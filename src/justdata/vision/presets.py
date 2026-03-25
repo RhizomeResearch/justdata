@@ -1,7 +1,9 @@
 from typing import Any, Dict
 
 from justdata.core.presets import (
+    ResolvedPreset,
     get_dataset_presets as _get_dataset_presets,
+    get_resolved_preset as _get_resolved_preset,
     merge_with_presets as _merge_with_presets,
     register_preset as _register_preset,
 )
@@ -13,6 +15,10 @@ def register_preset(dataset: str, config: Dict[str, Any]):
 
 def get_dataset_presets(dataset: str) -> Dict[str, Any]:
     return _get_dataset_presets(dataset, modality="vision")
+
+
+def get_resolved_preset(dataset: str) -> ResolvedPreset:
+    return _get_resolved_preset(dataset, modality="vision")
 
 
 # ImageNet normalization stats (shared across ImageNet presets)

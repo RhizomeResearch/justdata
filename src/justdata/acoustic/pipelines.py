@@ -1,19 +1,35 @@
 from justdata.core.registry import PipelineFuncs, register_pipeline
 
 
-def _identity_sample(sample, *args, **kwargs):
-    return sample
+def default_pipeline(
+    preproc_kwargs: dict = None,
+    aug_kwargs: dict = None,
+    laug_kwargs: dict = None,
+    postproc_kwargs: dict = None,
+) -> PipelineFuncs:
+    preproc_kwargs = preproc_kwargs or {}
+    aug_kwargs = aug_kwargs or {}
+    laug_kwargs = laug_kwargs or {}
+    postproc_kwargs = postproc_kwargs or {}
+
+    from justdata.acoustic.tasks import (
+        make_augmentations,
+        make_late_augmentations,
+        make_postprocessing,
+        make_preprocessing,
+    )
+
+    return (
+        make_preprocessing(**preproc_kwargs),
+        make_augmentations(**aug_kwargs),
+        make_late_augmentations(**laug_kwargs),
+        make_postprocessing(**postproc_kwargs),
+    )
 
 
-def _identity_batch(batch, num_classes=None, seed=None):
-    return batch
+register_pipeline("acoustic/default")(default_pipeline)
 
 
 @register_pipeline("acoustic/identity")
 def identity_pipeline(**kwargs) -> PipelineFuncs:
-    return (
-        _identity_sample,
-        _identity_sample,
-        _identity_batch,
-        _identity_sample,
-    )
+    return default_pipeline(**kwargs)

@@ -1,28 +1,93 @@
 import copy
+import dataclasses
+import hashlib
+import json
 import threading
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Dict
 
-_PRESETS: Dict[str, Dict[str, Dict[str, Any]]] = {}
+_PRESETS: Dict[str, Dict[str, Any]] = {}
 _PRESET_LOCK = threading.Lock()
 
 
-def register_preset(dataset: str, config: Dict[str, Any], *, modality: str = "core"):
+def _plain_value(value: Any) -> Any:
+    if dataclasses.is_dataclass(value):
+        value = dataclasses.asdict(value)
+
+    if isinstance(value, Mapping):
+        return {str(k): _plain_value(v) for k, v in value.items()}
+
+    if isinstance(value, (tuple, list)):
+        return [_plain_value(v) for v in value]
+
+    return value
+
+
+def canonical_preset_json(config: Any) -> str:
+    return json.dumps(_plain_value(config), sort_keys=True, separators=(",", ":"))
+
+
+def preset_hash(config: Any) -> str:
+    return hashlib.sha256(canonical_preset_json(config).encode("utf-8")).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class ResolvedPreset(Mapping[str, Any]):
+    name: str
+    modality: str
+    config: Any
+
+    def to_dict(self) -> Dict[str, Any]:
+        plain = _plain_value(self.config)
+        return copy.deepcopy(plain)
+
+    def to_json(self) -> str:
+        return canonical_preset_json(self.config)
+
+    def hash(self) -> str:
+        return preset_hash(self.config)
+
+    def __getitem__(self, key: str) -> Any:
+        return self.to_dict()[key]
+
+    def __iter__(self):
+        return iter(self.to_dict())
+
+    def __len__(self) -> int:
+        return len(self.to_dict())
+
+
+def register_preset(dataset: str, config: Any, *, modality: str = "core"):
     with _PRESET_LOCK:
         _PRESETS.setdefault(modality, {})[dataset.lower()] = config
 
 
-def get_dataset_presets(dataset: str, *, modality: str = "core") -> Dict[str, Any]:
+def _find_preset(dataset: str, *, modality: str = "core") -> tuple[str | None, Any]:
     presets = _PRESETS.get(modality, {})
     dataset = dataset.lower()
 
     if dataset in presets:
-        return presets[dataset]
+        return dataset, presets[dataset]
 
     for key, val in sorted(presets.items(), key=lambda kv: len(kv[0]), reverse=True):
         if key != "_default" and dataset.startswith(key):
-            return val
+            return key, val
 
-    return presets.get("_default", {})
+    if "_default" in presets:
+        return "_default", presets["_default"]
+
+    return None, {}
+
+
+def get_dataset_presets(dataset: str, *, modality: str = "core") -> Dict[str, Any]:
+    _name, config = _find_preset(dataset, modality=modality)
+    return config
+
+
+def get_resolved_preset(dataset: str, *, modality: str = "core") -> ResolvedPreset:
+    name, config = _find_preset(dataset, modality=modality)
+    return ResolvedPreset(name=name or dataset.lower(), modality=modality, config=config)
 
 
 def merge_with_presets(

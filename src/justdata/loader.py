@@ -261,6 +261,7 @@ def load_ds(
     postprocess_fn=None,
     shuffle_buffer: int = 10_000,
     cache_dataset: bool = True,
+    cache_path: str = "",
     drop_remainder: bool = False,
     data_dir: Union[None, str, os.PathLike] = None,
     return_raw_ds: bool = False,
@@ -290,6 +291,9 @@ def load_ds(
         postprocess_fn: Postprocessing function (fallback if `pipeline` is None).
         shuffle_buffer: Size of the shuffle buffer.
         cache_dataset: Whether to cache the dataset after preprocessing.
+        cache_path: The name of a directory on the filesystem to use for caching
+            elements in this Dataset.
+            If a filename is not provided, the dataset will be cached in memory.
         drop_remainder: Choose to drop or pad batches without the correct size,
         data_dir: Optional path to the TFDS data directory.
         return_raw_ds: If True, returns the dataset immediately after
@@ -361,7 +365,7 @@ def load_ds(
     # For big datasets or datasets with big images, caching can put your RAM on
     # fire and destroy your computer
     if cache_dataset:
-        ds = ds.cache()
+        ds = ds.cache(cache_path)
     else:
         logger.info(
             f"Caching disabled for '{dataset_type}' dataset. "

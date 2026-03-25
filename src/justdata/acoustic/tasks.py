@@ -1,4 +1,7 @@
+import tensorflow as tf
+
 from justdata.acoustic.registry import (
+    list_audio_waveform_augments,
     register_audio_batch_augment,
     register_audio_corruption,
     register_audio_decoder,
@@ -27,6 +30,17 @@ def _identity_batch(batch, num_classes=None, seed=None, **kwargs):
     return batch
 
 
+def _seed_tensor(seed):
+    if seed is None:
+        return None
+    seed = tf.cast(tf.convert_to_tensor(seed), tf.int32)
+    if seed.shape.rank == 0:
+        return tf.stack([seed, tf.constant(0, dtype=tf.int32)])
+    if seed.shape.rank == 1 and seed.shape[0] == 1:
+        return tf.stack([seed[0], tf.constant(0, dtype=tf.int32)])
+    return seed[:2]
+
+
 @register_audio_decoder("identity")
 @register_audio_resampler("identity")
 @register_audio_waveform_augment("none")
@@ -50,15 +64,50 @@ def make_preprocessing(config: AudioPreprocessConfig | dict | None = None, **kwa
 
 def make_augmentations(
     segment_config: SegmentStrategyConfig | dict | None = None,
+    waveform_augmentations=None,
+    train_augment: dict | None = None,
+    is_training: bool = True,
+    augment_eval: bool = False,
     **kwargs,
 ):
-    if segment_config is None:
+    import justdata.acoustic.augment  # noqa: F401
+    from justdata.acoustic.augment import make_waveform_augmentation_stage
+
+    if waveform_augmentations is None and train_augment:
+        if "waveform" in train_augment:
+            waveform_augmentations = train_augment["waveform"]
+        else:
+            known_waveform_augments = set(list_audio_waveform_augments()) - {"none"}
+            waveform_augmentations = {
+                key: value
+                for key, value in train_augment.items()
+                if key in known_waveform_augments
+            }
+
+    stages = []
+    if segment_config is not None:
+        stages.append(make_segment_stage(segment_config, is_training=is_training))
+    if waveform_augmentations:
+        stages.append(
+            make_waveform_augmentation_stage(
+                waveform_augmentations,
+                is_training=is_training,
+                augment_eval=augment_eval,
+            )
+        )
+
+    if not stages:
         return _identity_sample
 
-    segment_stage = make_segment_stage(segment_config, is_training=True)
-
     def augment(sample, seed=None):
-        return segment_stage(sample, seed=seed)
+        result = sample
+        if seed is None:
+            stage_seeds = [None] * len(stages)
+        else:
+            stage_seeds = tf.unstack(tf.random.split(_seed_tensor(seed), len(stages)))
+        for stage, stage_seed in zip(stages, stage_seeds):
+            result = stage(result, seed=stage_seed)
+        return result
 
     return augment
 

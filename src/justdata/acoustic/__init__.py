@@ -1,5 +1,6 @@
 from justdata.acoustic import (
     adapters,
+    augment,
     batching,
     channel,
     compat,
@@ -210,6 +211,7 @@ __all__ = [
     "SegmentStrategyConfig",
     "adapt_acoustic_sample",
     "adapters",
+    "augment",
     "apply_feature_normalization",
     "batching",
     "channel",

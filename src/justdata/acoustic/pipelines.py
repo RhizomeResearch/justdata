@@ -16,6 +16,9 @@ def default_pipeline(
     input_duration: float = None,
     target_sample_rate: int = None,
     label_transform: dict = None,
+    train_augment: dict = None,
+    waveform_augmentations=None,
+    augment_eval: bool = False,
     **kwargs,
 ) -> PipelineFuncs:
     preproc_kwargs = preproc_kwargs or {}
@@ -26,8 +29,17 @@ def default_pipeline(
     if preprocess is not None:
         preproc_kwargs.setdefault("config", preprocess)
 
+    is_training = postproc_kwargs.get("is_training", False)
+    aug_kwargs.setdefault("is_training", is_training)
+    aug_kwargs.setdefault("augment_eval", augment_eval)
+
+    if train_augment is not None and is_training:
+        aug_kwargs.setdefault("train_augment", train_augment)
+    if waveform_augmentations is not None:
+        aug_kwargs.setdefault("waveform_augmentations", waveform_augmentations)
+
     if segment is not None:
-        if postproc_kwargs.get("is_training", False):
+        if is_training:
             aug_kwargs.setdefault("segment_config", segment)
         else:
             postproc_kwargs.setdefault("segment_config", segment)

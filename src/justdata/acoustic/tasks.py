@@ -1,6 +1,7 @@
 import tensorflow as tf
 
 from justdata.acoustic.registry import (
+    list_audio_spectrogram_augments,
     list_audio_waveform_augments,
     register_audio_batch_augment,
     register_audio_corruption,
@@ -18,7 +19,7 @@ from justdata.acoustic.configs import (
 from justdata.acoustic.labels import transform_label
 from justdata.acoustic.postprocessing import make_model_input_stage, preset_info
 from justdata.acoustic.preprocessing import make_preprocessing as _make_preprocessing
-from justdata.acoustic.schema import LABEL, METADATA
+from justdata.acoustic.schema import FEATURES, LABEL, METADATA
 from justdata.acoustic.stages import make_segment_stage
 
 
@@ -65,13 +66,19 @@ def make_preprocessing(config: AudioPreprocessConfig | dict | None = None, **kwa
 def make_augmentations(
     segment_config: SegmentStrategyConfig | dict | None = None,
     waveform_augmentations=None,
+    spectrogram_augmentations=None,
     train_augment: dict | None = None,
     is_training: bool = True,
     augment_eval: bool = False,
+    spectrogram_key: str = FEATURES,
+    spectrogram_layout: str | None = None,
     **kwargs,
 ):
     import justdata.acoustic.augment  # noqa: F401
-    from justdata.acoustic.augment import make_waveform_augmentation_stage
+    from justdata.acoustic.augment import (
+        make_spectrogram_augmentation_stage,
+        make_waveform_augmentation_stage,
+    )
 
     if waveform_augmentations is None and train_augment:
         if "waveform" in train_augment:
@@ -84,6 +91,17 @@ def make_augmentations(
                 if key in known_waveform_augments
             }
 
+    if spectrogram_augmentations is None and train_augment:
+        if "spectrogram" in train_augment:
+            spectrogram_augmentations = train_augment["spectrogram"]
+        else:
+            known_spectrogram_augments = set(list_audio_spectrogram_augments()) - {"none"}
+            spectrogram_augmentations = {
+                ("passt_patchout" if key == "patchout" else key): value
+                for key, value in train_augment.items()
+                if key in known_spectrogram_augments or key == "patchout"
+            }
+
     stages = []
     if segment_config is not None:
         stages.append(make_segment_stage(segment_config, is_training=is_training))
@@ -93,6 +111,16 @@ def make_augmentations(
                 waveform_augmentations,
                 is_training=is_training,
                 augment_eval=augment_eval,
+            )
+        )
+    if spectrogram_augmentations:
+        stages.append(
+            make_spectrogram_augmentation_stage(
+                spectrogram_augmentations,
+                is_training=is_training,
+                augment_eval=augment_eval,
+                feature_key=spectrogram_key,
+                layout=spectrogram_layout,
             )
         )
 

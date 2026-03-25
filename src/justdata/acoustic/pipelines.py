@@ -18,6 +18,8 @@ def default_pipeline(
     label_transform: dict = None,
     train_augment: dict = None,
     waveform_augmentations=None,
+    spectrogram_augmentations=None,
+    spectrogram_layout: str = None,
     augment_eval: bool = False,
     **kwargs,
 ) -> PipelineFuncs:
@@ -37,6 +39,10 @@ def default_pipeline(
         aug_kwargs.setdefault("train_augment", train_augment)
     if waveform_augmentations is not None:
         aug_kwargs.setdefault("waveform_augmentations", waveform_augmentations)
+    if spectrogram_augmentations is not None:
+        aug_kwargs.setdefault("spectrogram_augmentations", spectrogram_augmentations)
+    if spectrogram_layout is not None:
+        aug_kwargs.setdefault("spectrogram_layout", spectrogram_layout)
 
     if segment is not None:
         if is_training:

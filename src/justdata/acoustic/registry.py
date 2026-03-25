@@ -2,6 +2,12 @@ import threading
 from collections.abc import Callable
 from typing import TypeVar
 
+from justdata.core.augmentations import (
+    AugmentationDomain,
+    AugmentationMetadata,
+    attach_augmentation_metadata,
+)
+
 
 RegistryFn = TypeVar("RegistryFn", bound=Callable)
 
@@ -16,6 +22,9 @@ _AUDIO_FRONTENDS: dict[str, Callable] = {}
 _AUDIO_WAVEFORM_AUGMENTS: dict[str, Callable] = {}
 _AUDIO_SPECTROGRAM_AUGMENTS: dict[str, Callable] = {}
 _AUDIO_BATCH_AUGMENTS: dict[str, Callable] = {}
+_AUDIO_WAVEFORM_AUGMENT_METADATA: dict[str, AugmentationMetadata] = {}
+_AUDIO_SPECTROGRAM_AUGMENT_METADATA: dict[str, AugmentationMetadata] = {}
+_AUDIO_BATCH_AUGMENT_METADATA: dict[str, AugmentationMetadata] = {}
 _AUDIO_NORMALIZATIONS: dict[str, Callable] = {}
 _AUDIO_EVAL_VIEW_STRATEGIES: dict[str, Callable] = {}
 _AUDIO_POSTPROCESSORS: dict[str, Callable] = {}
@@ -37,6 +46,39 @@ def _register(registry: dict[str, Callable], label: str, name: str):
     return decorator
 
 
+def _register_augment(
+    registry: dict[str, Callable],
+    metadata_registry: dict[str, AugmentationMetadata],
+    label: str,
+    name: str,
+    *,
+    domain: AugmentationDomain,
+    is_training_only: bool = True,
+    requires_labels: bool = False,
+):
+    metadata = AugmentationMetadata(
+        name=name,
+        domain=domain,
+        is_training_only=is_training_only,
+        requires_labels=requires_labels,
+    )
+
+    def decorator(fn: RegistryFn) -> RegistryFn:
+        with _REGISTRY_LOCK:
+            if name in registry:
+                existing = registry[name]
+                raise ValueError(
+                    f"{label} '{name}' already registered by "
+                    f"{existing.__module__}.{existing.__qualname__}"
+                )
+            registry[name] = fn
+            metadata_registry[name] = metadata
+        attach_augmentation_metadata(fn, metadata)
+        return fn
+
+    return decorator
+
+
 def _get(registry: dict[str, Callable], label: str, name: str) -> Callable:
     if name not in registry:
         available = ", ".join(sorted(registry)) or "<none>"
@@ -50,6 +92,23 @@ def _list(registry: dict[str, Callable]) -> tuple[str, ...]:
 
 def _has(registry: dict[str, Callable], name: str) -> bool:
     return name in registry
+
+
+def _get_metadata(
+    registry: dict[str, AugmentationMetadata],
+    label: str,
+    name: str,
+) -> AugmentationMetadata:
+    if name not in registry:
+        available = ", ".join(sorted(registry)) or "<none>"
+        raise ValueError(f"{label} metadata '{name}' not found. Available: {available}")
+    return registry[name]
+
+
+def _list_metadata(
+    registry: dict[str, AugmentationMetadata],
+) -> tuple[AugmentationMetadata, ...]:
+    return tuple(registry[name] for name in sorted(registry))
 
 
 def register_audio_decoder(name: str):
@@ -132,48 +191,126 @@ def has_audio_frontend(name: str) -> bool:
     return _has(_AUDIO_FRONTENDS, name)
 
 
-def register_audio_waveform_augment(name: str):
-    return _register(_AUDIO_WAVEFORM_AUGMENTS, "Audio waveform augment", name)
+def register_audio_waveform_augment(
+    name: str,
+    *,
+    is_training_only: bool = True,
+    requires_labels: bool = False,
+):
+    return _register_augment(
+        _AUDIO_WAVEFORM_AUGMENTS,
+        _AUDIO_WAVEFORM_AUGMENT_METADATA,
+        "Audio waveform augment",
+        name,
+        domain="waveform",
+        is_training_only=is_training_only,
+        requires_labels=requires_labels,
+    )
 
 
 def get_audio_waveform_augment(name: str) -> Callable:
-    return _get(_AUDIO_WAVEFORM_AUGMENTS, "Audio waveform augment", name)
+    fn = _get(_AUDIO_WAVEFORM_AUGMENTS, "Audio waveform augment", name)
+    return attach_augmentation_metadata(fn, _AUDIO_WAVEFORM_AUGMENT_METADATA[name])
 
 
 def list_audio_waveform_augments() -> tuple[str, ...]:
     return _list(_AUDIO_WAVEFORM_AUGMENTS)
 
 
+def get_audio_waveform_augment_metadata(name: str) -> AugmentationMetadata:
+    return _get_metadata(
+        _AUDIO_WAVEFORM_AUGMENT_METADATA,
+        "Audio waveform augment",
+        name,
+    )
+
+
+def list_audio_waveform_augment_metadata() -> tuple[AugmentationMetadata, ...]:
+    return _list_metadata(_AUDIO_WAVEFORM_AUGMENT_METADATA)
+
+
 def has_audio_waveform_augment(name: str) -> bool:
     return _has(_AUDIO_WAVEFORM_AUGMENTS, name)
 
 
-def register_audio_spectrogram_augment(name: str):
-    return _register(_AUDIO_SPECTROGRAM_AUGMENTS, "Audio spectrogram augment", name)
+def register_audio_spectrogram_augment(
+    name: str,
+    *,
+    is_training_only: bool = True,
+    requires_labels: bool = False,
+):
+    return _register_augment(
+        _AUDIO_SPECTROGRAM_AUGMENTS,
+        _AUDIO_SPECTROGRAM_AUGMENT_METADATA,
+        "Audio spectrogram augment",
+        name,
+        domain="spectrogram",
+        is_training_only=is_training_only,
+        requires_labels=requires_labels,
+    )
 
 
 def get_audio_spectrogram_augment(name: str) -> Callable:
-    return _get(_AUDIO_SPECTROGRAM_AUGMENTS, "Audio spectrogram augment", name)
+    fn = _get(_AUDIO_SPECTROGRAM_AUGMENTS, "Audio spectrogram augment", name)
+    return attach_augmentation_metadata(fn, _AUDIO_SPECTROGRAM_AUGMENT_METADATA[name])
 
 
 def list_audio_spectrogram_augments() -> tuple[str, ...]:
     return _list(_AUDIO_SPECTROGRAM_AUGMENTS)
 
 
+def get_audio_spectrogram_augment_metadata(name: str) -> AugmentationMetadata:
+    return _get_metadata(
+        _AUDIO_SPECTROGRAM_AUGMENT_METADATA,
+        "Audio spectrogram augment",
+        name,
+    )
+
+
+def list_audio_spectrogram_augment_metadata() -> tuple[AugmentationMetadata, ...]:
+    return _list_metadata(_AUDIO_SPECTROGRAM_AUGMENT_METADATA)
+
+
 def has_audio_spectrogram_augment(name: str) -> bool:
     return _has(_AUDIO_SPECTROGRAM_AUGMENTS, name)
 
 
-def register_audio_batch_augment(name: str):
-    return _register(_AUDIO_BATCH_AUGMENTS, "Audio batch augment", name)
+def register_audio_batch_augment(
+    name: str,
+    *,
+    is_training_only: bool = True,
+    requires_labels: bool = False,
+):
+    return _register_augment(
+        _AUDIO_BATCH_AUGMENTS,
+        _AUDIO_BATCH_AUGMENT_METADATA,
+        "Audio batch augment",
+        name,
+        domain="batch",
+        is_training_only=is_training_only,
+        requires_labels=requires_labels,
+    )
 
 
 def get_audio_batch_augment(name: str) -> Callable:
-    return _get(_AUDIO_BATCH_AUGMENTS, "Audio batch augment", name)
+    fn = _get(_AUDIO_BATCH_AUGMENTS, "Audio batch augment", name)
+    return attach_augmentation_metadata(fn, _AUDIO_BATCH_AUGMENT_METADATA[name])
 
 
 def list_audio_batch_augments() -> tuple[str, ...]:
     return _list(_AUDIO_BATCH_AUGMENTS)
+
+
+def get_audio_batch_augment_metadata(name: str) -> AugmentationMetadata:
+    return _get_metadata(
+        _AUDIO_BATCH_AUGMENT_METADATA,
+        "Audio batch augment",
+        name,
+    )
+
+
+def list_audio_batch_augment_metadata() -> tuple[AugmentationMetadata, ...]:
+    return _list_metadata(_AUDIO_BATCH_AUGMENT_METADATA)
 
 
 def has_audio_batch_augment(name: str) -> bool:

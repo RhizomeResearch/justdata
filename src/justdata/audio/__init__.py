@@ -8,6 +8,7 @@ for _name in (
     "adapters",
     "batching",
     "configs",
+    "corruptions",
     "datasets",
     "decoding",
     "pipelines",

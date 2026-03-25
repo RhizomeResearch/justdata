@@ -111,5 +111,9 @@ def test_create_minic_datasets(synthetic_classification_ds):
         for ds in ds_list:
             batch = next(iter(ds))
             assert "image" in batch
+            assert "metadata" in batch
+            assert "corruption" in batch["metadata"]
+            assert "severity" in batch["metadata"]
+            assert "corruption_domain" in batch["metadata"]
             assert batch["image"].shape == (4, 3, 32, 32)
             assert batch["image"].dtype == tf.float32

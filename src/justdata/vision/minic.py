@@ -3,7 +3,13 @@ from typing import Union
 import tensorflow as tf
 
 from justdata.core.loader import _pad_dataset, load_ds
-from justdata.vision.corruptions.registry import apply_minic_corruption
+from justdata.vision.corruptions.registry import (
+    _metadata_with_corruption,
+    apply_minic_corruption,
+)
+
+
+_MAX_SEED = tf.constant(2**31 - 1, dtype=tf.int64)
 
 
 def create_minic_datasets(
@@ -18,26 +24,35 @@ def create_minic_datasets(
     ds, tools = load_ds(**load_ds_kwargs)
 
     postprocess_fn = tools["postprocess_fn"]
-    rng = tools["rng"]
 
     batch_size = load_ds_kwargs.get("batch_size", 32)
     num_classes = load_ds_kwargs.get("num_classes")
     drop_remainder = load_ds_kwargs.get("drop_remainder", False)
+    seed = load_ds_kwargs.get("seed", 0)
 
     return_list = isinstance(corruption_types, list)
     c_list = corruption_types if return_list else [corruption_types]
 
     datasets_out = []
 
-    for c_name in c_list:
+    for c_index, c_name in enumerate(c_list):
 
-        def corrupt_fn(sample, c_name=c_name):
-            s_seed = rng.make_seeds(1)[:, 0]
+        def corrupt_fn(index, sample, c_name=c_name, c_index=c_index):
+            s_seed = _seed_from_index(seed, index, salt=c_index * 1_000_003)
             img = sample["image"]
             img_corrupted = apply_minic_corruption(img, c_name, severity, s_seed)
-            return sample | {"image": img_corrupted}
+            return _metadata_with_corruption(
+                sample | {"image": img_corrupted},
+                name=c_name,
+                severity=severity,
+                domain="image",
+            )
 
-        ds_c = ds.map(corrupt_fn, num_parallel_calls=tf.data.AUTOTUNE)
+        ds_c = ds.enumerate().map(
+            corrupt_fn,
+            num_parallel_calls=tf.data.AUTOTUNE,
+            deterministic=True,
+        )
         ds_c = ds_c.map(
             lambda x: postprocess_fn(x, num_classes=num_classes),
             num_parallel_calls=tf.data.AUTOTUNE,
@@ -64,3 +79,10 @@ def create_minic_datasets(
     if return_list:
         return datasets_out, n_batches
     return datasets_out[0], n_batches
+
+
+def _seed_from_index(seed: int | tf.Tensor, index: tf.Tensor, salt: int = 0) -> tf.Tensor:
+    base = tf.cast(seed, tf.int64)
+    idx = tf.cast(index, tf.int64)
+    salted = tf.math.floormod(base * 1_103_515_245 + idx + salt, _MAX_SEED)
+    return tf.cast(tf.stack([tf.math.floormod(base, _MAX_SEED), salted]), tf.int32)

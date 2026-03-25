@@ -5,6 +5,7 @@ from justdata.acoustic import (
     channel,
     compat,
     configs,
+    corruptions,
     datasets,
     decoding,
     dcase2025,
@@ -50,6 +51,10 @@ from justdata.acoustic.configs import (
     MelConfig,
     STFTConfig,
     SegmentStrategyConfig,
+)
+from justdata.acoustic.corruptions import (
+    apply_audio_corruption,
+    create_audio_corruption_datasets,
 )
 from justdata.acoustic.datasets import (
     AUDIO_CLASSIFICATION_MULTI_LABEL,
@@ -207,6 +212,7 @@ __all__ = [
     "AudioPreprocessConfig",
     "DCASE2025Task1Adapter",
     "apply_channel_strategy",
+    "apply_audio_corruption",
     "as_numpy_iterator",
     "FeatureNormConfig",
     "FrontendConfig",
@@ -225,7 +231,9 @@ __all__ = [
     "compress_log",
     "compute_num_frames",
     "configs",
+    "corruptions",
     "compute_feature_stats",
+    "create_audio_corruption_datasets",
     "confusion_matrix",
     "convert_audio_layout",
     "datasets",

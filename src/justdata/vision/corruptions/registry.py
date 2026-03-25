@@ -1,5 +1,5 @@
 import threading
-from typing import Callable, Dict
+from typing import Any, Callable, Dict
 
 import tensorflow as tf
 
@@ -36,6 +36,7 @@ def apply_minic_corruption(
     Returns:
         Corrupted image as uint8 tensor.
     """
+    _validate_severity(severity)
     if corruption not in _CORRUPTION_REGISTRY:
         raise ValueError(
             f"Unknown corruption '{corruption}'. "
@@ -54,6 +55,59 @@ def apply_minic_corruption(
     return tf.cast(corrupted, tf.uint8)
 
 
+def list_corruptions() -> tuple[str, ...]:
+    return tuple(sorted(_CORRUPTION_REGISTRY))
+
+
 def _get_severity_index(severity: int) -> int:
-    """Clamps severity to 1-5 and returns 0-based index."""
-    return tf.clip_by_value(severity, 1, 5) - 1
+    """Validate severity 1-5 and return a 0-based Tensor index."""
+    return _validate_severity(severity) - 1
+
+
+def _validate_severity(severity: int | tf.Tensor) -> tf.Tensor:
+    if not tf.is_tensor(severity):
+        value = int(severity)
+        if value < 1 or value > 5:
+            raise ValueError("Mini-C corruption severity must be in the range 1..5.")
+
+    severity_tensor = tf.cast(tf.convert_to_tensor(severity), tf.int32)
+    if tf.executing_eagerly():
+        try:
+            value = int(severity_tensor.numpy())
+        except (TypeError, ValueError):
+            value = None
+        if value is not None and (value < 1 or value > 5):
+            raise ValueError("Mini-C corruption severity must be in the range 1..5.")
+
+    with tf.control_dependencies(
+        [
+            tf.debugging.assert_greater_equal(
+                severity_tensor,
+                tf.constant(1, dtype=tf.int32),
+                message="Mini-C corruption severity must be in the range 1..5.",
+            ),
+            tf.debugging.assert_less_equal(
+                severity_tensor,
+                tf.constant(5, dtype=tf.int32),
+                message="Mini-C corruption severity must be in the range 1..5.",
+            ),
+        ]
+    ):
+        return tf.identity(severity_tensor)
+
+
+def _metadata_with_corruption(
+    sample: dict[str, Any],
+    *,
+    name: str,
+    severity: int,
+    domain: str = "image",
+) -> dict[str, Any]:
+    result = dict(sample)
+    current = result.get("metadata")
+    metadata = dict(current) if isinstance(current, dict) else {}
+    metadata["corruption"] = tf.constant(name)
+    metadata["severity"] = tf.cast(severity, tf.int32)
+    metadata["corruption_domain"] = tf.constant(domain)
+    result["metadata"] = metadata
+    return result

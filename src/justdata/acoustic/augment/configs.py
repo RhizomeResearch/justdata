@@ -131,8 +131,67 @@ class CodecSimulationConfig:
             raise ValueError("bitrate must be positive when set")
 
 
+@dataclass(frozen=True)
+class AudioMixupConfig:
+    alpha: float
+    prob: float
+    label_mode: Literal["single_label", "multi_label", "event_frames"]
+
+    def __post_init__(self) -> None:
+        if self.alpha <= 0:
+            raise ValueError("alpha must be positive")
+        _ensure_probability("prob", self.prob)
+        if self.label_mode not in {"single_label", "multi_label", "event_frames"}:
+            raise ValueError(
+                "label_mode must be one of 'single_label', 'multi_label', or "
+                "'event_frames'"
+            )
+
+
+@dataclass(frozen=True)
+class AudioCutMixSpecConfig:
+    alpha: float
+    prob: float
+    axes: Literal["time", "frequency", "time_frequency"]
+
+    def __post_init__(self) -> None:
+        if self.alpha <= 0:
+            raise ValueError("alpha must be positive")
+        _ensure_probability("prob", self.prob)
+        if self.axes not in {"time", "frequency", "time_frequency"}:
+            raise ValueError(
+                "axes must be one of 'time', 'frequency', or 'time_frequency'"
+            )
+
+
+@dataclass(frozen=True)
+class AudioWavMixConfig:
+    alpha: float
+    prob: float
+
+    def __post_init__(self) -> None:
+        if self.alpha <= 0:
+            raise ValueError("alpha must be positive")
+        _ensure_probability("prob", self.prob)
+
+
+@dataclass(frozen=True)
+class AudioBatchMixStyleConfig:
+    prob: float
+    mix: Literal["global", "frequency", "channel"]
+
+    def __post_init__(self) -> None:
+        _ensure_probability("prob", self.prob)
+        if self.mix not in {"global", "frequency", "channel"}:
+            raise ValueError("mix must be one of 'global', 'frequency', or 'channel'")
+
+
 __all__ = [
     "AdditiveNoiseConfig",
+    "AudioBatchMixStyleConfig",
+    "AudioCutMixSpecConfig",
+    "AudioMixupConfig",
+    "AudioWavMixConfig",
     "CodecSimulationConfig",
     "DynamicRangeCompressionConfig",
     "RIRConvolutionConfig",

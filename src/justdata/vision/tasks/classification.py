@@ -144,6 +144,7 @@ def make_late_augmentations(
     switch_prob: float = 0.5,
     label_smoothing: float = 0.1,
     bce_target: bool = False,
+    label_mode: Literal["single_label", "multi_label", "event_frames"] = "single_label",
     permute_image: bool = True,
     mode: Literal["ssl", "sl"] = "sl",
     random_erasing_prob: float = 0.0,
@@ -188,6 +189,7 @@ def make_late_augmentations(
                 switch_prob=switch_prob,
                 label_smoothing=label_smoothing,
                 bce_target=bce_target,
+                label_mode=label_mode,
             )
 
         should_permute = tf.constant(permute_image)
@@ -216,6 +218,7 @@ def make_postprocessing(
     one_hot_labels: bool = False,
     num_classes: int | None = None,
     label_smoothing: float = 0.0,
+    label_mode: Literal["single_label", "multi_label"] = "single_label",
     class_names: tuple[str, ...] | list[str] | None = None,
     keep_hard_label_in_metadata: bool = True,
     image_keys: list[str] = None,
@@ -286,7 +289,9 @@ def make_postprocessing(
                         "`num_classes` must be provided when `one_hot_labels=True`"
                     )
                 label = tf.convert_to_tensor(label)
-                if _is_dense_label_vector(label, num_classes):
+                if label_mode == "multi_label":
+                    label = tf.cast(label, tf.float32)
+                elif _is_dense_label_vector(label, num_classes):
                     label = tf.cast(label, tf.float32)
                 elif label_smoothing > 0:
                     off_value = label_smoothing / float(num_classes)

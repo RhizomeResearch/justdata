@@ -19,6 +19,7 @@ def default_pipeline(
     train_augment: dict = None,
     waveform_augmentations=None,
     spectrogram_augmentations=None,
+    batch_augmentations=None,
     spectrogram_layout: str = None,
     augment_eval: bool = False,
     **kwargs,
@@ -37,12 +38,18 @@ def default_pipeline(
 
     if train_augment is not None and is_training:
         aug_kwargs.setdefault("train_augment", train_augment)
+        laug_kwargs.setdefault("train_augment", train_augment)
     if waveform_augmentations is not None:
         aug_kwargs.setdefault("waveform_augmentations", waveform_augmentations)
     if spectrogram_augmentations is not None:
         aug_kwargs.setdefault("spectrogram_augmentations", spectrogram_augmentations)
+    if batch_augmentations is not None:
+        laug_kwargs.setdefault("batch_augmentations", batch_augmentations)
+    if train_augment is not None and is_training and "batch" in train_augment:
+        laug_kwargs.setdefault("batch_augmentations", train_augment["batch"])
     if spectrogram_layout is not None:
         aug_kwargs.setdefault("spectrogram_layout", spectrogram_layout)
+        laug_kwargs.setdefault("spectrogram_layout", spectrogram_layout)
 
     if segment is not None:
         if is_training:
@@ -62,6 +69,7 @@ def default_pipeline(
 
     if label_transform is not None:
         postproc_kwargs.setdefault("label_transform", label_transform)
+        laug_kwargs.setdefault("label_transform", label_transform)
 
     from justdata.acoustic.tasks import (
         make_augmentations,

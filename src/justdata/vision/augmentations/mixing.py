@@ -2,6 +2,12 @@ from typing import Tuple
 
 import tensorflow as tf
 
+from justdata.core.label_mixing import (
+    LabelMixMode,
+    blend_prepared_labels,
+    prepare_labels_for_mixing,
+)
+
 
 @tf.function
 def mixup_cutmix(
@@ -15,6 +21,7 @@ def mixup_cutmix(
     switch_prob: float = 0.5,
     label_smoothing: float = 0.1,
     bce_target: bool = False,
+    label_mode: LabelMixMode = "single_label",
 ) -> Tuple[tf.Tensor, tf.Tensor]:
     if mixup_alpha > 0 and cutmix_alpha == 0:
         switch_prob = -1.0
@@ -41,43 +48,19 @@ def mixup_cutmix(
         sample_b = tf.random.stateless_gamma(shape, alpha=alpha, seed=s2)
         return sample_a / (sample_a + sample_b + 1e-8)
 
-    def _smooth_labels(lbls):
-        is_one_hot = tf.logical_and(
-            tf.equal(tf.rank(lbls), 2), tf.equal(tf.shape(lbls)[-1], num_classes)
+    def _prepare_labels(lbls):
+        return prepare_labels_for_mixing(
+            lbls,
+            label_mode=label_mode,
+            num_classes=num_classes,
+            label_smoothing=label_smoothing if label_mode == "single_label" else 0.0,
         )
 
-        def _apply_one_hot():
-            lbls_f = tf.cast(lbls, tf.float32)
-            if label_smoothing > 0:
-                off_value = label_smoothing / float(num_classes)
-                return lbls_f * (1.0 - label_smoothing) + off_value
-            return lbls_f
-
-        def _apply_int():
-            flat_lbls = tf.reshape(lbls, [-1])
-            off_value = label_smoothing / float(num_classes)
-            on_value = 1.0 - label_smoothing + off_value
-            return tf.one_hot(
-                tf.cast(flat_lbls, tf.int32),
-                num_classes,
-                on_value=on_value,
-                off_value=off_value,
-            )
-
-        return tf.cond(is_one_hot, _apply_one_hot, _apply_int)
-
     def _update_labels(imgs, lbls, lam):
-        labels_1 = _smooth_labels(lbls)
-        labels_2 = _smooth_labels(gather_shuffled(lbls))
+        labels_1 = _prepare_labels(lbls)
+        labels_2 = _prepare_labels(gather_shuffled(lbls))
         lam = tf.reshape(lam, [-1, 1])
-
-        # Mirrors the ResNet strike back paper BCE requirements
-        # Treats mixed images as multi-label.
-        if bce_target:
-            new_labels = tf.maximum(labels_1, labels_2)
-        else:
-            new_labels = lam * labels_1 + (1.0 - lam) * labels_2
-
+        new_labels = blend_prepared_labels(labels_1, labels_2, lam, bce_target=bce_target)
         return imgs, new_labels
 
     def _mixup(imgs, lbls):
@@ -170,7 +153,7 @@ def mixup_cutmix(
     return tf.cond(
         augment_cond,
         apply_augment,
-        lambda: (images, _smooth_labels(labels)),
+        lambda: (images, _prepare_labels(labels)),
     )
 
 

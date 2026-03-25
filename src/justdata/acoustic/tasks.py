@@ -141,7 +141,71 @@ def make_augmentations(
 
 
 def make_late_augmentations(**kwargs):
-    return _identity_batch
+    import justdata.acoustic.augment  # noqa: F401
+    from justdata.acoustic.augment import make_batch_augmentation_stage
+
+    known_batch_augments = {
+        "batch_mixstyle",
+        "cutmix",
+        "cutmix_spec",
+        "mixstyle",
+        "mixup",
+        "wavmix",
+    }
+    batch_augmentations = kwargs.pop("batch_augmentations", None)
+    train_augment = kwargs.pop("train_augment", None)
+    is_training = kwargs.pop("is_training", True)
+    augment_eval = kwargs.pop("augment_eval", False)
+    input_key = kwargs.pop("input_key", None)
+    input_kind = kwargs.pop("input_kind", None)
+    label_mode = kwargs.pop("label_mode", None)
+    label_transform = kwargs.pop("label_transform", None)
+    spectrogram_layout = kwargs.pop("spectrogram_layout", None)
+
+    if batch_augmentations is None and train_augment:
+        if "batch" in train_augment:
+            batch_augmentations = train_augment["batch"]
+        else:
+            batch_augmentations = {
+                key: value
+                for key, value in train_augment.items()
+                if key in known_batch_augments
+            }
+
+    if batch_augmentations is None:
+        batch_augmentations = {
+            key: kwargs.pop(key)
+            for key in tuple(kwargs)
+            if key in known_batch_augments
+        }
+
+    if not batch_augmentations:
+        return _identity_batch
+
+    label_config = (
+        LabelTransformConfig.from_dict(label_transform)
+        if label_transform is not None
+        else None
+    )
+    label_transform_dict = label_config.to_dict() if label_config is not None else None
+    stage = make_batch_augmentation_stage(
+        batch_augmentations,
+        is_training=is_training,
+        augment_eval=augment_eval,
+        input_key=input_key,
+        input_kind=input_kind,
+        label_mode=label_mode,
+        label_transform=label_transform_dict,
+        spectrogram_layout=spectrogram_layout,
+    )
+
+    def late_augmentations(batch, num_classes=None, seed=None, **_kwargs):
+        effective_num_classes = num_classes
+        if effective_num_classes is None and label_config is not None:
+            effective_num_classes = label_config.num_classes
+        return stage(batch, num_classes=effective_num_classes, seed=seed)
+
+    return late_augmentations
 
 
 def make_postprocessing(

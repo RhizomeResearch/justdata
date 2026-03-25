@@ -16,6 +16,8 @@ def default_classification_pipeline(
 
     if laug_kwargs.get("mixup_alpha", 0) > 0 or laug_kwargs.get("cutmix_alpha", 0) > 0:
         postproc_kwargs.setdefault("one_hot_labels", True)
+        if "label_mode" in laug_kwargs:
+            postproc_kwargs.setdefault("label_mode", laug_kwargs["label_mode"])
 
     from justdata.vision.tasks.classification import (
         make_augmentations,

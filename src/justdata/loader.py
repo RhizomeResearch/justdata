@@ -264,6 +264,7 @@ def load_ds(
     drop_remainder: bool = False,
     data_dir: Union[None, str, os.PathLike] = None,
     return_raw_ds: bool = False,
+    deterministic: bool = False,
 ):
     """
     Loads, preprocesses, and batches HuggingFace or TensorFlow Datasets.
@@ -296,6 +297,7 @@ def load_ds(
                        augmentation, postprocessing, or batching.
                        Returns (ds, tools_dict) where tools_dict contains
                        ``postprocess_fn`` and ``rng``.
+        deterministic: If false, sacrifices determinism for performance.
 
     Returns:
         A batched `tf.data.Dataset` converted to NumPy arrays.
@@ -353,7 +355,7 @@ def load_ds(
     ds = ds.map(
         preprocess_fn,
         num_parallel_calls=tf.data.AUTOTUNE,
-        deterministic=False if is_training else None,
+        deterministic=deterministic if is_training else None,
     )
 
     # For big datasets or datasets with big images, caching can put your RAM on
@@ -374,14 +376,14 @@ def load_ds(
         ds = ds.map(
             seeded_augment,
             num_parallel_calls=tf.data.AUTOTUNE,
-            deterministic=False,
+            deterministic=deterministic,
         )
         ds = ds.shuffle(shuffle_buffer, seed=seed)
 
     ds = ds.map(
         lambda x: postprocess_fn(x, num_classes=num_classes),
         num_parallel_calls=tf.data.AUTOTUNE,
-        deterministic=False if is_training else None,
+        deterministic=deterministic if is_training else None,
     )
     ds = ds.batch(batch_size, drop_remainder=drop_remainder)
 
@@ -390,7 +392,7 @@ def load_ds(
         ds = ds.map(
             lambda b: b | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)},
             num_parallel_calls=tf.data.AUTOTUNE,
-            deterministic=False if is_training else None,
+            deterministic=deterministic if is_training else None,
         )
     else:
         ds = _pad_dataset(ds, batch_size)
@@ -399,7 +401,7 @@ def load_ds(
         ds = ds.map(
             seeded_late_augment,
             num_parallel_calls=tf.data.AUTOTUNE,
-            deterministic=False,
+            deterministic=deterministic,
         )
 
     ds = ds.prefetch(tf.data.AUTOTUNE)

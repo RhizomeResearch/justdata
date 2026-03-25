@@ -111,6 +111,9 @@ class SegmentStrategyConfig(_SerializableConfig):
     eval_mode: Literal["center_crop", "full", "sliding", "multi_crop"]
     pad_mode: Literal["zero", "repeat", "reflect"]
     pad_position: Literal["right", "center", "random"]
+    num_views: int = 1
+    sliding_hop_duration: float | None = None
+    allow_train_sliding: bool = False
     drop_short: bool = False
     min_duration: float | None = None
     duration_policy: Literal[
@@ -132,6 +135,9 @@ class SegmentStrategyConfig(_SerializableConfig):
         _ensure_literal("eval_mode", self.eval_mode, {"center_crop", "full", "sliding", "multi_crop"})
         _ensure_literal("pad_mode", self.pad_mode, {"zero", "repeat", "reflect"})
         _ensure_literal("pad_position", self.pad_position, {"right", "center", "random"})
+        _ensure_positive("num_views", self.num_views)
+        if self.sliding_hop_duration is not None:
+            _ensure_positive("sliding_hop_duration", self.sliding_hop_duration)
         _ensure_literal(
             "duration_policy",
             self.duration_policy,

@@ -11,8 +11,8 @@ from justdata.vision.augmentations.mixing import (
     random_erasing,
 )
 from justdata.vision.augmentations.registry import get_augment_strategy, get_crop_strategy
-from justdata.vision.stages import normalize_image_format, resize_and_normalize
-from justdata.vision.transforms import nhwc_to_nchw
+from justdata.vision.stages import apply_eval_views, normalize_image_format, resize_and_normalize
+from justdata.vision.transforms import nhwc_to_nchw, normalize
 
 
 def make_preprocessing(image_key: str = "image"):
@@ -194,6 +194,7 @@ def make_postprocessing(
     image_keys: list[str] = None,
     label_keys: list[str] = None,
     val_resize_size: int | None | Literal["auto"] = "auto",
+    eval_view_config: dict | None = None,
 ):
     if image_keys is None:
         image_keys = ["image", "images", "global_crops", "local_crops"]
@@ -210,15 +211,33 @@ def make_postprocessing(
     )
 
     def postprocessing(sample, num_classes=num_classes):
-        sample = resize_and_normalize(
-            sample,
-            image_keys=image_keys,
-            image_size=effective_image_size,
-            resize_size=val_resize_buffer if not is_training else None,
-            normalize_image=normalize_image,
-            normalization_params=normalization_params,
-            permute=permute_image,
-        )
+        if eval_view_config is not None and not is_training and "image" in sample:
+            sample = apply_eval_views(
+                sample,
+                config=eval_view_config,
+                image_key="image",
+            )
+            image = sample["image"]
+            if normalize_image:
+                if normalization_params is None:
+                    raise ValueError(
+                        "`normalization_params` needs to be provided if "
+                        "`normalize_image` is True"
+                    )
+                image = normalize(image, *normalization_params)
+            if permute_image:
+                image = nhwc_to_nchw(image)
+            sample = sample | {"image": image}
+        else:
+            sample = resize_and_normalize(
+                sample,
+                image_keys=image_keys,
+                image_size=effective_image_size,
+                resize_size=val_resize_buffer if not is_training else None,
+                normalize_image=normalize_image,
+                normalization_params=normalization_params,
+                permute=permute_image,
+            )
 
         res = dict(sample)
         for key in label_keys:

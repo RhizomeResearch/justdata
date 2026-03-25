@@ -1,14 +1,19 @@
 from justdata.acoustic import (
     adapters,
+    channel,
     configs,
     datasets,
     decoding,
+    eval_views,
     pipelines,
+    preprocessing,
     presets,
     registry,
     resampling,
     schema,
+    segment,
     sources,
+    stages,
     tasks,
 )
 from justdata.acoustic.adapters import (
@@ -44,6 +49,19 @@ from justdata.acoustic.decoding import (
     decode_wav_bytes,
     decode_wav_file,
 )
+from justdata.acoustic.channel import (
+    apply_channel_strategy,
+    keep,
+    mono_left,
+    mono_mean,
+    mono_right,
+)
+from justdata.acoustic.eval_views import generate_eval_views, make_eval_views
+from justdata.acoustic.preprocessing import (
+    make_preprocessing,
+    normalize_waveform,
+    remove_dc_offset,
+)
 from justdata.acoustic.presets import (
     get_dataset_presets,
     get_resolved_preset,
@@ -51,6 +69,8 @@ from justdata.acoustic.presets import (
     register_preset,
 )
 from justdata.acoustic.resampling import resample_sample, resample_waveform
+from justdata.acoustic.segment import pad_waveform, segment_waveform
+from justdata.acoustic.stages import make_preprocessing_stage, make_segment_stage
 from justdata.acoustic.registry import (
     get_audio_batch_augment,
     get_audio_channel_strategy,
@@ -112,6 +132,7 @@ __all__ = [
     "AcousticAdapter",
     "AudioPreset",
     "AudioPreprocessConfig",
+    "apply_channel_strategy",
     "FeatureNormConfig",
     "FrontendConfig",
     "LabelTransformConfig",
@@ -121,13 +142,16 @@ __all__ = [
     "SegmentStrategyConfig",
     "adapt_acoustic_sample",
     "adapters",
+    "channel",
     "configs",
     "datasets",
     "decode_audio_file",
     "decode_wav_bytes",
     "decode_wav_file",
     "decoding",
+    "eval_views",
     "ensure_audio_rank",
+    "generate_eval_views",
     "get_audio_batch_augment",
     "get_audio_channel_strategy",
     "get_audio_corruption",
@@ -168,8 +192,19 @@ __all__ = [
     "list_audio_spectrogram_augments",
     "list_audio_waveform_augments",
     "merge_with_presets",
+    "make_eval_views",
     "make_audio_metadata",
+    "make_preprocessing",
+    "make_preprocessing_stage",
+    "make_segment_stage",
+    "mono_left",
+    "mono_mean",
+    "mono_right",
+    "keep",
+    "normalize_waveform",
+    "pad_waveform",
     "pipelines",
+    "preprocessing",
     "presets",
     "register_audio_batch_augment",
     "register_audio_channel_strategy",
@@ -189,8 +224,12 @@ __all__ = [
     "resample_waveform",
     "resampling",
     "schema",
+    "segment",
+    "segment_waveform",
     "sources",
+    "stages",
     "standardize_waveform_layout",
+    "remove_dc_offset",
     "tasks",
     "to_float32_waveform",
 ]

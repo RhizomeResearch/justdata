@@ -6,11 +6,23 @@ def default_pipeline(
     aug_kwargs: dict = None,
     laug_kwargs: dict = None,
     postproc_kwargs: dict = None,
+    preprocess: dict = None,
+    segment: dict = None,
+    **kwargs,
 ) -> PipelineFuncs:
     preproc_kwargs = preproc_kwargs or {}
     aug_kwargs = aug_kwargs or {}
     laug_kwargs = laug_kwargs or {}
     postproc_kwargs = postproc_kwargs or {}
+
+    if preprocess is not None:
+        preproc_kwargs.setdefault("config", preprocess)
+
+    if segment is not None:
+        if postproc_kwargs.get("is_training", False):
+            aug_kwargs.setdefault("segment_config", segment)
+        else:
+            postproc_kwargs.setdefault("segment_config", segment)
 
     from justdata.acoustic.tasks import (
         make_augmentations,

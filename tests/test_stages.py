@@ -1,6 +1,10 @@
 import tensorflow as tf
 
-from justdata.vision.stages import normalize_image_format, resize_and_normalize
+from justdata.vision.stages import (
+    apply_eval_views,
+    normalize_image_format,
+    resize_and_normalize,
+)
 
 
 class TestNormalizeImageFormat:
@@ -107,3 +111,22 @@ class TestResizeAndNormalize:
         # Should still be float (from resize) but not normalized
         assert result["image"].dtype == tf.float32
         assert tf.reduce_max(result["image"]) <= 255.0
+
+
+def test_vision_eval_views_add_metadata_and_flip_views():
+    sample = {"image": tf.zeros([100, 120, 3], dtype=tf.uint8)}
+
+    result = apply_eval_views(
+        sample,
+        config={
+            "image_size": 32,
+            "mode": "multi_crop",
+            "num_crops": 5,
+            "include_flip": True,
+        },
+    )
+
+    assert result["image"].shape == (10, 32, 32, 3)
+    assert result["view_metadata"]["crop_box"].shape == (10, 4)
+    assert result["view_metadata"]["flip"].shape == (10,)
+    assert result["view_metadata"]["view_index"].numpy().tolist() == list(range(10))

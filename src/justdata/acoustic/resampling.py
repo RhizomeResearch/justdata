@@ -19,7 +19,9 @@ def _resample_tensorflow(
     num_samples = tf.shape(waveform)[0]
     num_channels = tf.shape(waveform)[1]
     target_samples = tf.cast(
-        tf.round(tf.cast(num_samples, tf.float32) * target_sample_rate / original_sample_rate),
+        tf.round(
+            tf.cast(num_samples, tf.float32) * target_sample_rate / original_sample_rate
+        ),
         tf.int32,
     )
     target_samples = tf.maximum(target_samples, 1)
@@ -146,7 +148,9 @@ def resample_waveform(
         return tf.cond(
             same_rate,
             lambda: waveform,
-            lambda: _resample_tensorflow(waveform, original_sample_rate, target_sample_rate),
+            lambda: _resample_tensorflow(
+                waveform, original_sample_rate, target_sample_rate
+            ),
         )
 
     if method in {"soxr", "kaiser_best"}:

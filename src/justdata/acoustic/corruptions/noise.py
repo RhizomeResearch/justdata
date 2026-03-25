@@ -50,7 +50,9 @@ def _colored_noise(shape: tf.Tensor, seed: tf.Tensor, kind: str) -> tf.Tensor:
     return _restore_rank(_normalize_noise(tf.transpose(pink, [1, 0])), rank)
 
 
-def _add_at_snr(audio_or_features: tf.Tensor, noise: tf.Tensor, snr_db: tf.Tensor) -> tf.Tensor:
+def _add_at_snr(
+    audio_or_features: tf.Tensor, noise: tf.Tensor, snr_db: tf.Tensor
+) -> tf.Tensor:
     x = tf.cast(audio_or_features, tf.float32)
     noise = tf.cast(noise, tf.float32)
     signal_power = tf.reduce_mean(tf.square(x))
@@ -149,7 +151,9 @@ def background_noise(
             maxval=8.0,
             dtype=tf.float32,
         )
-        hum = tf.sin(2.0 * 3.141592653589793 * cycles * positions / tf.maximum(time, 1.0))
+        hum = tf.sin(
+            2.0 * 3.141592653589793 * cycles * positions / tf.maximum(time, 1.0)
+        )
         if x.shape.rank == 2:
             hum = hum[..., tf.newaxis]
         background = background + 0.25 * hum

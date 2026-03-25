@@ -7,8 +7,12 @@ from justdata.acoustic.registry import register_audio_segment_strategy
 from justdata.acoustic.schema import AUDIO, METADATA
 
 
-def _target_samples(sample_rate: tf.Tensor | int, config: SegmentStrategyConfig) -> tf.Tensor:
-    target = tf.round(tf.cast(config.clip_duration, tf.float32) * tf.cast(sample_rate, tf.float32))
+def _target_samples(
+    sample_rate: tf.Tensor | int, config: SegmentStrategyConfig
+) -> tf.Tensor:
+    target = tf.round(
+        tf.cast(config.clip_duration, tf.float32) * tf.cast(sample_rate, tf.float32)
+    )
     return tf.maximum(tf.cast(target, tf.int32), 1)
 
 
@@ -63,7 +67,9 @@ def _pad_reflect(audio: tf.Tensor, target_samples: tf.Tensor) -> tf.Tensor:
     return tf.cond(t > 1, _reflect, _zero_pad)
 
 
-def pad_waveform(audio: tf.Tensor, target_samples: tf.Tensor, pad_mode: str) -> tf.Tensor:
+def pad_waveform(
+    audio: tf.Tensor, target_samples: tf.Tensor, pad_mode: str
+) -> tf.Tensor:
     audio = tf.convert_to_tensor(audio)
     if pad_mode == "zero":
         return _pad_zero(audio, target_samples)
@@ -148,7 +154,9 @@ def _sliding_starts(
     )
     hop = tf.maximum(
         tf.cast(
-            tf.round(tf.cast(hop_duration, tf.float32) * tf.cast(sample_rate, tf.float32)),
+            tf.round(
+                tf.cast(hop_duration, tf.float32) * tf.cast(sample_rate, tf.float32)
+            ),
             tf.int32,
         ),
         1,

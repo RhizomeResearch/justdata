@@ -62,9 +62,7 @@ def _multi_hot(label: tf.Tensor, config: LabelTransformConfig) -> tf.Tensor:
         values = tf.cast(label, tf.float32)
         if label.dtype.is_floating:
             return values
-        is_binary = tf.reduce_all(
-            tf.logical_or(tf.equal(label, 0), tf.equal(label, 1))
-        )
+        is_binary = tf.reduce_all(tf.logical_or(tf.equal(label, 0), tf.equal(label, 1)))
 
         def scatter_indices() -> tf.Tensor:
             indices = tf.cast(tf.reshape(label, [-1]), tf.int32)

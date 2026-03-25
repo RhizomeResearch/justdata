@@ -73,7 +73,9 @@ def _maybe_apply(x: tf.Tensor, prob: float, seed: tf.Tensor, apply_fn) -> tf.Ten
         return x
     if prob >= 1.0:
         return apply_fn()
-    should_apply = tf.random.stateless_uniform([], seed=seed) < tf.cast(prob, tf.float32)
+    should_apply = tf.random.stateless_uniform([], seed=seed) < tf.cast(
+        prob, tf.float32
+    )
     return tf.cond(should_apply, apply_fn, lambda: x)
 
 
@@ -241,7 +243,12 @@ def frequency_mask(
 
     cfg = _merge_config(
         config,
-        {"max_width": max_width, "fill_value": fill_value, "prob": prob, "layout": layout},
+        {
+            "max_width": max_width,
+            "fill_value": fill_value,
+            "prob": prob,
+            "layout": layout,
+        },
     )
     max_width = cfg.get("max_width", 0)
     fill_value = cfg.get("fill_value", "zero")
@@ -282,7 +289,12 @@ def time_mask(
 
     cfg = _merge_config(
         config,
-        {"max_width": max_width, "fill_value": fill_value, "prob": prob, "layout": layout},
+        {
+            "max_width": max_width,
+            "fill_value": fill_value,
+            "prob": prob,
+            "layout": layout,
+        },
     )
     max_width = cfg.get("max_width", 0)
     fill_value = cfg.get("fill_value", "zero")
@@ -341,7 +353,9 @@ def spectrogram_time_roll(
             sampled_shift = _uniform_int(shift_seed, -limit, limit)
         else:
             sampled_shift = tf.cast(shift, tf.int32)
-        return _restore_from_tfc(tf.roll(x, shift=sampled_shift, axis=0), resolved_layout)
+        return _restore_from_tfc(
+            tf.roll(x, shift=sampled_shift, axis=0), resolved_layout
+        )
 
     return _maybe_apply(tf.convert_to_tensor(spectrogram), prob, gate_seed, apply)
 
@@ -461,8 +475,12 @@ def time_frequency_erasing(
     def apply() -> tf.Tensor:
         time = tf.shape(x)[0]
         freq = tf.shape(x)[1]
-        t_start, t_width = _sample_span(time, max_time_width, t_width_seed, t_start_seed)
-        f_start, f_width = _sample_span(freq, max_freq_width, f_width_seed, f_start_seed)
+        t_start, t_width = _sample_span(
+            time, max_time_width, t_width_seed, t_start_seed
+        )
+        f_start, f_width = _sample_span(
+            freq, max_freq_width, f_width_seed, f_start_seed
+        )
         time_positions = tf.range(time)
         freq_positions = tf.range(freq)
         time_mask = tf.logical_and(
@@ -480,12 +498,18 @@ def time_frequency_erasing(
     return _maybe_apply(tf.convert_to_tensor(spectrogram), prob, gate_seed, apply)
 
 
-def _sample_beta(shape: tf.Tensor | Sequence[int], alpha: float, seed: tf.Tensor) -> tf.Tensor:
+def _sample_beta(
+    shape: tf.Tensor | Sequence[int], alpha: float, seed: tf.Tensor
+) -> tf.Tensor:
     if alpha <= 0:
         raise ValueError("alpha must be positive")
     first_seed, second_seed = tf.unstack(tf.random.split(seed, 2))
-    first = tf.random.stateless_gamma(shape, seed=first_seed, alpha=alpha, dtype=tf.float32)
-    second = tf.random.stateless_gamma(shape, seed=second_seed, alpha=alpha, dtype=tf.float32)
+    first = tf.random.stateless_gamma(
+        shape, seed=first_seed, alpha=alpha, dtype=tf.float32
+    )
+    second = tf.random.stateless_gamma(
+        shape, seed=second_seed, alpha=alpha, dtype=tf.float32
+    )
     return first / (first + second + _EPS)
 
 
@@ -704,7 +728,11 @@ def apply_spectrogram_augmentations(
     layout: SpectrogramLayout | None = None,
 ) -> dict:
     specs = normalize_spectrogram_augment_specs(augmentations)
-    if not specs or not _enabled(is_training, augment_eval) or feature_key not in sample:
+    if (
+        not specs
+        or not _enabled(is_training, augment_eval)
+        or feature_key not in sample
+    ):
         return sample
 
     seed = _seed_tensor(seed)

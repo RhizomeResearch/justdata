@@ -57,7 +57,9 @@ def mel_weight_matrix(config: FrontendConfig | dict) -> tf.Tensor:
 
     if mel.filterbank_impl == "tf":
         if mel.mel_scale != "htk" or mel.mel_norm != "none":
-            raise ValueError("TensorFlow mel filters support HTK scale without Slaney normalization")
+            raise ValueError(
+                "TensorFlow mel filters support HTK scale without Slaney normalization"
+            )
         return tf.signal.linear_to_mel_weight_matrix(
             num_mel_bins=mel.n_mels,
             num_spectrogram_bins=num_bins,
@@ -71,7 +73,9 @@ def mel_weight_matrix(config: FrontendConfig | dict) -> tf.Tensor:
         try:
             import librosa
         except ImportError as exc:
-            raise ImportError("librosa mel filters require the acoustic optional dependencies") from exc
+            raise ImportError(
+                "librosa mel filters require the acoustic optional dependencies"
+            ) from exc
         weights = librosa.filters.mel(
             sr=stft.sample_rate,
             n_fft=stft.n_fft,
@@ -87,7 +91,9 @@ def mel_weight_matrix(config: FrontendConfig | dict) -> tf.Tensor:
         return _kaldi_mel_weight_matrix(mel, stft)
 
     if mel.filterbank_impl == "torchaudio":
-        raise ValueError("torchaudio mel filters are not available in this TensorFlow frontend")
+        raise ValueError(
+            "torchaudio mel filters are not available in this TensorFlow frontend"
+        )
 
     raise ValueError(f"Unknown mel filterbank implementation: {mel.filterbank_impl!r}")
 

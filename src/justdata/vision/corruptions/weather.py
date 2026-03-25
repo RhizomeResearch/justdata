@@ -1,6 +1,9 @@
 import tensorflow as tf
 
-from justdata.vision.corruptions.registry import _get_severity_index, register_corruption
+from justdata.vision.corruptions.registry import (
+    _get_severity_index,
+    register_corruption,
+)
 from justdata.vision.utils import _pad, _rotate, from_4d, to_4d
 
 SNOW_PARAMS = (

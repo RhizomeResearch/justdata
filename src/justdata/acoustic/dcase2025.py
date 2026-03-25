@@ -178,7 +178,10 @@ def parse_city_from_row(row) -> str | None:
         return None
     tokens = _stem_tokens(row)
     scene_tokens = scene.split("_") if scene else []
-    if scene_tokens and [token.lower() for token in tokens[: len(scene_tokens)]] == scene_tokens:
+    if (
+        scene_tokens
+        and [token.lower() for token in tokens[: len(scene_tokens)]] == scene_tokens
+    ):
         tokens = tokens[len(scene_tokens) :]
     if tokens:
         candidate = tokens[0]
@@ -272,7 +275,10 @@ def _tensor_device_type(device: tf.Tensor) -> tf.Tensor:
     return tf.case(
         (
             (tf.reduce_any(tf.equal(real, device)), lambda: tf.constant("real")),
-            (tf.reduce_any(tf.equal(simulated, device)), lambda: tf.constant("simulated")),
+            (
+                tf.reduce_any(tf.equal(simulated, device)),
+                lambda: tf.constant("simulated"),
+            ),
         ),
         default=lambda: tf.constant("unknown"),
         exclusive=False,
@@ -368,7 +374,9 @@ class DCASE2025Task1Adapter:
 
         metadata.update(
             {
-                "dataset": tf.constant(self.dataset_name) if hasattr(device, "dtype") else self.dataset_name,
+                "dataset": tf.constant(self.dataset_name)
+                if hasattr(device, "dtype")
+                else self.dataset_name,
                 "split": _optional_text(split),
                 "filename": _optional_text(filename),
                 "scene_label": _optional_text(scene_label),
@@ -376,11 +384,19 @@ class DCASE2025Task1Adapter:
                 "device": device,
                 "device_type": device_type,
                 "is_known_device": is_known_device,
-                "city": _optional_text(_field_or_parse(sample, "city", parse_city_from_row)),
-                "location_id": _optional_text(_field_or_parse(sample, "location_id", _parse_location_id)),
-                "segment_id": _optional_text(_field_or_parse(sample, "segment_id", _parse_segment_id)),
+                "city": _optional_text(
+                    _field_or_parse(sample, "city", parse_city_from_row)
+                ),
+                "location_id": _optional_text(
+                    _field_or_parse(sample, "location_id", _parse_location_id)
+                ),
+                "segment_id": _optional_text(
+                    _field_or_parse(sample, "segment_id", _parse_segment_id)
+                ),
                 "source_recording_id": _optional_text(
-                    _field_or_parse(sample, "source_recording_id", parse_source_recording_id)
+                    _field_or_parse(
+                        sample, "source_recording_id", parse_source_recording_id
+                    )
                 ),
                 "fold": _optional_text(sample.get("fold")),
             }
@@ -475,7 +491,10 @@ def _read_manifest(path: Path) -> list[dict[str, str]]:
                 line = line.strip()
                 if line:
                     rows.append(
-                        {str(key): "" if value is None else str(value) for key, value in json.loads(line).items()}
+                        {
+                            str(key): "" if value is None else str(value)
+                            for key, value in json.loads(line).items()
+                        }
                     )
         return rows
 
@@ -483,7 +502,10 @@ def _read_manifest(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle, dialect=dialect)
         return [
-            {str(key): "" if value is None else str(value) for key, value in row.items()}
+            {
+                str(key): "" if value is None else str(value)
+                for key, value in row.items()
+            }
             for row in reader
         ]
 
@@ -502,7 +524,9 @@ def _resolve_manifest_path(
     elif data_dir is not None:
         path = Path(data_dir).expanduser()
     else:
-        raise ValueError("dcase2025_task1 loading requires data_dir or a dcase2025: manifest path.")
+        raise ValueError(
+            "dcase2025_task1 loading requires data_dir or a dcase2025: manifest path."
+        )
 
     if path.is_dir():
         for name in (
@@ -521,10 +545,14 @@ def _resolve_manifest_path(
     return path
 
 
-def _resolve_audio_path(row: dict, manifest_path: Path, data_dir: Union[None, str, os.PathLike]) -> str:
+def _resolve_audio_path(
+    row: dict, manifest_path: Path, data_dir: Union[None, str, os.PathLike]
+) -> str:
     value = _row_value(row, PATH, "audio_path", "filepath", "file_path", FILENAME)
     if value is None:
-        raise ValueError("DCASE manifest rows must contain a path, audio_path, or filename.")
+        raise ValueError(
+            "DCASE manifest rows must contain a path, audio_path, or filename."
+        )
     path = Path(value).expanduser()
     if path.is_absolute():
         return os.fspath(path)
@@ -551,7 +579,8 @@ def _record(row: dict[str, str], manifest_path: Path, split: str, data_dir) -> d
         PATH: audio_path,
         SPLIT: split,
         DATASET: "dcase2025_task1",
-        EXAMPLE_ID: _row_value(row, EXAMPLE_ID, "example_id") or f"{split}:{Path(filename).stem}",
+        EXAMPLE_ID: _row_value(row, EXAMPLE_ID, "example_id")
+        or f"{split}:{Path(filename).stem}",
         CLIP_ID: _row_value(row, CLIP_ID, "clip_id") or segment_id,
         SOURCE_ID: _row_value(row, SOURCE_ID, "source_id") or source_recording_id,
         START_TIME: _float_value(_row_value(row, START_TIME, "start")),

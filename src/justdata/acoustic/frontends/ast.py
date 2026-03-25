@@ -45,13 +45,15 @@ def _ast_mel_banks(
     right_mel = mel_low + (bins + 2.0) * mel_delta
 
     num_fft_bins = padded_window_size // 2
-    mel = _kaldi_hz_to_mel(
-        fft_bin_width * tf.cast(tf.range(num_fft_bins), tf.float32)
-    )[tf.newaxis, :]
+    mel = _kaldi_hz_to_mel(fft_bin_width * tf.cast(tf.range(num_fft_bins), tf.float32))[
+        tf.newaxis, :
+    ]
 
     up_slope = (mel - left_mel) / (center_mel - left_mel)
     down_slope = (right_mel - mel) / (right_mel - center_mel)
-    weights = tf.maximum(tf.zeros([], dtype=tf.float32), tf.minimum(up_slope, down_slope))
+    weights = tf.maximum(
+        tf.zeros([], dtype=tf.float32), tf.minimum(up_slope, down_slope)
+    )
     return tf.pad(weights, [[0, 0], [0, 1]])
 
 
@@ -77,7 +79,9 @@ def ast_kaldi_fbank(audio: tf.Tensor, config: FrontendConfig | dict) -> tf.Tenso
 
     padded_window_size = _next_power_of_two(stft.win_length)
     if stft.n_fft != padded_window_size:
-        raise ValueError("AST fbank expects n_fft to be the next power of two win_length")
+        raise ValueError(
+            "AST fbank expects n_fft to be the next power of two win_length"
+        )
 
     frames = tf.signal.frame(
         waveform,

@@ -29,18 +29,24 @@ def _axes_from_names(x: tf.Tensor, names: tuple[str, ...]) -> list[int]:
     axes: list[int] = []
     for name in names:
         if name not in _AXES_BY_RANK[rank]:
-            raise ValueError(f"Unknown normalization axis {name!r} for rank-{rank} tensor")
+            raise ValueError(
+                f"Unknown normalization axis {name!r} for rank-{rank} tensor"
+            )
         axes.append(_AXES_BY_RANK[rank][name])
     return axes
 
 
 def _as_float_tensor(value: Any, field_name: str) -> tf.Tensor:
     if isinstance(value, str):
-        raise ValueError(f"{field_name} path references are not loaded by the built-in normalizer")
+        raise ValueError(
+            f"{field_name} path references are not loaded by the built-in normalizer"
+        )
     return tf.cast(tf.convert_to_tensor(value), tf.float32)
 
 
-def _broadcast_vector(x: tf.Tensor, values: tuple[float, ...], field_name: str) -> tf.Tensor:
+def _broadcast_vector(
+    x: tf.Tensor, values: tuple[float, ...], field_name: str
+) -> tf.Tensor:
     rank = _rank(x)
     tensor = _as_float_tensor(values, field_name)
     length = len(values)
@@ -90,7 +96,9 @@ def _mean_std(x: tf.Tensor, axes: list[int], eps: float) -> tf.Tensor:
 
 
 @register_audio_normalization("none")
-def normalize_none(x: tf.Tensor, config: FeatureNormConfig | dict | None = None) -> tf.Tensor:
+def normalize_none(
+    x: tf.Tensor, config: FeatureNormConfig | dict | None = None
+) -> tf.Tensor:
     return tf.convert_to_tensor(x)
 
 
@@ -102,7 +110,9 @@ def normalize_dataset_mean_std(
     x = tf.cast(tf.convert_to_tensor(x), tf.float32)
     mean = _broadcast_stat(x, config.mean, "mean", 0.0)
     std = _broadcast_stat(x, config.std, "std", 1.0)
-    return (x - tf.cast(mean, x.dtype)) / (tf.cast(std, x.dtype) + tf.cast(config.eps, x.dtype))
+    return (x - tf.cast(mean, x.dtype)) / (
+        tf.cast(std, x.dtype) + tf.cast(config.eps, x.dtype)
+    )
 
 
 @register_audio_normalization("checkpoint_mean_std")
@@ -141,7 +151,9 @@ def normalize_kaldi_cmvn(
 
 
 @register_audio_normalization("affine")
-def normalize_affine(x: tf.Tensor, config: FeatureNormConfig | dict | None = None) -> tf.Tensor:
+def normalize_affine(
+    x: tf.Tensor, config: FeatureNormConfig | dict | None = None
+) -> tf.Tensor:
     config = FeatureNormConfig.from_dict(config or {})
     x = tf.cast(tf.convert_to_tensor(x), tf.float32)
     scale = _broadcast_stat(x, config.scale, "scale", 1.0)
@@ -149,7 +161,9 @@ def normalize_affine(x: tf.Tensor, config: FeatureNormConfig | dict | None = Non
     return x * tf.cast(scale, x.dtype) + tf.cast(bias, x.dtype)
 
 
-_NORMALIZERS: dict[str, Callable[[tf.Tensor, FeatureNormConfig | dict | None], tf.Tensor]] = {
+_NORMALIZERS: dict[
+    str, Callable[[tf.Tensor, FeatureNormConfig | dict | None], tf.Tensor]
+] = {
     "none": normalize_none,
     "dataset_mean_std": normalize_dataset_mean_std,
     "checkpoint_mean_std": normalize_checkpoint_mean_std,

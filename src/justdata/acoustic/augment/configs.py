@@ -9,7 +9,9 @@ def _ensure_probability(name: str, value: float) -> None:
         raise ValueError(f"{name} must be in [0, 1]; got {value!r}")
 
 
-def _ensure_order(name_min: str, min_value: float, name_max: str, max_value: float) -> None:
+def _ensure_order(
+    name_min: str, min_value: float, name_max: str, max_value: float
+) -> None:
     if min_value > max_value:
         raise ValueError(f"{name_min} must be <= {name_max}")
 

@@ -30,7 +30,9 @@ def get_adapter(dataset_name: str) -> DatasetAdapter:
     if dataset_name in _ADAPTERS:
         return _ADAPTERS[dataset_name]
 
-    for key, adapter in sorted(_ADAPTERS.items(), key=lambda kv: len(kv[0]), reverse=True):
+    for key, adapter in sorted(
+        _ADAPTERS.items(), key=lambda kv: len(kv[0]), reverse=True
+    ):
         if dataset_name.startswith(key):
             return adapter
 

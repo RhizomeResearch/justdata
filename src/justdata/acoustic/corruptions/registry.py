@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 import tensorflow as tf
@@ -98,7 +98,9 @@ def _split_seed(seed: tf.Tensor | int | None, count: int) -> tf.Tensor:
     return tf.random.split(_seed_tensor(seed), count)
 
 
-def _seed_from_index(seed: int | tf.Tensor, index: tf.Tensor, salt: int = 0) -> tf.Tensor:
+def _seed_from_index(
+    seed: int | tf.Tensor, index: tf.Tensor, salt: int = 0
+) -> tf.Tensor:
     base = tf.cast(_seed_tensor(seed), tf.int64)
     idx = tf.cast(index, tf.int64)
     salted = tf.math.floormod(base[1] + idx + tf.cast(salt, tf.int64), _MAX_SEED)
@@ -186,7 +188,9 @@ def _convolve_waveform(
 
     def convolve_channel(channel: tf.Tensor) -> tf.Tensor:
         signal = channel[tf.newaxis, :, tf.newaxis]
-        padded = tf.pad(signal, [[0, 0], [kernel_length - 1, kernel_length - 1], [0, 0]])
+        padded = tf.pad(
+            signal, [[0, 0], [kernel_length - 1, kernel_length - 1], [0, 0]]
+        )
         full = tf.nn.conv1d(padded, kernel, stride=1, padding="VALID")[0, :, 0]
         return _fit_length(full[start:, tf.newaxis], time)[:, 0]
 

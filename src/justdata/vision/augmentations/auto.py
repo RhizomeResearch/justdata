@@ -299,7 +299,9 @@ def trivial_augment(
     seeds = tf.random.split(seed, 2)
     # Discrete uniform magnitude: m ~ U{0, 1, …, 30}
     magnitude = tf.cast(
-        tf.random.stateless_uniform([], minval=0, maxval=31, dtype=tf.int32, seed=seeds[0]),
+        tf.random.stateless_uniform(
+            [], minval=0, maxval=31, dtype=tf.int32, seed=seeds[0]
+        ),
         tf.float32,
     )
 
@@ -343,7 +345,9 @@ def trivial_augment_wide(
     seeds = tf.random.split(seed, 2)
     # Discrete uniform magnitude: m ~ U{0, 1, …, 30}
     magnitude = tf.cast(
-        tf.random.stateless_uniform([], minval=0, maxval=31, dtype=tf.int32, seed=seeds[0]),
+        tf.random.stateless_uniform(
+            [], minval=0, maxval=31, dtype=tf.int32, seed=seeds[0]
+        ),
         tf.float32,
     )
 
@@ -357,11 +361,11 @@ def trivial_augment_wide(
         bboxes=bboxes,
         num_layers=1,
         magnitude=magnitude,
-        translate_const=32.0,   # Wide: fixed 32 px (not image-proportional)
-        rotate_max=135.0,       # Wide: ±135°
-        shear_max=0.99,         # Wide: ±0.99
-        enhance_max=0.99,       # Wide: MaxDelta=0.99
-        posterize_max_bits=6,   # Wide: min 2 bits kept (8 − 6 = 2)
+        translate_const=32.0,  # Wide: fixed 32 px (not image-proportional)
+        rotate_max=135.0,  # Wide: ±135°
+        shear_max=0.99,  # Wide: ±0.99
+        enhance_max=0.99,  # Wide: MaxDelta=0.99
+        posterize_max_bits=6,  # Wide: min 2 bits kept (8 − 6 = 2)
         exclude_ops=ta_exclude,
     )
 

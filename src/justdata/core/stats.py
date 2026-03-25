@@ -19,9 +19,13 @@ def make_stats_iterator(
     metadata_mode: Literal["full", "numeric_only", "none"] = "numeric_only",
 ):
     if augment:
-        logger.warning("Statistics iterator requested augment=True; no augmentation is applied.")
+        logger.warning(
+            "Statistics iterator requested augment=True; no augmentation is applied."
+        )
     if metadata_mode not in {"full", "numeric_only", "none"}:
-        raise ValueError("metadata_mode must be one of 'full', 'numeric_only', or 'none'.")
+        raise ValueError(
+            "metadata_mode must be one of 'full', 'numeric_only', or 'none'."
+        )
 
     options = tf.data.Options()
     options.deterministic = deterministic
@@ -62,7 +66,9 @@ def _observations(features: np.ndarray, axes: tuple[str | int, ...]) -> np.ndarr
     reduce_axes = sorted({_axis_index(axis, rank) for axis in axes})
     remaining_axes = [axis for axis in range(rank) if axis not in reduce_axes]
     moved = np.moveaxis(features, reduce_axes + remaining_axes, range(rank))
-    reduce_size = int(np.prod([features.shape[axis] for axis in reduce_axes], dtype=np.int64))
+    reduce_size = int(
+        np.prod([features.shape[axis] for axis in reduce_axes], dtype=np.int64)
+    )
     remaining_shape = tuple(features.shape[axis] for axis in remaining_axes)
     return moved.reshape((reduce_size,) + remaining_shape)
 
@@ -97,8 +103,12 @@ def _iter_group_feature_pairs(
             values = [python_value(get_metadata_value(sample, key)) for key in keys]
             if values and all(hasattr(np.asarray(value), "shape") for value in values):
                 arrays = [np.asarray(value) for value in values]
-                if features.ndim > 0 and all(array.shape[:1] == features.shape[:1] for array in arrays):
-                    batched_group = arrays[0] if len(arrays) == 1 else list(zip(*arrays))
+                if features.ndim > 0 and all(
+                    array.shape[:1] == features.shape[:1] for array in arrays
+                ):
+                    batched_group = (
+                        arrays[0] if len(arrays) == 1 else list(zip(*arrays))
+                    )
 
         if batched_group is not None:
             for idx, value in enumerate(batched_group):

@@ -152,7 +152,9 @@ def get_pipeline(
 
     if effective_pipeline is None and task is not None:
         effective_pipeline = (
-            task if "/" in task or effective_modality is None else f"{effective_modality}/{task}"
+            task
+            if "/" in task or effective_modality is None
+            else f"{effective_modality}/{task}"
         )
 
     dataset_is_pipeline_name = False

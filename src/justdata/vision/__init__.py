@@ -1,4 +1,11 @@
-from justdata.vision import augmentations, corruptions, datasets, pipelines, presets, sources
+from justdata.vision import (
+    augmentations,
+    corruptions,
+    datasets,
+    pipelines,
+    presets,
+    sources,
+)
 
 __all__ = [
     "augmentations",

@@ -33,7 +33,11 @@ def _with_model_input_contract(config: Dict[str, Any]) -> Dict[str, Any]:
     layout = "bchw" if permute_image else "bhwc"
     static_shape = None
     if image_size is not None:
-        static_shape = (3, image_size, image_size) if permute_image else (image_size, image_size, 3)
+        static_shape = (
+            (3, image_size, image_size)
+            if permute_image
+            else (image_size, image_size, 3)
+        )
 
     contract = {
         "output_key": "image",

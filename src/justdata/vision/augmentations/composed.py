@@ -3,7 +3,10 @@ from typing import Tuple, Union
 import tensorflow as tf
 
 from justdata.vision.augmentations.color import color_jitter, gaussian_blur, solarize
-from justdata.vision.augmentations.geometric import random_horizontal_flip, random_resized_crop
+from justdata.vision.augmentations.geometric import (
+    random_horizontal_flip,
+    random_resized_crop,
+)
 from justdata.vision.encodings.heatmaps import bboxes_to_gaussian_heatmaps
 
 

@@ -77,7 +77,9 @@ def _extract_audio(sample: dict) -> tuple[tf.Tensor, tf.Tensor | None]:
     if PATH in sample:
         return decode_audio_file(sample[PATH])
 
-    raise ValueError(f"Acoustic sample must contain '{WAVEFORM}', '{AUDIO}', or '{PATH}'.")
+    raise ValueError(
+        f"Acoustic sample must contain '{WAVEFORM}', '{AUDIO}', or '{PATH}'."
+    )
 
 
 def _extract_sample_rate(

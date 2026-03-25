@@ -81,7 +81,9 @@ class MetadataEncoder:
             values: list[str] = []
             for example in examples:
                 value = self._first_present(example, keys)
-                if value is None or isinstance(_python_value(value), (int, float, bool)):
+                if value is None or isinstance(
+                    _python_value(value), (int, float, bool)
+                ):
                     continue
                 text = str(_python_value(value))
                 if text not in values:
@@ -133,7 +135,9 @@ class MetadataEncoder:
         return all(isinstance(v, (list, tuple, set)) for v in value.values())
 
     @staticmethod
-    def _first_present(metadata: Mapping[str, Any], keys: tuple[str, ...]) -> Any | None:
+    def _first_present(
+        metadata: Mapping[str, Any], keys: tuple[str, ...]
+    ) -> Any | None:
         for key in keys:
             if key in metadata:
                 return metadata[key]

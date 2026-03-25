@@ -41,15 +41,20 @@ def pcen_compression(x: tf.Tensor, config: LogCompressionConfig | dict) -> tf.Te
     def _scan(prev: tf.Tensor, current: tf.Tensor) -> tf.Tensor:
         return (1.0 - smooth) * prev + smooth * current
 
-    smoother = tf.concat([tf.expand_dims(first, 0), tf.scan(_scan, x[1:], initializer=first)], axis=0)
+    smoother = tf.concat(
+        [tf.expand_dims(first, 0), tf.scan(_scan, x[1:], initializer=first)], axis=0
+    )
     pcen = tf.pow(
-        x / tf.pow(tf.cast(config.eps, x.dtype) + smoother, config.alpha) + config.delta,
+        x / tf.pow(tf.cast(config.eps, x.dtype) + smoother, config.alpha)
+        + config.delta,
         config.r,
     ) - tf.pow(tf.cast(config.delta, x.dtype), config.r)
     return tf.maximum(pcen, tf.zeros([], dtype=pcen.dtype))
 
 
-def compress_log(x: tf.Tensor, config: LogCompressionConfig | dict | None = None) -> tf.Tensor:
+def compress_log(
+    x: tf.Tensor, config: LogCompressionConfig | dict | None = None
+) -> tf.Tensor:
     config = LogCompressionConfig.from_dict(config or {})
     x = tf.cast(tf.convert_to_tensor(x), tf.float32)
     floor = tf.maximum(x, tf.cast(config.amin, x.dtype))

@@ -72,7 +72,9 @@ def load_huggingface_vision_splits(
         try:
             ds_tf = ds_tf.apply(tf.data.experimental.assert_cardinality(len(ds_hf)))
         except Exception as e:
-            logger.warning(f"Failed to assert cardinality for HF dataset {hf_name}: {e}")
+            logger.warning(
+                f"Failed to assert cardinality for HF dataset {hf_name}: {e}"
+            )
 
         loaded_splits.append(ds_tf)
 

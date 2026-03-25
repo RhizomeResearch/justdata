@@ -114,7 +114,9 @@ def mix_labels(
         num_classes=num_classes,
         label_smoothing=label_smoothing,
     )
-    return blend_prepared_labels(labels, partner_labels, coefficient, bce_target=bce_target)
+    return blend_prepared_labels(
+        labels, partner_labels, coefficient, bce_target=bce_target
+    )
 
 
 __all__ = [

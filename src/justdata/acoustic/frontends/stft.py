@@ -14,11 +14,15 @@ def ensure_waveform_tc(audio: tf.Tensor) -> tf.Tensor:
     if audio.shape.rank == 1:
         audio = tf.expand_dims(audio, -1)
     if audio.shape.rank != 2:
-        raise ValueError("Audio frontend input must be a waveform with shape [T] or [T, C]")
+        raise ValueError(
+            "Audio frontend input must be a waveform with shape [T] or [T, C]"
+        )
     return audio
 
 
-def _window_fn(config: STFTConfig) -> Callable[[tf.Tensor, tf.dtypes.DType], tf.Tensor] | None:
+def _window_fn(
+    config: STFTConfig,
+) -> Callable[[tf.Tensor, tf.dtypes.DType], tf.Tensor] | None:
     if config.window == "rectangular":
         return lambda frame_length, dtype: tf.ones([frame_length], dtype=dtype)
 
@@ -89,7 +93,9 @@ def stft_power_spectrogram(audio: tf.Tensor, config: STFTConfig | dict) -> tf.Te
     frames = tf.transpose(frames, [1, 2, 0])
 
     if config.normalized:
-        frames = frames / tf.cast(tf.sqrt(tf.cast(config.win_length, tf.float32)), frames.dtype)
+        frames = frames / tf.cast(
+            tf.sqrt(tf.cast(config.win_length, tf.float32)), frames.dtype
+        )
 
     magnitude = tf.abs(frames)
     if config.power == 1:
@@ -97,7 +103,9 @@ def stft_power_spectrogram(audio: tf.Tensor, config: STFTConfig | dict) -> tf.Te
     elif config.power == 2:
         spectrogram = tf.square(magnitude)
     else:
-        spectrogram = tf.pow(tf.maximum(magnitude, tf.cast(config.eps, magnitude.dtype)), config.power)
+        spectrogram = tf.pow(
+            tf.maximum(magnitude, tf.cast(config.eps, magnitude.dtype)), config.power
+        )
 
     if not config.onesided:
         spectrogram = _full_spectrum_from_onesided(spectrogram, config.n_fft)

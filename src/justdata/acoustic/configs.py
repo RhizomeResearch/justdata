@@ -79,7 +79,9 @@ class AudioPreprocessConfig(_SerializableConfig):
     target_sample_rate: int
     dtype: Literal["float32"] = "float32"
     waveform_range: Literal["[-1,1]"] = "[-1,1]"
-    channel_strategy: Literal["mono_mean", "mono_left", "mono_right", "keep"] = "mono_mean"
+    channel_strategy: Literal["mono_mean", "mono_left", "mono_right", "keep"] = (
+        "mono_mean"
+    )
     resampler: Literal["tensorflow", "soxr", "kaiser_best", "hf_audio", "identity"] = (
         "tensorflow"
     )
@@ -103,7 +105,9 @@ class AudioPreprocessConfig(_SerializableConfig):
             {"tensorflow", "soxr", "kaiser_best", "hf_audio", "identity"},
         )
         _ensure_literal(
-            "normalize_waveform", self.normalize_waveform, {"none", "peak", "rms", "lufs"}
+            "normalize_waveform",
+            self.normalize_waveform,
+            {"none", "peak", "rms", "lufs"},
         )
         if self.clip_value is not None and self.clip_value <= 0:
             raise ValueError("clip_value must be positive when set")
@@ -138,9 +142,15 @@ class SegmentStrategyConfig(_SerializableConfig):
             self.train_mode,
             {"random_crop", "center_crop", "full", "sliding", "pad_or_crop"},
         )
-        _ensure_literal("eval_mode", self.eval_mode, {"center_crop", "full", "sliding", "multi_crop"})
+        _ensure_literal(
+            "eval_mode",
+            self.eval_mode,
+            {"center_crop", "full", "sliding", "multi_crop"},
+        )
         _ensure_literal("pad_mode", self.pad_mode, {"zero", "repeat", "reflect"})
-        _ensure_literal("pad_position", self.pad_position, {"right", "center", "random"})
+        _ensure_literal(
+            "pad_position", self.pad_position, {"right", "center", "random"}
+        )
         _ensure_positive("num_views", self.num_views)
         if self.sliding_hop_duration is not None:
             _ensure_positive("sliding_hop_duration", self.sliding_hop_duration)
@@ -190,7 +200,9 @@ class STFTConfig(_SerializableConfig):
         _ensure_positive("hop_length", self.hop_length)
         if self.win_length > self.n_fft:
             raise ValueError("win_length must be <= n_fft")
-        _ensure_literal("window", self.window, {"hann", "hamming", "povey", "rectangular"})
+        _ensure_literal(
+            "window", self.window, {"hann", "hamming", "povey", "rectangular"}
+        )
         _ensure_literal("pad_mode", self.pad_mode, {"reflect", "constant"})
         _ensure_positive("power", self.power)
         _ensure_positive("eps", self.eps)
@@ -392,7 +404,9 @@ class LabelTransformConfig(_SerializableConfig):
         self.validate()
 
     def validate(self) -> LabelTransformConfig:
-        _ensure_literal("mode", self.mode, {"index", "one_hot", "multi_hot", "text", "event_frames"})
+        _ensure_literal(
+            "mode", self.mode, {"index", "one_hot", "multi_hot", "text", "event_frames"}
+        )
         if self.num_classes is not None:
             _ensure_positive("num_classes", self.num_classes)
         if self.class_names is not None and not isinstance(self.class_names, tuple):
@@ -430,11 +444,17 @@ class AudioPreset(_SerializableConfig):
 
     def __post_init__(self) -> None:
         if isinstance(self.preprocess, Mapping):
-            object.__setattr__(self, "preprocess", AudioPreprocessConfig.from_dict(self.preprocess))
+            object.__setattr__(
+                self, "preprocess", AudioPreprocessConfig.from_dict(self.preprocess)
+            )
         if isinstance(self.segment, Mapping):
-            object.__setattr__(self, "segment", SegmentStrategyConfig.from_dict(self.segment))
+            object.__setattr__(
+                self, "segment", SegmentStrategyConfig.from_dict(self.segment)
+            )
         if isinstance(self.frontend, Mapping):
-            object.__setattr__(self, "frontend", FrontendConfig.from_dict(self.frontend))
+            object.__setattr__(
+                self, "frontend", FrontendConfig.from_dict(self.frontend)
+            )
         if isinstance(self.label_transform, Mapping):
             object.__setattr__(
                 self,
@@ -470,12 +490,18 @@ class AudioPreset(_SerializableConfig):
         if not isinstance(self.label_transform, LabelTransformConfig):
             raise ValueError("label_transform must be a LabelTransformConfig")
         if self.preprocess.target_sample_rate != self.target_sample_rate:
-            raise ValueError("target_sample_rate must match preprocess.target_sample_rate")
-        _ensure_literal("layout", self.layout, {"bt", "btc", "btf", "bft", "bcft", "btfc"})
+            raise ValueError(
+                "target_sample_rate must match preprocess.target_sample_rate"
+            )
+        _ensure_literal(
+            "layout", self.layout, {"bt", "btc", "btf", "bft", "bcft", "btfc"}
+        )
         if self.output_key is not None and not self.output_key:
             raise ValueError("output_key must be non-empty when set")
         if self.static_shape is not None and not isinstance(self.static_shape, tuple):
             raise ValueError("static_shape must be a tuple or None")
         _ensure_literal("dtype", self.dtype, {"float32", "float16", "bfloat16"})
-        _ensure_literal("metadata_mode", self.metadata_mode, {"full", "numeric_only", "none"})
+        _ensure_literal(
+            "metadata_mode", self.metadata_mode, {"full", "numeric_only", "none"}
+        )
         return self

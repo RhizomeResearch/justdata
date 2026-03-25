@@ -5,9 +5,14 @@ from typing import Any
 
 import tensorflow as tf
 
-from justdata.acoustic.configs import AudioPreset, FrontendConfig, STFTConfig
+from justdata.acoustic.configs import AudioPreset, FrontendConfig
 from justdata.acoustic.frontends.stft import compute_num_frames
-from justdata.acoustic.layouts import AudioLayout, OutputKind, convert_audio_layout, unbatched_shape_for_layout
+from justdata.acoustic.layouts import (
+    AudioLayout,
+    OutputKind,
+    convert_audio_layout,
+    unbatched_shape_for_layout,
+)
 from justdata.acoustic.registry import get_audio_frontend
 from justdata.acoustic.schema import FEATURES, WAVEFORM
 
@@ -78,7 +83,11 @@ def _frequency_bins(frontend: FrontendConfig) -> int | None:
     if frontend.name == "stft_magnitude":
         if frontend.stft is None:
             return None
-        return frontend.stft.n_fft // 2 + 1 if frontend.stft.onesided else frontend.stft.n_fft
+        return (
+            frontend.stft.n_fft // 2 + 1
+            if frontend.stft.onesided
+            else frontend.stft.n_fft
+        )
     if frontend.name == "mfcc":
         return frontend.n_mfcc
     if frontend.mel is not None:
@@ -172,11 +181,15 @@ def _pad_or_crop_axis(x: tf.Tensor, target: tf.Tensor | int, axis: int) -> tf.Te
     return tf.pad(cropped, paddings)
 
 
-def pad_or_crop_time(x: tf.Tensor, target_frames: int | tf.Tensor, *, time_axis: int = 0) -> tf.Tensor:
+def pad_or_crop_time(
+    x: tf.Tensor, target_frames: int | tf.Tensor, *, time_axis: int = 0
+) -> tf.Tensor:
     return _pad_or_crop_axis(x, target_frames, time_axis)
 
 
-def pad_time_to_multiple(x: tf.Tensor, multiple: int, *, time_axis: int = 0) -> tf.Tensor:
+def pad_time_to_multiple(
+    x: tf.Tensor, multiple: int, *, time_axis: int = 0
+) -> tf.Tensor:
     if multiple <= 0:
         raise ValueError("multiple must be positive")
     current = tf.shape(x)[time_axis]

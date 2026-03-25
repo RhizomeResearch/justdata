@@ -1,8 +1,15 @@
 import tensorflow as tf
 
-from justdata.vision.augmentations.registry import get_augment_strategy, get_crop_strategy
+from justdata.vision.augmentations.registry import (
+    get_augment_strategy,
+    get_crop_strategy,
+)
 from justdata.vision.stages import normalize_image_format, resize_and_normalize
-from justdata.vision.transforms import normalize, pad_to_patch_multiple, resize_short_side
+from justdata.vision.transforms import (
+    normalize,
+    pad_to_patch_multiple,
+    resize_short_side,
+)
 
 
 def make_preprocessing(image_key="image", mask_key="mask"):

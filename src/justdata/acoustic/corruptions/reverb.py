@@ -28,7 +28,9 @@ def reverb_rir(
     else:
         sample_rate = _sample_rate(config)
         rt60 = _severity_value(REVERB_RT60_SECONDS, severity)
-        max_ir_samples = 4096 if config is None else int(config.get("max_ir_samples", 4096))
+        max_ir_samples = (
+            4096 if config is None else int(config.get("max_ir_samples", 4096))
+        )
         target_length = tf.cast(tf.round(rt60 * sample_rate), tf.int32)
         length = tf.minimum(tf.maximum(target_length, 2), max_ir_samples)
         noise_seed = tf.unstack(_split_seed(seed, 1))[0]

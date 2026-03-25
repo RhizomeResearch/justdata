@@ -81,7 +81,9 @@ def create_minic_datasets(
     return datasets_out[0], n_batches
 
 
-def _seed_from_index(seed: int | tf.Tensor, index: tf.Tensor, salt: int = 0) -> tf.Tensor:
+def _seed_from_index(
+    seed: int | tf.Tensor, index: tf.Tensor, salt: int = 0
+) -> tf.Tensor:
     base = tf.cast(seed, tf.int64)
     idx = tf.cast(index, tf.int64)
     salted = tf.math.floormod(base * 1_103_515_245 + idx + salt, _MAX_SEED)

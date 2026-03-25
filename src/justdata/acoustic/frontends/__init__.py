@@ -1,7 +1,11 @@
 from justdata.acoustic.frontends.ast import ast_kaldi_fbank
 from justdata.acoustic.frontends.kaldi import kaldi_fbank
 from justdata.acoustic.frontends.log import compress_log, logmel, pcen_compression
-from justdata.acoustic.frontends.mel import mel_power, mel_spectrogram, mel_weight_matrix
+from justdata.acoustic.frontends.mel import (
+    mel_power,
+    mel_spectrogram,
+    mel_weight_matrix,
+)
 from justdata.acoustic.frontends.mfcc import mfcc
 from justdata.acoustic.frontends.pcen import pcen_mel
 from justdata.acoustic.frontends.stft import (

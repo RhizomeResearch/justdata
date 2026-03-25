@@ -10,8 +10,15 @@ from justdata.vision.augmentations.mixing import (
     mixup_cutmix,
     random_erasing,
 )
-from justdata.vision.augmentations.registry import get_augment_strategy, get_crop_strategy
-from justdata.vision.stages import apply_eval_views, normalize_image_format, resize_and_normalize
+from justdata.vision.augmentations.registry import (
+    get_augment_strategy,
+    get_crop_strategy,
+)
+from justdata.vision.stages import (
+    apply_eval_views,
+    normalize_image_format,
+    resize_and_normalize,
+)
 from justdata.vision.transforms import nhwc_to_nchw, normalize
 
 

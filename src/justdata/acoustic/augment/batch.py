@@ -24,7 +24,6 @@ from justdata.acoustic.registry import (
 from justdata.acoustic.schema import FEATURES, LABEL, WAVEFORM
 from justdata.core.label_mixing import (
     LabelMixMode,
-    blend_prepared_labels,
     mix_labels,
     prepare_labels_for_mixing,
 )
@@ -75,10 +74,16 @@ def _merge_config(
     return config_cls(**data)
 
 
-def _sample_beta(shape: tf.Tensor | Sequence[int], alpha: float, seed: tf.Tensor) -> tf.Tensor:
+def _sample_beta(
+    shape: tf.Tensor | Sequence[int], alpha: float, seed: tf.Tensor
+) -> tf.Tensor:
     first_seed, second_seed = tf.unstack(tf.random.split(seed, 2))
-    first = tf.random.stateless_gamma(shape, seed=first_seed, alpha=alpha, dtype=tf.float32)
-    second = tf.random.stateless_gamma(shape, seed=second_seed, alpha=alpha, dtype=tf.float32)
+    first = tf.random.stateless_gamma(
+        shape, seed=first_seed, alpha=alpha, dtype=tf.float32
+    )
+    second = tf.random.stateless_gamma(
+        shape, seed=second_seed, alpha=alpha, dtype=tf.float32
+    )
     return first / (first + second + _EPS)
 
 
@@ -139,7 +144,9 @@ def _maybe_apply_pair(
         return x, labels
     if prob >= 1.0:
         return apply_fn()
-    should_apply = tf.random.stateless_uniform([], seed=seed) < tf.cast(prob, tf.float32)
+    should_apply = tf.random.stateless_uniform([], seed=seed) < tf.cast(
+        prob, tf.float32
+    )
     return tf.cond(should_apply, apply_fn, skip_fn)
 
 
@@ -153,7 +160,9 @@ def _maybe_apply_tensor(
         return x
     if prob >= 1.0:
         return apply_fn()
-    should_apply = tf.random.stateless_uniform([], seed=seed) < tf.cast(prob, tf.float32)
+    should_apply = tf.random.stateless_uniform([], seed=seed) < tf.cast(
+        prob, tf.float32
+    )
     return tf.cond(should_apply, apply_fn, lambda: x)
 
 
@@ -208,7 +217,9 @@ def audio_mixup(
         )
         return mixed_x, mixed_y
 
-    return _maybe_apply_pair(x, prepared_labels, cfg.prob, gate_seed, apply, lambda: (x, prepared_labels))
+    return _maybe_apply_pair(
+        x, prepared_labels, cfg.prob, gate_seed, apply, lambda: (x, prepared_labels)
+    )
 
 
 @register_audio_batch_augment("wavmix", requires_labels=True)
@@ -228,7 +239,9 @@ def audio_wavmix(
     augment_eval: bool = False,
 ):
     if input_kind != "waveform":
-        raise ValueError("WavMix only supports waveform inputs; got input_kind != 'waveform'.")
+        raise ValueError(
+            "WavMix only supports waveform inputs; got input_kind != 'waveform'."
+        )
 
     x = tf.convert_to_tensor(waveform)
     if x.shape.rank not in (2, 3):
@@ -279,7 +292,9 @@ def audio_wavmix(
             ),
         )
 
-    return _maybe_apply_pair(x, prepared_labels, cfg.prob, gate_seed, apply, lambda: (x, prepared_labels))
+    return _maybe_apply_pair(
+        x, prepared_labels, cfg.prob, gate_seed, apply, lambda: (x, prepared_labels)
+    )
 
 
 def _selected_width(size: tf.Tensor, fraction: tf.Tensor) -> tf.Tensor:
@@ -302,7 +317,9 @@ def _cutmix_widths(
         return tf.cast(time, tf.int32), _selected_width(frequency, cut_fraction)
     if axes == "time_frequency":
         side_fraction = tf.sqrt(cut_fraction)
-        return _selected_width(time, side_fraction), _selected_width(frequency, side_fraction)
+        return _selected_width(time, side_fraction), _selected_width(
+            frequency, side_fraction
+        )
     raise ValueError("axes must be one of 'time', 'frequency', or 'time_frequency'")
 
 
@@ -405,8 +422,12 @@ def audio_cutmix_spec(
         partner = _stateless_shuffled_range(batch, shuffle_seed)
         lam = _sample_lambda(cfg.alpha, beta_seed, keep_max_lambda)
         time_width, freq_width = _cutmix_widths(time, freq, lam, cfg.axes)
-        time_start = _uniform_int(time_seed, tf.constant(0, tf.int32), tf.maximum(time - time_width, 0))
-        freq_start = _uniform_int(freq_seed, tf.constant(0, tf.int32), tf.maximum(freq - freq_width, 0))
+        time_start = _uniform_int(
+            time_seed, tf.constant(0, tf.int32), tf.maximum(time - time_width, 0)
+        )
+        freq_start = _uniform_int(
+            freq_seed, tf.constant(0, tf.int32), tf.maximum(freq - freq_width, 0)
+        )
 
         time_positions = tf.range(time)
         freq_positions = tf.range(freq)
@@ -494,7 +515,9 @@ def audio_batch_mixstyle(
         def mix_batch() -> tf.Tensor:
             x_float = tf.cast(x, tf.float32)
             mean = tf.reduce_mean(x_float, axis=stat_axes, keepdims=True)
-            var = tf.reduce_mean(tf.square(x_float - mean), axis=stat_axes, keepdims=True)
+            var = tf.reduce_mean(
+                tf.square(x_float - mean), axis=stat_axes, keepdims=True
+            )
             std = tf.sqrt(var + _EPS)
             partner = _stateless_shuffled_range(batch, shuffle_seed)
             partner_mean = tf.gather(mean, partner, axis=0)
@@ -653,7 +676,9 @@ def apply_batch_augmentations(
     if not specs or not _enabled(is_training, augment_eval):
         return dict(sample)
 
-    resolved_label_mode = label_mode or _label_mode_from_transform(label_transform) or "single_label"
+    resolved_label_mode = (
+        label_mode or _label_mode_from_transform(label_transform) or "single_label"
+    )
     resolved_num_classes = num_classes
     if resolved_num_classes is None:
         resolved_num_classes = _num_classes_from_transform(label_transform)
@@ -664,7 +689,9 @@ def apply_batch_augmentations(
     for spec, spec_seed in zip(specs, tf.unstack(seeds)):
         kwargs = dict(spec)
         name = kwargs.pop("name")
-        key = _resolve_input_key(result, name, kwargs.pop("input_key", input_key), input_kind)
+        key = _resolve_input_key(
+            result, name, kwargs.pop("input_key", input_key), input_kind
+        )
         if key is None or key not in result:
             continue
 

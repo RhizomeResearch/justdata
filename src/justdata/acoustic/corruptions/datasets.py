@@ -61,16 +61,18 @@ def create_audio_corruption_datasets(
 
         if corruption_domain == "waveform":
             ds_c = ds.enumerate().map(
-                lambda i, sample, c_name=c_name, config=config, index=index: _corrupt_sample(
-                    i,
-                    sample,
-                    c_name,
-                    severity,
-                    seed,
-                    "waveform",
-                    WAVEFORM,
-                    index,
-                    config,
+                lambda i, sample, c_name=c_name, config=config, index=index: (
+                    _corrupt_sample(
+                        i,
+                        sample,
+                        c_name,
+                        severity,
+                        seed,
+                        "waveform",
+                        WAVEFORM,
+                        index,
+                        config,
+                    )
                 ),
                 num_parallel_calls=tf.data.AUTOTUNE,
                 deterministic=True,
@@ -87,16 +89,18 @@ def create_audio_corruption_datasets(
                 deterministic=True,
             )
             ds_c = ds_c.enumerate().map(
-                lambda i, sample, c_name=c_name, config=config, index=index: _corrupt_sample(
-                    i,
-                    sample,
-                    c_name,
-                    severity,
-                    seed,
-                    "spectrogram",
-                    FEATURES,
-                    index,
-                    config,
+                lambda i, sample, c_name=c_name, config=config, index=index: (
+                    _corrupt_sample(
+                        i,
+                        sample,
+                        c_name,
+                        severity,
+                        seed,
+                        "spectrogram",
+                        FEATURES,
+                        index,
+                        config,
+                    )
                 ),
                 num_parallel_calls=tf.data.AUTOTUNE,
                 deterministic=True,
@@ -139,7 +143,9 @@ def _corrupt_sample(
     config: dict | None,
 ) -> dict:
     if key not in sample:
-        raise ValueError(f"Audio corruption domain '{domain}' requires sample key '{key}'.")
+        raise ValueError(
+            f"Audio corruption domain '{domain}' requires sample key '{key}'."
+        )
     sample_seed = _seed_from_index(seed, index, salt=salt * 1_000_003)
     result = dict(sample)
     result[key] = apply_audio_corruption(

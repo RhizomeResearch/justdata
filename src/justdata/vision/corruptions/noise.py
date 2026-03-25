@@ -1,6 +1,9 @@
 import tensorflow as tf
 
-from justdata.vision.corruptions.registry import _get_severity_index, register_corruption
+from justdata.vision.corruptions.registry import (
+    _get_severity_index,
+    register_corruption,
+)
 
 NOISE_STD = (8.0, 12.0, 18.0, 26.0, 38.0)
 

@@ -95,7 +95,9 @@ def make_augmentations(
         if "spectrogram" in train_augment:
             spectrogram_augmentations = train_augment["spectrogram"]
         else:
-            known_spectrogram_augments = set(list_audio_spectrogram_augments()) - {"none"}
+            known_spectrogram_augments = set(list_audio_spectrogram_augments()) - {
+                "none"
+            }
             spectrogram_augmentations = {
                 ("passt_patchout" if key == "patchout" else key): value
                 for key, value in train_augment.items()
@@ -174,9 +176,7 @@ def make_late_augmentations(**kwargs):
 
     if batch_augmentations is None:
         batch_augmentations = {
-            key: kwargs.pop(key)
-            for key in tuple(kwargs)
-            if key in known_batch_augments
+            key: kwargs.pop(key) for key in tuple(kwargs) if key in known_batch_augments
         }
 
     if not batch_augmentations:
@@ -227,9 +227,7 @@ def make_postprocessing(
         segment_keys = set(SegmentStrategyConfig.__dataclass_fields__)
         if segment_keys.intersection(kwargs):
             segment_config = {
-                key: kwargs.pop(key)
-                for key in tuple(kwargs)
-                if key in segment_keys
+                key: kwargs.pop(key) for key in tuple(kwargs) if key in segment_keys
             }
             original_segment_config = segment_config
         elif frontend is None:

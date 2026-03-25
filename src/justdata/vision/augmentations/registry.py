@@ -3,7 +3,10 @@ from typing import Dict, Protocol
 
 import tensorflow as tf
 
-from justdata.core.augmentations import AugmentationMetadata, attach_augmentation_metadata
+from justdata.core.augmentations import (
+    AugmentationMetadata,
+    attach_augmentation_metadata,
+)
 
 
 class CropStrategyFn(Protocol):
@@ -128,7 +131,9 @@ def get_augment_strategy_metadata(name: str) -> AugmentationMetadata:
 
 
 def list_crop_strategy_metadata() -> tuple[AugmentationMetadata, ...]:
-    return tuple(_CROP_STRATEGY_METADATA[name] for name in sorted(_CROP_STRATEGY_METADATA))
+    return tuple(
+        _CROP_STRATEGY_METADATA[name] for name in sorted(_CROP_STRATEGY_METADATA)
+    )
 
 
 def list_augment_strategy_metadata() -> tuple[AugmentationMetadata, ...]:

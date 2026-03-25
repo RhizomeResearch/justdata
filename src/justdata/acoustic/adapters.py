@@ -84,7 +84,9 @@ def standardize_waveform_layout(
             tf.shape(value)[0] <= 8,
             tf.shape(value)[-1] > 8,
         )
-        return tf.cond(is_channels_first, lambda: tf.transpose(value, [1, 0]), lambda: value)
+        return tf.cond(
+            is_channels_first, lambda: tf.transpose(value, [1, 0]), lambda: value
+        )
 
     rank = audio.shape.rank
     if rank == 1:
@@ -184,7 +186,9 @@ def _decode_or_get_waveform(
     return waveform, decoded_sample_rate
 
 
-def _slice_window(sample: dict, waveform: tf.Tensor, sample_rate: tf.Tensor) -> tf.Tensor:
+def _slice_window(
+    sample: dict, waveform: tf.Tensor, sample_rate: tf.Tensor
+) -> tf.Tensor:
     if START_TIME not in sample or END_TIME not in sample:
         return waveform
 
@@ -192,7 +196,9 @@ def _slice_window(sample: dict, waveform: tf.Tensor, sample_rate: tf.Tensor) -> 
     end_time = tf.cast(sample[END_TIME], tf.float32)
 
     def _slice() -> tf.Tensor:
-        start = tf.cast(tf.round(start_time * tf.cast(sample_rate, tf.float32)), tf.int32)
+        start = tf.cast(
+            tf.round(start_time * tf.cast(sample_rate, tf.float32)), tf.int32
+        )
         end = tf.cast(tf.round(end_time * tf.cast(sample_rate, tf.float32)), tf.int32)
         start = tf.clip_by_value(start, 0, tf.shape(waveform)[0])
         end = tf.clip_by_value(end, start, tf.shape(waveform)[0])
@@ -231,7 +237,9 @@ def adapt_acoustic_sample(
         original_sample_rate = sample_rate
     original_sample_rate = tf.cast(original_sample_rate, tf.int32)
 
-    waveform = to_float32_waveform(waveform, input_dtype=input_dtype, clip_value=clip_value)
+    waveform = to_float32_waveform(
+        waveform, input_dtype=input_dtype, clip_value=clip_value
+    )
     waveform = standardize_waveform_layout(waveform, layout_hint=layout_hint)
     waveform = _slice_window(sample, waveform, sample_rate)
 

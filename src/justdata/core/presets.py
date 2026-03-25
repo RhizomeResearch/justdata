@@ -29,7 +29,9 @@ def canonical_preset_json(config: Any) -> str:
 
 
 def preset_hash(config: Any) -> str:
-    return hashlib.sha256(canonical_preset_json(config).encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(canonical_preset_json(config).encode("utf-8")).hexdigest()[
+        :16
+    ]
 
 
 @dataclass(frozen=True)
@@ -87,7 +89,9 @@ def get_dataset_presets(dataset: str, *, modality: str = "core") -> Dict[str, An
 
 def get_resolved_preset(dataset: str, *, modality: str = "core") -> ResolvedPreset:
     name, config = _find_preset(dataset, modality=modality)
-    return ResolvedPreset(name=name or dataset.lower(), modality=modality, config=config)
+    return ResolvedPreset(
+        name=name or dataset.lower(), modality=modality, config=config
+    )
 
 
 def merge_with_presets(
@@ -134,7 +138,11 @@ def merge_with_presets(
                         tuple(x) if isinstance(x, list) else x for x in def_to_compare
                     )
 
-                if k not in default or val_to_compare != def_to_compare or k not in result:
+                if (
+                    k not in default
+                    or val_to_compare != def_to_compare
+                    or k not in result
+                ):
                     result[k] = v
         return result
 

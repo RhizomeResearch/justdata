@@ -114,7 +114,9 @@ def _maybe_apply(
         return waveform
     if prob >= 1.0:
         return apply_fn()
-    should_apply = tf.random.stateless_uniform([], seed=seed) < tf.cast(prob, tf.float32)
+    should_apply = tf.random.stateless_uniform([], seed=seed) < tf.cast(
+        prob, tf.float32
+    )
     return tf.cond(should_apply, apply_fn, lambda: waveform)
 
 
@@ -136,7 +138,9 @@ def _sample_target_length(
         raise ValueError("random_crop requires target_length or crop_duration")
     if sample_rate is None:
         raise ValueError("random_crop with crop_duration requires sample_rate")
-    target = tf.round(tf.cast(crop_duration, tf.float32) * tf.cast(sample_rate, tf.float32))
+    target = tf.round(
+        tf.cast(crop_duration, tf.float32) * tf.cast(sample_rate, tf.float32)
+    )
     return tf.cast(tf.maximum(target, 1.0), tf.int32)
 
 
@@ -501,7 +505,9 @@ def dynamic_range_compression(
         )
         ratio = _uniform_float(ratio_seed, cfg.ratio_min, cfg.ratio_max)
         magnitude = tf.abs(audio)
-        level_db = 20.0 * tf.math.log(magnitude + tf.cast(eps, tf.float32)) / tf.math.log(10.0)
+        level_db = (
+            20.0 * tf.math.log(magnitude + tf.cast(eps, tf.float32)) / tf.math.log(10.0)
+        )
         over = level_db - threshold_db
         compressed_over = over / ratio
         gain_db = tf.where(over > 0.0, compressed_over - over, tf.zeros_like(over))
@@ -541,7 +547,9 @@ def rir_convolution(
         },
     )
     if cfg.rir_dataset is not None and rir is None:
-        raise ValueError("rir_dataset loading is not implemented; pass an explicit rir tensor")
+        raise ValueError(
+            "rir_dataset loading is not implemented; pass an explicit rir tensor"
+        )
 
     seed = _seed_tensor(seed)
     gate_seed, rir_seed = tf.unstack(tf.random.split(seed, 2))
@@ -562,26 +570,38 @@ def _prepare_rir(
     normalize: bool,
 ) -> tf.Tensor:
     if rir is None:
-        tail = tf.random.stateless_normal([63], seed=seed, stddev=0.05, dtype=tf.float32)
+        tail = tf.random.stateless_normal(
+            [63], seed=seed, stddev=0.05, dtype=tf.float32
+        )
         decay = tf.exp(-tf.linspace(0.0, 4.0, 63))
         rir = tf.concat([tf.ones([1], dtype=tf.float32), tail * decay], axis=0)
     ir = tf.reshape(tf.cast(tf.convert_to_tensor(rir), tf.float32), [-1])
-    ir = tf.cond(tf.shape(ir)[0] > 0, lambda: ir, lambda: tf.ones([1], dtype=tf.float32))
+    ir = tf.cond(
+        tf.shape(ir)[0] > 0, lambda: ir, lambda: tf.ones([1], dtype=tf.float32)
+    )
     if normalize:
         energy = tf.sqrt(tf.reduce_sum(tf.square(ir)))
         ir = tf.math.divide_no_nan(ir, tf.maximum(energy, _EPS))
     return ir
 
 
-def _convolve_channels(audio: tf.Tensor, ir: tf.Tensor, compensate_delay: bool) -> tf.Tensor:
+def _convolve_channels(
+    audio: tf.Tensor, ir: tf.Tensor, compensate_delay: bool
+) -> tf.Tensor:
     time = tf.shape(audio)[0]
     kernel = tf.reverse(ir, axis=[0])[:, tf.newaxis, tf.newaxis]
     kernel_length = tf.shape(kernel)[0]
-    start = tf.argmax(tf.abs(ir), output_type=tf.int32) if compensate_delay else (kernel_length - 1) // 2
+    start = (
+        tf.argmax(tf.abs(ir), output_type=tf.int32)
+        if compensate_delay
+        else (kernel_length - 1) // 2
+    )
 
     def convolve_channel(channel: tf.Tensor) -> tf.Tensor:
         signal = channel[tf.newaxis, :, tf.newaxis]
-        padded = tf.pad(signal, [[0, 0], [kernel_length - 1, kernel_length - 1], [0, 0]])
+        padded = tf.pad(
+            signal, [[0, 0], [kernel_length - 1, kernel_length - 1], [0, 0]]
+        )
         full = tf.nn.conv1d(padded, kernel, stride=1, padding="VALID")[0, :, 0]
         return _fit_length(full[start:, tf.newaxis], time)[:, 0]
 
@@ -690,7 +710,9 @@ def codec_simulation(
             coded = _mp3_proxy(clipped, cfg.bitrate)
         else:
             raise ValueError(f"Unknown codec simulation: {cfg.codec!r}")
-        return tf.cast(_restore_rank(tf.clip_by_value(coded, -1.0, 1.0), rank), input_dtype)
+        return tf.cast(
+            _restore_rank(tf.clip_by_value(coded, -1.0, 1.0), rank), input_dtype
+        )
 
     return _maybe_apply(tf.convert_to_tensor(waveform), cfg.prob, gate_seed, apply)
 
@@ -810,7 +832,9 @@ def apply_waveform_augmentations(
     result = dict(sample)
     result[audio_key] = waveform
     if DURATION in result and sample_rate is not None:
-        result[DURATION] = infer_duration(tf.shape(tf.convert_to_tensor(waveform))[0], sample_rate)
+        result[DURATION] = infer_duration(
+            tf.shape(tf.convert_to_tensor(waveform))[0], sample_rate
+        )
     return result
 
 

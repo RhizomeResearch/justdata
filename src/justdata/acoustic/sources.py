@@ -45,7 +45,9 @@ _LOCAL_REQUIRED_COLUMNS = {
 
 def _strip_prefix(dataset_name: str, prefix: str) -> str:
     if not dataset_name.startswith(prefix):
-        raise ValueError(f"Expected dataset name to start with {prefix!r}; got {dataset_name!r}.")
+        raise ValueError(
+            f"Expected dataset name to start with {prefix!r}; got {dataset_name!r}."
+        )
     return dataset_name[len(prefix) :]
 
 
@@ -67,11 +69,18 @@ def _resolve_manifest_path(
                 path = candidate
 
     if path.is_dir():
-        for name in ("manifest.csv", "manifest.jsonl", "metadata.csv", "metadata.jsonl"):
+        for name in (
+            "manifest.csv",
+            "manifest.jsonl",
+            "metadata.csv",
+            "metadata.jsonl",
+        ):
             candidate = path / name
             if candidate.exists():
                 return candidate
-        raise ValueError(f"No manifest.csv/jsonl or metadata.csv/jsonl found in {path}.")
+        raise ValueError(
+            f"No manifest.csv/jsonl or metadata.csv/jsonl found in {path}."
+        )
 
     return path
 
@@ -116,7 +125,9 @@ def _float_value(value: str, default: float = 0.0) -> float:
     return float(value)
 
 
-def _resolve_audio_path(value: str, manifest_path: Path, data_dir: Union[None, str, os.PathLike]) -> str:
+def _resolve_audio_path(
+    value: str, manifest_path: Path, data_dir: Union[None, str, os.PathLike]
+) -> str:
     path = Path(value).expanduser()
     if path.is_absolute():
         return os.fspath(path)
@@ -240,7 +251,9 @@ def _load_manifest_splits(
         missing = _LOCAL_REQUIRED_COLUMNS - columns
         if missing:
             missing_cols = ", ".join(sorted(missing))
-            raise ValueError(f"Local acoustic manifest is missing required columns: {missing_cols}.")
+            raise ValueError(
+                f"Local acoustic manifest is missing required columns: {missing_cols}."
+            )
 
     dataset = manifest_path.stem
     return [
@@ -326,7 +339,9 @@ def _as_waveform_np(audio_value, *, decode_mode: str, fallback_sample_rate: int 
 
     if isinstance(audio_value, dict):
         path = audio_value.get("path")
-        sample_rate = audio_value.get("sampling_rate", audio_value.get(SAMPLE_RATE, sample_rate))
+        sample_rate = audio_value.get(
+            "sampling_rate", audio_value.get(SAMPLE_RATE, sample_rate)
+        )
         array = audio_value.get("array")
         if decode_mode == "justdata" and path:
             waveform, decoded_sample_rate = decode_audio_file(path)
@@ -434,14 +449,18 @@ def load_huggingface_audio_splits(
             FILENAME: tf.TensorSpec(shape=(), dtype=tf.string),
         }
         if label_column is not None:
-            output_signature[LABEL] = tf.TensorSpec(shape=label_shape, dtype=label_dtype)
+            output_signature[LABEL] = tf.TensorSpec(
+                shape=label_shape, dtype=label_dtype
+            )
 
         ds_tf = tf.data.Dataset.from_generator(gen, output_signature=output_signature)
 
         try:
             ds_tf = ds_tf.apply(tf.data.experimental.assert_cardinality(len(ds_hf)))
         except Exception as e:
-            logger.warning(f"Failed to assert cardinality for HF audio dataset {hf_name}: {e}")
+            logger.warning(
+                f"Failed to assert cardinality for HF audio dataset {hf_name}: {e}"
+            )
 
         loaded_splits.append(ds_tf)
 

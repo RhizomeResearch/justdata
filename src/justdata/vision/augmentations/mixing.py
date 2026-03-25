@@ -60,7 +60,9 @@ def mixup_cutmix(
         labels_1 = _prepare_labels(lbls)
         labels_2 = _prepare_labels(gather_shuffled(lbls))
         lam = tf.reshape(lam, [-1, 1])
-        new_labels = blend_prepared_labels(labels_1, labels_2, lam, bce_target=bce_target)
+        new_labels = blend_prepared_labels(
+            labels_1, labels_2, lam, bce_target=bce_target
+        )
         return imgs, new_labels
 
     def _mixup(imgs, lbls):

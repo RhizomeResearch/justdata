@@ -76,7 +76,9 @@ def _seed_tensor(seed: tf.Tensor | int | None) -> tf.Tensor:
     return seed[:2]
 
 
-def _uniform_int(seed: tf.Tensor, minval: tf.Tensor, maxval_exclusive: tf.Tensor) -> tf.Tensor:
+def _uniform_int(
+    seed: tf.Tensor, minval: tf.Tensor, maxval_exclusive: tf.Tensor
+) -> tf.Tensor:
     minval = tf.cast(minval, tf.int32)
     maxval_exclusive = tf.cast(maxval_exclusive, tf.int32)
     return tf.cond(
@@ -94,8 +96,12 @@ def _uniform_int(seed: tf.Tensor, minval: tf.Tensor, maxval_exclusive: tf.Tensor
 
 def _sample_beta(seed: tf.Tensor, alpha: float = 10.0) -> tf.Tensor:
     first_seed, second_seed = tf.unstack(tf.random.split(seed, 2))
-    first = tf.random.stateless_gamma([], seed=first_seed, alpha=alpha, dtype=tf.float32)
-    second = tf.random.stateless_gamma([], seed=second_seed, alpha=alpha, dtype=tf.float32)
+    first = tf.random.stateless_gamma(
+        [], seed=first_seed, alpha=alpha, dtype=tf.float32
+    )
+    second = tf.random.stateless_gamma(
+        [], seed=second_seed, alpha=alpha, dtype=tf.float32
+    )
     return first / (first + second + tf.constant(1e-6, dtype=tf.float32))
 
 
@@ -124,7 +130,9 @@ def ast_frontend(num_mel_bins: int = 128) -> FrontendConfig:
     )
 
 
-def ast_pad_or_crop_fbank(fbank: tf.Tensor, target_length: int | tf.Tensor) -> tf.Tensor:
+def ast_pad_or_crop_fbank(
+    fbank: tf.Tensor, target_length: int | tf.Tensor
+) -> tf.Tensor:
     fbank = tf.convert_to_tensor(fbank)
     target = tf.cast(target_length, tf.int32)
     current = tf.shape(fbank)[0]
@@ -182,7 +190,9 @@ def ast_frequency_mask(
         positions >= sampled_start,
         positions < sampled_start + sampled_width,
     )
-    return tf.where(mask[tf.newaxis, :, tf.newaxis], tf.zeros([], dtype=fbank.dtype), fbank)
+    return tf.where(
+        mask[tf.newaxis, :, tf.newaxis], tf.zeros([], dtype=fbank.dtype), fbank
+    )
 
 
 def ast_time_mask(
@@ -216,7 +226,9 @@ def ast_time_mask(
         positions >= sampled_start,
         positions < sampled_start + sampled_width,
     )
-    return tf.where(mask[:, tf.newaxis, tf.newaxis], tf.zeros([], dtype=fbank.dtype), fbank)
+    return tf.where(
+        mask[:, tf.newaxis, tf.newaxis], tf.zeros([], dtype=fbank.dtype), fbank
+    )
 
 
 def ast_specaugment(
@@ -247,11 +259,15 @@ def ast_add_noise_and_roll(
         scale = tf.random.stateless_uniform([], seed=scale_seed, minval=0.0, maxval=0.1)
     else:
         scale = tf.cast(noise_scale, tf.float32)
-    noise = tf.random.stateless_uniform(tf.shape(fbank), seed=noise_seed, dtype=tf.float32)
+    noise = tf.random.stateless_uniform(
+        tf.shape(fbank), seed=noise_seed, dtype=tf.float32
+    )
     fbank = fbank + tf.cast(noise * scale, fbank.dtype)
 
     if roll_shift is None:
-        shift = _uniform_int(roll_seed, tf.constant(-10, tf.int32), tf.constant(10, tf.int32))
+        shift = _uniform_int(
+            roll_seed, tf.constant(-10, tf.int32), tf.constant(10, tf.int32)
+        )
     else:
         shift = tf.cast(roll_shift, tf.int32)
     return tf.roll(fbank, shift=shift, axis=0)
@@ -269,7 +285,15 @@ def _metadata_for_recipe(recipe_name: str) -> dict[str, Any]:
         "reference_commit": AST_REFERENCE_COMMIT,
         "ast": {
             key: recipe[key]
-            for key in ("target_length", "freqm", "timem", "mixup", "mean", "std", "noise")
+            for key in (
+                "target_length",
+                "freqm",
+                "timem",
+                "mixup",
+                "mean",
+                "std",
+                "noise",
+            )
         },
     }
 
@@ -324,20 +348,28 @@ def ast_speechcommands_16k_1s_fbank128() -> AudioPreset:
     return _recipe_preset("ast_speechcommands_16k_1s_fbank128", "speechcommands")
 
 
-def _ast_config(metadata: Mapping[str, Any] | None, train_augment: Mapping[str, Any] | None) -> dict:
+def _ast_config(
+    metadata: Mapping[str, Any] | None, train_augment: Mapping[str, Any] | None
+) -> dict:
     ast = {}
     if isinstance(metadata, Mapping) and isinstance(metadata.get("ast"), Mapping):
         ast.update(metadata["ast"])
-    if isinstance(train_augment, Mapping) and isinstance(train_augment.get("ast"), Mapping):
+    if isinstance(train_augment, Mapping) and isinstance(
+        train_augment.get("ast"), Mapping
+    ):
         ast.update(train_augment["ast"])
     return ast
 
 
-def _target_length(layout: str, static_shape: tuple[int | None, ...] | None, ast: Mapping[str, Any]) -> int:
+def _target_length(
+    layout: str, static_shape: tuple[int | None, ...] | None, ast: Mapping[str, Any]
+) -> int:
     if "target_length" in ast:
         return int(ast["target_length"])
     if static_shape is None:
-        raise ValueError("AST pipeline requires static_shape or metadata['ast']['target_length']")
+        raise ValueError(
+            "AST pipeline requires static_shape or metadata['ast']['target_length']"
+        )
     if layout == "btf":
         return int(static_shape[0])
     if layout == "bft":
@@ -349,7 +381,9 @@ def _target_length(layout: str, static_shape: tuple[int | None, ...] | None, ast
     raise ValueError(f"Unsupported AST layout: {layout!r}")
 
 
-def _transform_sample_label(result: dict, label_config: LabelTransformConfig | None) -> dict:
+def _transform_sample_label(
+    result: dict, label_config: LabelTransformConfig | None
+) -> dict:
     if label_config is None or LABEL not in result:
         return result
     label, metadata = transform_label(
@@ -445,10 +479,14 @@ def _make_ast_feature_stage(
     label_config: LabelTransformConfig | None,
     is_training: bool,
 ):
-    def stage(sample: dict, seed: tf.Tensor | int | None = None, num_classes=None) -> dict:
+    def stage(
+        sample: dict, seed: tf.Tensor | int | None = None, num_classes=None
+    ) -> dict:
         del num_classes
         seed = _seed_tensor(seed)
-        segment_seed, mix_seed, spec_seed, noise_seed = tf.unstack(tf.random.split(seed, 4))
+        segment_seed, mix_seed, spec_seed, noise_seed = tf.unstack(
+            tf.random.split(seed, 4)
+        )
         result = dict(sample)
 
         if segment_config is not None:
@@ -474,7 +512,9 @@ def _make_ast_feature_stage(
         features = ast_kaldi_fbank(result[WAVEFORM], frontend)
         features = ast_pad_or_crop_fbank(features, target_length)
         if is_training:
-            features = ast_specaugment(features, freqm=freqm, timem=timem, seed=spec_seed)
+            features = ast_specaugment(
+                features, freqm=freqm, timem=timem, seed=spec_seed
+            )
         features = ast_normalize_fbank(features, norm_mean, norm_std)
         if is_training and noise:
             features = ast_add_noise_and_roll(features, seed=noise_seed)
@@ -517,7 +557,9 @@ def ast_pipeline(
 
     is_training = postproc_kwargs.get("is_training", False)
     frontend_config = FrontendConfig.from_dict(frontend or ast_frontend())
-    segment_config = SegmentStrategyConfig.from_dict(segment) if segment is not None else None
+    segment_config = (
+        SegmentStrategyConfig.from_dict(segment) if segment is not None else None
+    )
     label_config = (
         LabelTransformConfig.from_dict(label_transform)
         if label_transform is not None

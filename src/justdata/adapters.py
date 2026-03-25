@@ -1,3 +1,4 @@
+import threading
 from typing import Any, Dict, Protocol
 
 
@@ -8,11 +9,18 @@ class DatasetAdapter(Protocol):
 
 
 _ADAPTERS: Dict[str, DatasetAdapter] = {}
+_ADAPTER_LOCK = threading.Lock()
 
 
 def register_adapter(dataset_name: str):
     def decorator(fn: DatasetAdapter):
-        _ADAPTERS[dataset_name] = fn
+        with _ADAPTER_LOCK:
+            if dataset_name in _ADAPTERS:
+                raise ValueError(
+                    f"Adapter for '{dataset_name}' already registered by "
+                    f"{_ADAPTERS[dataset_name].__module__}.{_ADAPTERS[dataset_name].__qualname__}"
+                )
+            _ADAPTERS[dataset_name] = fn
         return fn
 
     return decorator

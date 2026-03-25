@@ -1,11 +1,14 @@
 import copy
+import threading
 from typing import Any, Dict
 
 _PRESETS: Dict[str, Dict[str, Any]] = {}
+_PRESET_LOCK = threading.Lock()
 
 
 def register_preset(dataset: str, config: Dict[str, Any]):
-    _PRESETS[dataset.lower()] = config
+    with _PRESET_LOCK:
+        _PRESETS[dataset.lower()] = config
 
 
 def get_dataset_presets(dataset: str) -> Dict[str, Any]:
@@ -13,8 +16,9 @@ def get_dataset_presets(dataset: str) -> Dict[str, Any]:
     # Check exact match first
     if dataset in _PRESETS:
         return _PRESETS[dataset]
-    # Check prefix match (e.g. "cifar" matches "cifar10")
-    for key, val in _PRESETS.items():
+    # Check prefix match, longest first so "cifar100" beats "cifar"
+    # for a query like "cifar100_corrupted".
+    for key, val in sorted(_PRESETS.items(), key=lambda kv: len(kv[0]), reverse=True):
         if key != "_default" and dataset.startswith(key):
             return val
     return _PRESETS.get("_default", {})

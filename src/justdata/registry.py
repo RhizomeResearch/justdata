@@ -1,4 +1,5 @@
-from typing import Any, Callable, Dict, Literal, Tuple
+import threading
+from typing import Callable, Dict, Literal, Tuple
 
 KnownDataset = Literal[
     "cifar10",
@@ -17,6 +18,8 @@ TaskType = Literal[
     "classification", "object_detection", "segmentation", "depth_estimation"
 ]
 
+_REGISTRY_LOCK = threading.Lock()
+
 _DATASET_TASK_MAP: Dict[str, str] = {
     "cifar10": "classification",
     "cifar100": "classification",
@@ -33,14 +36,19 @@ _DATASET_TASK_MAP: Dict[str, str] = {
 
 def register_dataset(name: str, task_type: str):
     """Register a new dataset -> task mapping at runtime."""
-    _DATASET_TASK_MAP[name] = task_type
+    with _REGISTRY_LOCK:
+        _DATASET_TASK_MAP[name] = task_type
 
 
 def get_task_for_dataset(name: str) -> str | None:
     if name in _DATASET_TASK_MAP:
         return _DATASET_TASK_MAP[name]
-    # Check prefix match (e.g. "imagenet_a3" -> "imagenet")
-    for key, val in _DATASET_TASK_MAP.items():
+    # Check prefix match (e.g. "imagenet_a3" -> "imagenet").
+    # Sort by key length descending so longest prefix wins
+    # (avoids "cifar10" shadowing "cifar100" for "cifar100_xyz").
+    for key, val in sorted(
+        _DATASET_TASK_MAP.items(), key=lambda kv: len(kv[0]), reverse=True
+    ):
         if name.startswith(key):
             return val
     return None
@@ -90,7 +98,13 @@ def register_pipeline(name: str):
     """
 
     def decorator(fn: Callable[..., PipelineFuncs]):
-        _PIPELINES[name] = fn
+        with _REGISTRY_LOCK:
+            if name in _PIPELINES:
+                raise ValueError(
+                    f"Pipeline '{name}' already registered by "
+                    f"{_PIPELINES[name].__module__}.{_PIPELINES[name].__qualname__}"
+                )
+            _PIPELINES[name] = fn
         return fn
 
     return decorator
@@ -108,33 +122,45 @@ def get_pipeline(
     Resolves and configures a pipeline.
 
     Args:
-        dataset: Actual dataset name (used for task inference).
-        preset: Preset name for default hyperparameters (defaults to `dataset`).
+        dataset: Actual dataset name (used for task inference and preset
+            resolution).  If no ``task`` or ``pipeline_name`` is given and
+            ``dataset`` does not appear in the dataset-task registry, the
+            value is checked against registered pipeline names as a
+            convenience (e.g. ``get_pipeline("classification")``).  In that
+            case preset merging is skipped unless an explicit ``preset`` is
+            provided.
+        preset: Preset name for default hyperparameters (defaults to
+            ``dataset``).
         task: Explicit task type (e.g. "classification").
-        pipeline_name: Explicit pipeline name (alias for `task`).
+        pipeline_name: Explicit pipeline name (alias for ``task``).
         apply_presets: Whether to merge with registered presets.
         **kwargs: Overrides for pipeline/preset parameters.
     """
     from justdata.presets import merge_with_presets
 
-    # 1. Resolve preset name (falls back to dataset name)
-    preset_name = preset or dataset
-
-    if apply_presets and preset_name:
-        kwargs = merge_with_presets(preset_name, kwargs)
-
-    # 2. Resolve task/pipeline name
+    # 1. Resolve task/pipeline name
     effective_task = pipeline_name or task
+    _dataset_is_pipeline_name = False
+
     if effective_task is None and dataset:
         effective_task = get_task_for_dataset(dataset)
         if effective_task is None and dataset in _PIPELINES:
+            # ``dataset`` is actually a pipeline name, not a real dataset.
             effective_task = dataset
+            _dataset_is_pipeline_name = True
 
     if effective_task is None:
         raise ValueError(
             f"Could not resolve task for dataset='{dataset}' and preset='{preset}'. "
             "Please specify `task` or `pipeline_name`."
         )
+
+    # 2. Resolve presets — skip when dataset was actually a pipeline name
+    #    (avoids leaking default presets into bare pipeline requests).
+    preset_name = preset or (dataset if not _dataset_is_pipeline_name else None)
+
+    if apply_presets and preset_name:
+        kwargs = merge_with_presets(preset_name, kwargs)
 
     return DataPipeline(effective_task, **kwargs)
 

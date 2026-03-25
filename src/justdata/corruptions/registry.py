@@ -1,13 +1,21 @@
+import threading
 from typing import Callable, Dict
 
 import tensorflow as tf
 
 _CORRUPTION_REGISTRY: Dict[str, Callable] = {}
+_CORRUPTION_LOCK = threading.Lock()
 
 
 def register_corruption(name: str):
     def decorator(fn):
-        _CORRUPTION_REGISTRY[name] = fn
+        with _CORRUPTION_LOCK:
+            if name in _CORRUPTION_REGISTRY:
+                raise ValueError(
+                    f"Corruption '{name}' already registered by "
+                    f"{_CORRUPTION_REGISTRY[name].__module__}.{_CORRUPTION_REGISTRY[name].__qualname__}"
+                )
+            _CORRUPTION_REGISTRY[name] = fn
         return fn
 
     return decorator

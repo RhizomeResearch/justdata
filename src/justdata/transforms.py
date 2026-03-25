@@ -80,7 +80,6 @@ def resize_image(
     image_size: int,
     resize_size: int | None = 256,
     method: str = "bilinear",
-    # enforce_last: int | None = 3,
 ):
     image = tf.cast(image, tf.float32)
 
@@ -90,7 +89,33 @@ def resize_image(
     else:
         image = tf.image.resize(image, [image_size, image_size], method=method)
 
-    # if enforce_last is not None:
-    #     image = image[:, :, :enforce_last]
-
     return image
+
+
+@tf.function
+def pad_to_patch_multiple(
+    image: tf.Tensor,
+    patch_size: int = 14,
+    pad_mode: str = "CONSTANT",
+) -> tf.Tensor:
+    """Pads an image so height and width are multiples of ``patch_size``.
+
+    Padding is applied to the bottom and right edges only, suitable for
+    dense ViT evaluation where boundary pixels must not be dropped.
+
+    Args:
+        image: 3-D tensor ``[H, W, C]``.
+        patch_size: ViT patch size (e.g. 14 or 16).
+        pad_mode: One of ``CONSTANT``, ``REFLECT``, ``SYMMETRIC``.
+
+    Returns:
+        Padded image tensor.
+    """
+    shape = tf.shape(image)
+    h, w = shape[0], shape[1]
+
+    pad_h = (patch_size - h % patch_size) % patch_size
+    pad_w = (patch_size - w % patch_size) % patch_size
+
+    paddings = [[0, pad_h], [0, pad_w], [0, 0]]
+    return tf.pad(image, paddings, mode=pad_mode)

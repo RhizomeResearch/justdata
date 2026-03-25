@@ -5,7 +5,7 @@ from justdata.transforms import nhwc_to_nchw, normalize, resize_image
 
 
 def normalize_image_format(sample: dict, *, image_key: str = "image") -> dict:
-    """Rank fix, CHW→HWC, grayscale→RGB, RGBA→RGB."""
+    """Rank fix, CHW->HWC, grayscale->RGB, RGBA->RGB."""
     image = sample[image_key]
 
     image = tf.cond(
@@ -42,7 +42,7 @@ def resize_and_normalize(
     normalization_params: tuple | None = None,
     permute: bool = True,
 ) -> dict:
-    """Resize, [0,1]→normalized, optionally HWC→CHW."""
+    """Resize, [0,1]->normalized, optionally HWC->CHW."""
     res = {}
     for key in image_keys:
         if key not in sample:

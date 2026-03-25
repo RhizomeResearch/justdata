@@ -30,7 +30,7 @@ _DATASET_TASK_MAP: Dict[str, str] = {
 
 
 def register_dataset(name: str, task_type: str):
-    """Register a new dataset → task mapping at runtime."""
+    """Register a new dataset -> task mapping at runtime."""
     _DATASET_TASK_MAP[name] = task_type
 
 

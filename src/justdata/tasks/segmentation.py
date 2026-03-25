@@ -2,6 +2,7 @@ import tensorflow as tf
 
 from justdata.augmentations.registry import get_augment_strategy, get_crop_strategy
 from justdata.stages import co_transform, normalize_image_format, resize_and_normalize
+from justdata.transforms import normalize, pad_to_patch_multiple, resize_short_side
 
 
 def make_preprocessing(image_key="image", mask_key="mask"):
@@ -67,8 +68,65 @@ def make_postprocessing(
         (0.229, 0.224, 0.225),
     ),
     permute_image: bool = True,
+    patch_align: bool = False,
+    patch_size: int = 14,
+    val_resize_size: int | None = None,
 ):
+    """Build postprocessing for segmentation.
+
+    Args:
+        patch_align: If ``True``, pad images/masks to the nearest multiple
+            of ``patch_size`` instead of resizing to a fixed square.  This
+            is the recommended validation strategy for ViT-based dense
+            prediction (avoids dropping boundary pixels).
+        val_resize_size: When ``patch_align`` is ``True``, resize the
+            shorter side to this value before padding.  Defaults to
+            ``image_size`` if not set.
+    """
+
     def postprocessing(sample):
+        if patch_align and not is_training:
+            # Dense ViT evaluation: resize shorter side, pad to patch multiple
+            target = val_resize_size if val_resize_size is not None else image_size
+            image = tf.cast(sample["image"], tf.float32)
+            image = resize_short_side(image, target_size=target, method="bicubic")
+            if normalize_image:
+                if normalization_params is None:
+                    raise ValueError(
+                        "`normalization_params` needs to be provided if "
+                        "`normalize_image` is True"
+                    )
+                image = normalize(image, *normalization_params)
+            image = pad_to_patch_multiple(image, patch_size=patch_size)
+            if permute_image:
+                from justdata.transforms import nhwc_to_nchw
+
+                image = nhwc_to_nchw(image)
+            sample = sample | {"image": image}
+
+            if "mask" in sample:
+                mask = sample["mask"]
+                mask = tf.cond(
+                    tf.equal(tf.rank(mask), 2),
+                    lambda: tf.expand_dims(mask, -1),
+                    lambda: mask,
+                )
+                mask = resize_short_side(
+                    tf.cast(mask, tf.float32),
+                    target_size=target,
+                    method="nearest",
+                )
+                mask = pad_to_patch_multiple(mask, patch_size=patch_size)
+                mask = tf.cond(
+                    tf.equal(tf.shape(mask)[-1], 1),
+                    lambda: tf.squeeze(mask, -1),
+                    lambda: mask,
+                )
+                sample = sample | {"mask": mask}
+
+            return sample
+
+        # Standard fixed-size postprocessing
         sample = resize_and_normalize(
             sample,
             image_keys=["image"],

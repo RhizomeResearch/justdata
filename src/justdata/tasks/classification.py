@@ -31,9 +31,11 @@ def make_augmentations(
     mode: Literal["ssl", "sl"] = "sl",
     ra_kwargs: dict = None,
     ta_kwargs: dict = None,
+    cj_kwargs: dict = None,
     gc_kwargs: dict = None,
     lc_kwargs: dict = None,
     crop_type: str = "random_resized",
+    interpolation: str = "bilinear",
     padding: int = 4,
     pad_mode: str = "REFLECT",
     augment_type: str = "rand_augment",
@@ -50,6 +52,7 @@ def make_augmentations(
 
     ra_kwargs = ra_kwargs or {}
     ta_kwargs = ta_kwargs or {}
+    cj_kwargs = cj_kwargs or {}
     gc_kwargs = gc_kwargs or {}
     lc_kwargs = lc_kwargs or {}
 
@@ -57,6 +60,16 @@ def make_augmentations(
     gc_kwargs.setdefault("scale", (0.4, 1.0))
     lc_kwargs.setdefault("size", int(image_size * 0.425))
     lc_kwargs.setdefault("scale", (0.05, 0.4))
+
+    # Select augmentation kwargs based on strategy
+    if augment_type == "rand_augment":
+        _aug_kwargs = ra_kwargs
+    elif augment_type == "trivial_augment":
+        _aug_kwargs = ta_kwargs
+    elif augment_type == "color_jitter":
+        _aug_kwargs = cj_kwargs
+    else:
+        _aug_kwargs = {}
 
     def augmentations(sample, seed):
         seeds = tf.random.split(seed, 2)
@@ -81,9 +94,9 @@ def make_augmentations(
                 seed=seeds[0],
                 padding=padding,
                 pad_mode=pad_mode,
+                interpolation=interpolation,
             )
-            aug_kwargs = ra_kwargs if augment_type == "rand_augment" else ta_kwargs
-            aug_image = aug_fn(cropped_image, seeds[1], **aug_kwargs)
+            aug_image = aug_fn(cropped_image, seeds[1], **_aug_kwargs)
             res["image"] = aug_image
         else:
             raise ValueError(f"Unknown mode `{mode}`. Expected one of ['sl', 'ssl']")
@@ -131,13 +144,17 @@ def make_late_augmentations(
             input_is_nchw, lambda: tf.transpose(images, [0, 2, 3, 1]), lambda: images
         )
 
+        # Random erasing is applied per-sample before batch mixing (tensor domain)
+        if random_erasing_prob > 0:
+            images = random_erasing(images, seed=seeds[0], p=random_erasing_prob)
+
         if mixup_alpha > 0 or cutmix_alpha > 0:
             if num_classes is None:
                 raise ValueError("`num_classes` must be provided for mixup/cutmix.")
             images, labels = mixup_cutmix(
                 images=images,
                 labels=labels,
-                seed=seeds[0],
+                seed=seeds[1],
                 num_classes=num_classes,
                 mixup_alpha=mixup_alpha,
                 cutmix_alpha=cutmix_alpha,
@@ -145,9 +162,6 @@ def make_late_augmentations(
                 switch_prob=switch_prob,
                 label_smoothing=label_smoothing,
             )
-
-        if random_erasing_prob > 0:
-            images = random_erasing(images, seed=seeds[1], p=random_erasing_prob)
 
         if permute_image or input_is_nchw:
             images = nhwc_to_nchw(images)

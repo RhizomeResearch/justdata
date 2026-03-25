@@ -42,8 +42,7 @@ def mixup_cutmix(
 
     def _smooth_labels(lbls):
         is_one_hot = tf.logical_and(
-            tf.equal(tf.rank(lbls), 2),
-            tf.equal(tf.shape(lbls)[-1], num_classes)
+            tf.equal(tf.rank(lbls), 2), tf.equal(tf.shape(lbls)[-1], num_classes)
         )
 
         def _apply_one_hot():
@@ -58,7 +57,10 @@ def mixup_cutmix(
             off_value = label_smoothing / float(num_classes)
             on_value = 1.0 - label_smoothing + off_value
             return tf.one_hot(
-                tf.cast(flat_lbls, tf.int32), num_classes, on_value=on_value, off_value=off_value
+                tf.cast(flat_lbls, tf.int32),
+                num_classes,
+                on_value=on_value,
+                off_value=off_value,
             )
 
         return tf.cond(is_one_hot, _apply_one_hot, _apply_int)
@@ -128,12 +130,10 @@ def mixup_cutmix(
                 & (x_coords >= min_x[:, tf.newaxis, tf.newaxis])
                 & (x_coords < max_x[:, tf.newaxis, tf.newaxis])
             ),
-            dtype=imgs.dtype,
+            dtype=tf.float32,
         )
 
         mask = mask[..., tf.newaxis]
-
-        mask = tf.cast(mask, dtype=tf.float32)
         imgs_f = tf.cast(imgs, tf.float32)
         shuffled_f = tf.cast(gather_shuffled(imgs), tf.float32)
         mixed_imgs = mask * imgs_f + (1.0 - mask) * shuffled_f

@@ -163,8 +163,9 @@ def make_late_augmentations(
                 label_smoothing=label_smoothing,
             )
 
-        if permute_image or input_is_nchw:
-            images = nhwc_to_nchw(images)
+        should_permute = tf.constant(permute_image)
+        should_permute = tf.logical_or(should_permute, input_is_nchw)
+        images = tf.cond(should_permute, lambda: nhwc_to_nchw(images), lambda: images)
 
         result = {k: v for k, v in sample.items() if k not in ("image", "label")}
         result["image"] = images

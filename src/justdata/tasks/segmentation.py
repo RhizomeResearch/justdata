@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 from justdata.augmentations.registry import get_augment_strategy, get_crop_strategy
-from justdata.stages import co_transform, normalize_image_format, resize_and_normalize
+from justdata.stages import normalize_image_format, resize_and_normalize
 from justdata.transforms import normalize, pad_to_patch_multiple, resize_short_side
 
 
@@ -38,9 +38,30 @@ def make_augmentations(
     def augmentations(sample, seed):
         seeds = tf.random.split(seed, 2)
 
+        # Ensure mask has a channel dim for crop ops (crop_to_bounding_box requires rank 3+)
+        mask = sample["mask"]
+        mask_was_2d = tf.equal(tf.rank(mask), 2)
+        mask = tf.cond(mask_was_2d, lambda: tf.expand_dims(mask, -1), lambda: mask)
+
         # Apply same spatial crop to both image and mask, using nearest interpolation for the mask
-        image = crop_fn(sample["image"], size=image_size, seed=seeds[0], padding=padding, pad_mode=pad_mode)
-        mask = crop_fn(sample["mask"], size=image_size, seed=seeds[0], padding=padding, pad_mode=pad_mode, interpolation="nearest")
+        image = crop_fn(
+            sample["image"],
+            size=image_size,
+            seed=seeds[0],
+            padding=padding,
+            pad_mode=pad_mode,
+        )
+        mask = crop_fn(
+            mask,
+            size=image_size,
+            seed=seeds[0],
+            padding=padding,
+            pad_mode=pad_mode,
+            interpolation="nearest",
+        )
+
+        # Restore original mask rank
+        mask = tf.cond(mask_was_2d, lambda: tf.squeeze(mask, -1), lambda: mask)
         sample = sample | {"image": image, "mask": mask}
 
         # Color augmentation on image only (not mask)
@@ -84,7 +105,7 @@ def make_postprocessing(
             ``image_size`` if not set.
     """
 
-    def postprocessing(sample):
+    def postprocessing(sample, **kwargs):
         if patch_align and not is_training:
             # Dense ViT evaluation: resize shorter side, pad to patch multiple
             target = val_resize_size if val_resize_size is not None else image_size
@@ -111,17 +132,14 @@ def make_postprocessing(
                     lambda: tf.expand_dims(mask, -1),
                     lambda: mask,
                 )
+                mask.set_shape([None, None, None])
                 mask = resize_short_side(
                     tf.cast(mask, tf.float32),
                     target_size=target,
                     method="nearest",
                 )
                 mask = pad_to_patch_multiple(mask, patch_size=patch_size)
-                mask = tf.cond(
-                    tf.equal(tf.shape(mask)[-1], 1),
-                    lambda: tf.squeeze(mask, -1),
-                    lambda: mask,
-                )
+                mask = tf.squeeze(mask, -1)
                 sample = sample | {"mask": mask}
 
             return sample
@@ -144,12 +162,9 @@ def make_postprocessing(
                 lambda: tf.expand_dims(mask, -1),
                 lambda: mask,
             )
+            mask.set_shape([None, None, None])
             mask = tf.image.resize(mask, [image_size, image_size], method="nearest")
-            mask = tf.cond(
-                tf.equal(tf.shape(mask)[-1], 1),
-                lambda: tf.squeeze(mask, -1),
-                lambda: mask,
-            )
+            mask = tf.squeeze(mask, -1)
             sample = sample | {"mask": mask}
 
         return sample

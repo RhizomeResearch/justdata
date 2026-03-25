@@ -207,8 +207,14 @@ def _pad_dataset(ds, batch_size):
     and adds a 'padding_mask' key.
     """
 
+    def _get_batch_dim(batch):
+        """Get current batch size from the first tensor in the batch."""
+        for v in batch.values():
+            return tf.shape(v)[0]
+        return tf.constant(0, dtype=tf.int32)
+
     def pad_batch(batch):
-        curr_size = tf.shape(batch["label"])[0]
+        curr_size = _get_batch_dim(batch)
         pad_size = batch_size - curr_size
 
         mask = tf.concat(
@@ -232,7 +238,7 @@ def _pad_dataset(ds, batch_size):
 
     return ds.map(
         lambda b: tf.cond(
-            tf.shape(b["label"])[0] < batch_size,
+            _get_batch_dim(b) < batch_size,
             lambda: pad_batch(b),
             lambda: b | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)},
         ),
@@ -287,7 +293,8 @@ def load_ds(
         return_raw_ds: If True, returns the dataset immediately after
                        preprocessing (and caching) but BEFORE standard
                        augmentation, postprocessing, or batching.
-                       Returns (ds, N, processing_fns_dict).
+                       Returns (ds, tools_dict) where tools_dict contains
+                       ``postprocess_fn`` and ``rng``.
 
     Returns:
         A batched `tf.data.Dataset` converted to NumPy arrays.

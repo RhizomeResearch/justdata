@@ -322,7 +322,7 @@ def merge_with_presets(dataset: str, user_kwargs: Dict[str, Any]) -> Dict[str, A
     """
 
     dataset_presets = copy.deepcopy(get_dataset_presets(dataset))
-    default_presets = get_dataset_presets("imagenet")
+    default_presets = get_dataset_presets("_default")
 
     def smart_merge(base, user, default):
         result = base.copy()
@@ -359,7 +359,7 @@ def merge_with_presets(dataset: str, user_kwargs: Dict[str, Any]) -> Dict[str, A
                         tuple(x) if isinstance(x, list) else x for x in def_to_compare
                     )
 
-                if k not in default or val_to_compare != def_to_compare:
+                if k not in default or val_to_compare != def_to_compare or k not in result:
                     result[k] = v
         return result
 

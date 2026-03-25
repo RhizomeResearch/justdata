@@ -31,15 +31,7 @@ def normalize(image, mean, std):
     img_mean = tf.constant(mean, dtype=tf.float32)
     img_std = tf.constant(std, dtype=tf.float32)
 
-    rank = tf.rank(image)
-    num_channels = tf.shape(image)[-1]
-    broadcast_shape = tf.concat(
-        [tf.ones(rank - 1, dtype=tf.int32), [num_channels]], axis=0
-    )
-
-    img_mean = tf.reshape(img_mean, broadcast_shape)
-    img_std = tf.reshape(img_std, broadcast_shape)
-
+    # TensorFlow automatically broadcasts 1D tensors to the last dimension
     normalized_image = (image - img_mean) / (img_std + 1e-8)
     return normalized_image
 

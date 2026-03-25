@@ -182,7 +182,7 @@ def fetch_ds(
         concatenated_splits = _concatenate_tf_datasets(loaded_splits)
 
         if concatenated_splits:
-            from data.adapters import get_adapter
+            from justdata.adapters import get_adapter
 
             adapter = get_adapter(dataset_name)
             concatenated_splits = concatenated_splits.map(

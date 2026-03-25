@@ -82,7 +82,7 @@ def get_pipeline_for_dataset(
     Otherwise, it infers the task from the dataset and falls back to the default pipeline for that task.
     If `apply_presets` is True, it merges the dataset's default preset settings with any kwargs.
     """
-    from data.presets import merge_with_presets
+    from justdata.presets import merge_with_presets
 
     if apply_presets:
         kwargs = merge_with_presets(dataset, kwargs)
@@ -115,7 +115,7 @@ def default_classification_pipeline(
     laug_kwargs = laug_kwargs or {}
     postproc_kwargs = postproc_kwargs or {}
 
-    from data.tasks.classification import (
+    from justdata.tasks.classification import (
         make_augmentations,
         make_late_augmentations,
         make_postprocessing,
@@ -147,7 +147,7 @@ def default_segmentation_pipeline(
     laug_kwargs = laug_kwargs or {}
     postproc_kwargs = postproc_kwargs or {}
 
-    from data.tasks.segmentation import (
+    from justdata.tasks.segmentation import (
         make_augmentations,
         make_late_augmentations,
         make_postprocessing,

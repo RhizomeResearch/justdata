@@ -5,7 +5,10 @@ from justdata.acoustic import (
     configs,
     datasets,
     decoding,
+    dcase2025,
+    evals,
     eval_views,
+    filters,
     frontends,
     jax,
     labels,
@@ -22,6 +25,7 @@ from justdata.acoustic import (
     segment,
     sources,
     stages,
+    stats,
     tasks,
 )
 from justdata.acoustic.adapters import (
@@ -58,6 +62,24 @@ from justdata.acoustic.decoding import (
     decode_wav_bytes,
     decode_wav_file,
 )
+from justdata.acoustic.dcase2025 import (
+    DCASE2025Task1Adapter,
+    SplitLeakageError,
+    assert_stats_allowed,
+    make_source_dataset,
+    make_target_dataset,
+    parse_city_from_row,
+    parse_device_from_row,
+    parse_scene_from_row,
+    parse_source_recording_id,
+)
+from justdata.acoustic.evals import (
+    confusion_matrix,
+    macro_classwise_accuracy,
+    per_device_accuracy,
+    per_scene_accuracy,
+)
+from justdata.acoustic.filters import filter_by_metadata, groupby_metadata
 from justdata.acoustic.channel import (
     apply_channel_strategy,
     keep,
@@ -110,6 +132,10 @@ from justdata.acoustic.presets import (
 from justdata.acoustic.resampling import resample_sample, resample_waveform
 from justdata.acoustic.segment import pad_waveform, segment_waveform
 from justdata.acoustic.stages import make_preprocessing_stage, make_segment_stage
+from justdata.acoustic.stats import (
+    compute_feature_stats,
+    make_stats_iterator,
+)
 from justdata.acoustic.registry import (
     get_audio_batch_augment,
     get_audio_channel_strategy,
@@ -171,6 +197,7 @@ __all__ = [
     "AcousticAdapter",
     "AudioPreset",
     "AudioPreprocessConfig",
+    "DCASE2025Task1Adapter",
     "apply_channel_strategy",
     "as_numpy_iterator",
     "FeatureNormConfig",
@@ -188,19 +215,25 @@ __all__ = [
     "compress_log",
     "compute_num_frames",
     "configs",
+    "compute_feature_stats",
+    "confusion_matrix",
     "convert_audio_layout",
     "datasets",
     "decode_audio_file",
     "decode_wav_bytes",
     "decode_wav_file",
     "decoding",
+    "dcase2025",
     "default_output_key",
+    "evals",
     "eval_views",
     "ensure_audio_rank",
     "expected_audio_static_shape",
     "frontend_output_kind",
+    "filters",
     "frontends",
     "generate_eval_views",
+    "filter_by_metadata",
     "get_audio_batch_augment",
     "get_audio_channel_strategy",
     "get_audio_corruption",
@@ -215,6 +248,7 @@ __all__ = [
     "get_audio_waveform_augment",
     "get_dataset_presets",
     "get_resolved_preset",
+    "groupby_metadata",
     "has_audio_batch_augment",
     "has_audio_channel_strategy",
     "has_audio_corruption",
@@ -245,6 +279,7 @@ __all__ = [
     "list_audio_spectrogram_augments",
     "list_audio_waveform_augments",
     "logmel",
+    "macro_classwise_accuracy",
     "merge_with_presets",
     "make_eval_views",
     "make_audio_metadata",
@@ -252,6 +287,9 @@ __all__ = [
     "make_preprocessing",
     "make_preprocessing_stage",
     "make_segment_stage",
+    "make_source_dataset",
+    "make_stats_iterator",
+    "make_target_dataset",
     "metadata",
     "MetadataEncoder",
     "MetadataSidecar",
@@ -269,6 +307,8 @@ __all__ = [
     "pad_waveform",
     "pcen_mel",
     "pipelines",
+    "per_device_accuracy",
+    "per_scene_accuracy",
     "postprocessing",
     "preprocessing",
     "presets",
@@ -298,6 +338,8 @@ __all__ = [
     "stages",
     "stft_magnitude",
     "stft_power_spectrogram",
+    "SplitLeakageError",
+    "stats",
     "stable_int64_hash",
     "standardize_waveform_layout",
     "remove_dc_offset",
@@ -305,4 +347,9 @@ __all__ = [
     "to_numpy",
     "to_float32_waveform",
     "transform_label",
+    "parse_city_from_row",
+    "parse_device_from_row",
+    "parse_scene_from_row",
+    "parse_source_recording_id",
+    "assert_stats_allowed",
 ]

@@ -388,6 +388,7 @@ def load_ds(
     as_numpy: bool = False,
     metadata_mode: Literal["full", "numeric_only", "none"] = "full",
     sidecar_metadata_path: str | None = None,
+    filter_fn=None,
 ):
     """
     Loads, preprocesses, and batches HuggingFace or TensorFlow Datasets.
@@ -430,6 +431,8 @@ def load_ds(
                        and ``none`` removes metadata.
         sidecar_metadata_path: JSONL path for string metadata when
                                ``metadata_mode="numeric_only"``.
+        filter_fn: Optional predicate applied after preprocessing and caching,
+                   before augmentation, postprocessing, and batching.
 
     Returns:
         A batched `tf.data.Dataset` converted to NumPy arrays.
@@ -503,6 +506,9 @@ def load_ds(
             f"Caching disabled for '{dataset_type}' dataset. "
             "Samples will be re-read each epoch (streaming-friendly)."
         )
+
+    if filter_fn is not None:
+        ds = ds.filter(filter_fn)
 
     if return_raw_ds:
         # Return necessary components to build custom pipelines

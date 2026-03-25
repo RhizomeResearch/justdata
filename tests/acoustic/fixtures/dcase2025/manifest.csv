@@ -1,0 +1,9 @@
+path,split,scene_label,device,city,location_id,segment_id,source_recording_id,fold
+audio/airport-paris-loc1-0001-a.wav,dev_train_25,airport,A,Paris,loc1,0001,airport-paris-loc1,1
+audio/bus-london-loc2-0002-b.wav,dev_train_25,bus,B,London,loc2,0002,bus-london-loc2,1
+audio/park-berlin-loc3-0003-c.wav,dev_train_25,park,C,Berlin,loc3,0003,park-berlin-loc3,1
+audio/metro-rome-loc4-0004-s1.wav,dev_train_25,metro,S1,Rome,loc4,0004,metro-rome-loc4,1
+audio/tram-paris-loc5-0005-s2.wav,dev_test,tram,S2,Paris,loc5,0005,tram-paris-loc5,2
+audio/street_traffic-london-loc6-0006-s3.wav,dev_test,street_traffic,S3,London,loc6,0006,street-traffic-london-loc6,2
+audio/eval-unknown-0007.wav,eval,,unknown,,,, 
+audio/eval-unknown-0008.wav,eval,,unknown,,,, 

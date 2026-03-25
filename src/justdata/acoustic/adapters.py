@@ -278,7 +278,6 @@ def adapt_acoustic_sample(
 
 @register_adapter("hf_audio:")
 @register_adapter("local_audio:")
-@register_adapter("dcase2025:")
 def acoustic_source_adapter(sample: dict) -> dict:
     return adapt_acoustic_sample(sample)
 
@@ -298,9 +297,10 @@ def audioset_adapter(sample: dict) -> dict:
     return adapt_acoustic_sample(sample, dataset="audioset")
 
 
-@register_adapter("dcase2025_task1")
 def dcase2025_task1_adapter(sample: dict) -> dict:
-    return adapt_acoustic_sample(sample, dataset="dcase2025_task1")
+    from justdata.acoustic.dcase2025 import dcase2025_task1_adapter as adapter
+
+    return adapter(sample)
 
 
 __all__ = [

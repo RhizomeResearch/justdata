@@ -279,13 +279,9 @@ def load_dcase2025_splits(
     splits: list[str],
     data_dir: Union[None, str, os.PathLike] = None,
 ) -> list[tf.data.Dataset]:
-    return _load_manifest_splits(
-        dataset_name,
-        splits,
-        data_dir,
-        prefix="dcase2025:",
-        require_local_columns=False,
-    )
+    from justdata.acoustic.dcase2025 import load_dcase2025_task1_splits
+
+    return load_dcase2025_task1_splits(dataset_name, splits, data_dir)
 
 
 def _import_datasets():

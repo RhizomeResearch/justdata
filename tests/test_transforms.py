@@ -51,7 +51,9 @@ class TestNhwcToNchw:
     def test_values_preserved(self, rgb_image_uint8):
         result = nhwc_to_nchw(rgb_image_uint8)
         # Channel 0 of CHW should equal [:,:,0] of HWC
-        np.testing.assert_array_equal(result[0].numpy(), rgb_image_uint8[:, :, 0].numpy())
+        np.testing.assert_array_equal(
+            result[0].numpy(), rgb_image_uint8[:, :, 0].numpy()
+        )
 
 
 class TestResizeShortSide:

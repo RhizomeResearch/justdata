@@ -1,4 +1,3 @@
-import pytest
 import tensorflow as tf
 
 from justdata.tasks.classification import (
@@ -7,6 +6,7 @@ from justdata.tasks.classification import (
     make_postprocessing,
     make_preprocessing,
 )
+
 
 def test_classification_pipeline():
     preproc = make_preprocessing()
@@ -33,17 +33,18 @@ def test_classification_pipeline():
     # Batching for late augmentations
     batch = {
         "image": tf.expand_dims(sample["image"], 0),
-        "label": tf.expand_dims(sample["label"], 0)
+        "label": tf.expand_dims(sample["label"], 0),
     }
 
     # Late Augment
     seed = tf.constant([1, 2], dtype=tf.int32)
     batch = laug(batch, num_classes=10, seed=seed)
-    
+
     assert "image" in batch
     assert "label" in batch
     # Check that image is float32
     assert batch["image"].dtype == tf.float32
+
 
 def test_classification_pipeline_ssl():
     preproc = make_preprocessing()
@@ -56,10 +57,10 @@ def test_classification_pipeline_ssl():
     sample = preproc(sample)
     seed = tf.constant([1, 2], dtype=tf.int32)
     sample = aug(sample, seed=seed)
-    
+
     assert "global_crops" in sample
     assert "local_crops" in sample
-    
+
     sample = postproc(sample)
     assert "global_crops" in sample
     assert "local_crops" in sample

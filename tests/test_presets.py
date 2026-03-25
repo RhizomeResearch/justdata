@@ -1,5 +1,3 @@
-import pytest
-
 from justdata.presets import (
     get_dataset_presets,
     merge_with_presets,

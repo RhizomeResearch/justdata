@@ -1,4 +1,3 @@
-import numpy as np
 import tensorflow as tf
 
 from justdata.stages import normalize_image_format, resize_and_normalize

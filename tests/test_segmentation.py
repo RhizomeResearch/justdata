@@ -1,4 +1,3 @@
-import pytest
 import tensorflow as tf
 
 from justdata.tasks.segmentation import (
@@ -7,6 +6,7 @@ from justdata.tasks.segmentation import (
     make_postprocessing,
     make_preprocessing,
 )
+
 
 def test_segmentation_pipeline():
     preproc = make_preprocessing()
@@ -28,7 +28,7 @@ def test_segmentation_pipeline():
     sample = aug(sample, seed=seed)
     assert "image" in sample
     assert "mask" in sample
-    
+
     # Check same spatial size
     assert sample["image"].shape[:2] == sample["mask"].shape[:2]
 
@@ -44,7 +44,7 @@ def test_segmentation_pipeline():
     # Late Augment (no-op in segmentation currently)
     batch = {
         "image": tf.expand_dims(sample["image"], 0),
-        "mask": tf.expand_dims(sample["mask"], 0)
+        "mask": tf.expand_dims(sample["mask"], 0),
     }
 
     batch = laug(batch)

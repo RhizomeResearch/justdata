@@ -1,13 +1,13 @@
 import pytest
 
+from justdata.augmentations.registry import (
+    get_augment_strategy,
+    get_crop_strategy,
+)
 from justdata.registry import (
     get_pipeline,
     get_task_for_dataset,
     register_dataset,
-)
-from justdata.augmentations.registry import (
-    get_augment_strategy,
-    get_crop_strategy,
 )
 
 
@@ -32,8 +32,16 @@ class TestDatasetTaskMapping:
 class TestPipelineRegistry:
     def test_known_pipelines_exist(self):
         # These should not raise
-        get_pipeline("classification", aug_kwargs={"image_size": 32}, postproc_kwargs={"image_size": 32})
-        get_pipeline("segmentation", aug_kwargs={"image_size": 32}, postproc_kwargs={"image_size": 32})
+        get_pipeline(
+            "classification",
+            aug_kwargs={"image_size": 32},
+            postproc_kwargs={"image_size": 32},
+        )
+        get_pipeline(
+            "segmentation",
+            aug_kwargs={"image_size": 32},
+            postproc_kwargs={"image_size": 32},
+        )
 
     def test_unknown_pipeline_raises(self):
         with pytest.raises(ValueError, match="not found"):

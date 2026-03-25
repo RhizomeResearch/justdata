@@ -20,13 +20,21 @@ def create_global_crops(
     contrast: float = 0.4,
     saturation: float = 0.2,
     hue: float = 0.1,
+    p_color_jitter: float = 0.8,
     p_grayscale: float = 0.2,
-    p_gaussian_blur: float = 1.0,
-    p_solarize: float = 0.2,
+    p_gaussian_blur: Union[float, Tuple[float, ...]] = 1.0,
+    p_solarize: Union[float, Tuple[float, ...]] = 0.2,
     bboxes: tf.Tensor | None = None,
     labels: tf.Tensor | None = None,
     num_classes: int | None = None,
 ) -> tf.Tensor | Tuple[tf.Tensor, ...]:
+    """Create global crops with per-crop asymmetric blur/solarize probabilities.
+
+    When ``p_gaussian_blur`` or ``p_solarize`` is a tuple, the i-th crop uses
+    the i-th probability.  This implements the DINOv2 asymmetric pipeline:
+    - Global crop 1: blur p=1.0, solarize p=0.0
+    - Global crop 2: blur p=0.1, solarize p=0.2
+    """
     if bboxes is not None:
         if labels is None or num_classes is None:
             raise ValueError(
@@ -34,6 +42,16 @@ def create_global_crops(
             )
     seed_crops = tf.random.split(seed, crops_number)
     should_transform_label = image_label is not None
+
+    # Normalize per-crop probabilities to tuples
+    if isinstance(p_gaussian_blur, (int, float)):
+        blur_probs = tuple(p_gaussian_blur for _ in range(crops_number))
+    else:
+        blur_probs = tuple(p_gaussian_blur)
+    if isinstance(p_solarize, (int, float)):
+        solar_probs = tuple(p_solarize for _ in range(crops_number))
+    else:
+        solar_probs = tuple(p_solarize)
 
     crops = []
     crops_heatmaps = []
@@ -61,11 +79,12 @@ def create_global_crops(
             contrast=contrast,
             saturation=saturation,
             hue=hue,
+            p=p_color_jitter,
             p_grayscale=p_grayscale,
             seed=seeds[2],
         )
-        crop = gaussian_blur(crop, p=p_gaussian_blur, seed=seeds[3])
-        crop = solarize(crop, p=p_solarize, seed=seeds[4])
+        crop = gaussian_blur(crop, p=blur_probs[i], seed=seeds[3])
+        crop = solarize(crop, p=solar_probs[i], seed=seeds[4])
 
         crops.append(crop)
         if bboxes is not None:
@@ -105,13 +124,16 @@ def create_local_crops(
     contrast: float = 0.4,
     saturation: float = 0.2,
     hue: float = 0.1,
+    p_color_jitter: float = 0.8,
     p_grayscale: float = 0.2,
+    p_gaussian_blur: float = 0.5,
+    p_solarize: float = 0.0,
 ) -> tf.Tensor:
     seed_crops = tf.random.split(seed, crops_number)
 
     crops = []
     for i in range(crops_number):
-        seeds = tf.random.split(seed_crops[i], 4)
+        seeds = tf.random.split(seed_crops[i], 5)
 
         crop = random_resized_crop(image, size=size, scale=scale, seed=seeds[0])
         crop = random_horizontal_flip(crop, seed=seeds[1])
@@ -121,9 +143,11 @@ def create_local_crops(
             contrast=contrast,
             saturation=saturation,
             hue=hue,
+            p=p_color_jitter,
             p_grayscale=p_grayscale,
             seed=seeds[2],
         )
-        crop = gaussian_blur(crop, p=0.5, seed=seeds[3])
+        crop = gaussian_blur(crop, p=p_gaussian_blur, seed=seeds[3])
+        crop = solarize(crop, p=p_solarize, seed=seeds[4])
         crops.append(crop)
     return tf.stack(crops)

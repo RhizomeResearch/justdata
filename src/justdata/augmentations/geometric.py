@@ -240,7 +240,11 @@ def random_crop_with_pad(
 
 @register_crop_strategy("random_resized")
 def _crop_random_resized(image, size, seed, interpolation="bilinear", **kwargs):
-    return random_resized_crop(image, size=size, seed=seed, interpolation=interpolation)
+    s = tf.random.split(seed, 2)
+    cropped = random_resized_crop(
+        image, size=size, seed=s[0], interpolation=interpolation
+    )
+    return random_horizontal_flip(cropped, seed=s[1])
 
 
 @register_crop_strategy("random_pad")

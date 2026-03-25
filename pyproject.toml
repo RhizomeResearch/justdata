@@ -1,0 +1,26 @@
+[project]
+name = "justdata"
+version = "0.1.0"
+description = "A dataloading wrapper around tfds"
+readme = "README.md"
+authors = [
+    { name = "clementpoiret", email = "clement@linux.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "datasets[vision]>=4.5.0",
+    "importlib-resources>=6.5.2",
+    "loguru>=0.7.3",
+    "tensorflow>=2.18.1",
+    "tensorflow-datasets>=4.9.9",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.12,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "matplotlib>=3.10.8",
+    "pytest>=9.0.2",
+]

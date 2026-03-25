@@ -1,7 +1,6 @@
 import numpy as np
 import tensorflow as tf
 
-import justdata.acoustic
 from justdata.acoustic.adapters import adapt_acoustic_sample, to_float32_waveform
 from justdata.core.registry import get_pipeline
 

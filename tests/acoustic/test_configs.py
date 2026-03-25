@@ -42,7 +42,9 @@ def make_preset(**overrides):
             ),
             mel=MelConfig(n_mels=64),
             log=LogCompressionConfig(kind="log"),
-            norm=FeatureNormConfig(kind="per_clip_mean_std", axes=("time", "frequency")),
+            norm=FeatureNormConfig(
+                kind="per_clip_mean_std", axes=("time", "frequency")
+            ),
         ),
         label_transform=LabelTransformConfig(
             mode="index",

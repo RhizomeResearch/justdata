@@ -35,7 +35,9 @@ def test_stats_iterator_augment_false():
 
 
 def test_compute_feature_stats_grouped_by_device():
-    stats = compute_feature_stats(_stats_dataset(), groupby="device", feature_key="inputs")
+    stats = compute_feature_stats(
+        _stats_dataset(), groupby="device", feature_key="inputs"
+    )
 
     np.testing.assert_allclose(stats["A"]["mean"].numpy(), [2.0, 3.0])
     np.testing.assert_allclose(stats["A"]["std"].numpy(), [1.0, 1.0])

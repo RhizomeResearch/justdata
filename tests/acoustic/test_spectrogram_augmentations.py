@@ -101,7 +101,9 @@ def test_time_roll_preserves_values():
 
     y = spectrogram_time_roll(x, seed=[1, 0], shift=2)
 
-    np.testing.assert_array_equal(np.sort(y.numpy(), axis=None), np.sort(x.numpy(), axis=None))
+    np.testing.assert_array_equal(
+        np.sort(y.numpy(), axis=None), np.sort(x.numpy(), axis=None)
+    )
 
 
 def test_mel_bin_shift_zero_pads_edges():

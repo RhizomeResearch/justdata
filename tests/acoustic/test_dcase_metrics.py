@@ -20,7 +20,9 @@ def test_macro_classwise_accuracy():
         ]
     )
 
-    assert np.isclose(macro_classwise_accuracy(y_true, logits, num_classes=10), 5.0 / 6.0)
+    assert np.isclose(
+        macro_classwise_accuracy(y_true, logits, num_classes=10), 5.0 / 6.0
+    )
 
 
 def test_per_device_accuracy():

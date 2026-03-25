@@ -5,7 +5,11 @@ import pytest
 import tensorflow as tf
 
 import justdata.acoustic  # noqa: F401
-from justdata.acoustic.compat.ast import ast_frontend, ast_normalize_fbank, ast_pad_or_crop_fbank
+from justdata.acoustic.compat.ast import (
+    ast_frontend,
+    ast_normalize_fbank,
+    ast_pad_or_crop_fbank,
+)
 from justdata.acoustic.frontends.ast import ast_kaldi_fbank
 from justdata.core.registry import get_pipeline
 
@@ -44,7 +48,9 @@ def test_ast_eval_frontend_matches_torchaudio_ast_fixture(
 
     # TensorFlow and Torch use different FFT/filterbank kernels; this keeps the
     # comparison tight while allowing sub-milliscale floating-point drift.
-    np.testing.assert_allclose(np.squeeze(actual.numpy(), axis=-1), expected, rtol=5e-4, atol=5e-4)
+    np.testing.assert_allclose(
+        np.squeeze(actual.numpy(), axis=-1), expected, rtol=5e-4, atol=5e-4
+    )
 
 
 @pytest.mark.parametrize(
@@ -77,4 +83,6 @@ def test_ast_eval_pipeline_matches_torchaudio_ast_fixture(preset, fixture_name):
     )
     result = postprocess(sample)
 
-    np.testing.assert_allclose(result["features"].numpy(), fixture["features"], rtol=5e-4, atol=5e-4)
+    np.testing.assert_allclose(
+        result["features"].numpy(), fixture["features"], rtol=5e-4, atol=5e-4
+    )

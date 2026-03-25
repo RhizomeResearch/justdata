@@ -19,7 +19,9 @@ def _snr_db(reference: tf.Tensor, corrupted: tf.Tensor) -> float:
     noise = tf.cast(corrupted - reference, tf.float32)
     signal_power = tf.reduce_mean(tf.square(reference))
     noise_power = tf.reduce_mean(tf.square(noise))
-    return float((10.0 * tf.math.log(signal_power / noise_power) / tf.math.log(10.0)).numpy())
+    return float(
+        (10.0 * tf.math.log(signal_power / noise_power) / tf.math.log(10.0)).numpy()
+    )
 
 
 def _band_energy(x: tf.Tensor, low_hz: float, high_hz: float) -> float:
@@ -59,7 +61,10 @@ def test_lowpass_reduces_high_frequency_energy():
         config={"sample_rate": SAMPLE_RATE},
     )
 
-    assert _band_energy(corrupted, 8000.0, 12000.0) < _band_energy(audio, 8000.0, 12000.0) * 0.1
+    assert (
+        _band_energy(corrupted, 8000.0, 12000.0)
+        < _band_energy(audio, 8000.0, 12000.0) * 0.1
+    )
 
 
 def test_highpass_reduces_low_frequency_energy():
@@ -73,7 +78,10 @@ def test_highpass_reduces_low_frequency_energy():
         config={"sample_rate": SAMPLE_RATE},
     )
 
-    assert _band_energy(corrupted, 100.0, 1000.0) < _band_energy(audio, 100.0, 1000.0) * 0.1
+    assert (
+        _band_energy(corrupted, 100.0, 1000.0)
+        < _band_energy(audio, 100.0, 1000.0) * 0.1
+    )
 
 
 def test_clipping_threshold_decreases_with_severity():
@@ -83,7 +91,9 @@ def test_clipping_threshold_decreases_with_severity():
     severe = apply_audio_corruption(audio, "clipping", 5, SEED)
 
     assert CLIPPING_THRESHOLD[5] < CLIPPING_THRESHOLD[1]
-    assert float(tf.reduce_max(tf.abs(severe)).numpy()) < float(tf.reduce_max(tf.abs(mild)).numpy())
+    assert float(tf.reduce_max(tf.abs(severe)).numpy()) < float(
+        tf.reduce_max(tf.abs(mild)).numpy()
+    )
 
 
 def test_drc_reduces_dynamic_range():
@@ -91,7 +101,9 @@ def test_drc_reduces_dynamic_range():
 
     compressed = apply_audio_corruption(audio, "dynamic_range_compression", 5, SEED)
 
-    assert float(tf.reduce_max(tf.abs(compressed)).numpy()) < float(tf.reduce_max(tf.abs(audio)).numpy())
+    assert float(tf.reduce_max(tf.abs(compressed)).numpy()) < float(
+        tf.reduce_max(tf.abs(audio)).numpy()
+    )
 
 
 def test_packet_dropout_inserts_gaps():

@@ -72,7 +72,9 @@ def test_recursive_padding_nested_metadata():
     final = batches[-1]
 
     np.testing.assert_allclose(final["metadata"]["nested"]["score"].numpy(), [0.3, 0.0])
-    np.testing.assert_array_equal(final["metadata"]["clip_id"].numpy(), [b"clip-c", b""])
+    np.testing.assert_array_equal(
+        final["metadata"]["clip_id"].numpy(), [b"clip-c", b""]
+    )
 
 
 def test_padding_mask_added_for_short_final_batch():

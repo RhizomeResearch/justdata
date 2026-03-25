@@ -44,7 +44,9 @@ def assert_different_seed_can_change_output(transform, input_value):
         if not _tree_all_equal(baseline, changed):
             return
 
-    raise AssertionError("different stateless seeds did not change the transform output")
+    raise AssertionError(
+        "different stateless seeds did not change the transform output"
+    )
 
 
 def assert_eval_disables_transform(transform, input_value):

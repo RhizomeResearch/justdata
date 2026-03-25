@@ -83,7 +83,9 @@ def test_cutmix_time_frequency_area_lambda():
     total = np.prod(x.shape[1:])
     expected_lambda = 1.0 - replaced / total
 
-    np.testing.assert_allclose(mixed_y.numpy()[0], [expected_lambda, 1.0 - expected_lambda])
+    np.testing.assert_allclose(
+        mixed_y.numpy()[0], [expected_lambda, 1.0 - expected_lambda]
+    )
 
 
 def test_cutmix_event_frame_splice_time_axis():

@@ -14,7 +14,9 @@ def test_recursive_padding_nested_metadata():
 
     padded = pad_nested(batch, tf.constant(1, dtype=tf.int32))
 
-    np.testing.assert_array_equal(padded["metadata"]["quality"].numpy(), [1.0, 2.0, 0.0])
+    np.testing.assert_array_equal(
+        padded["metadata"]["quality"].numpy(), [1.0, 2.0, 0.0]
+    )
     np.testing.assert_array_equal(
         padded["metadata"]["nested"]["device_id"].numpy(),
         [3, 4, 0],

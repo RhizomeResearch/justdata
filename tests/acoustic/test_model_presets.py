@@ -98,7 +98,9 @@ def test_layout_and_label_transform_match_contract(name):
         assert preset.label_transform.mode == "index"
         assert preset.label_transform.num_classes == 10
         assert preset.label_transform.class_names == DCASE_CLASSES
-    elif name.startswith(("audioset", "efficientat", "dymn", "passt", "ced", "panns", "ast")):
+    elif name.startswith(
+        ("audioset", "efficientat", "dymn", "passt", "ced", "panns", "ast")
+    ):
         assert preset.label_transform.mode == "multi_hot"
         if name.startswith("ast_esc50"):
             assert preset.label_transform.num_classes == 50
@@ -109,9 +111,20 @@ def test_layout_and_label_transform_match_contract(name):
     else:
         assert preset.label_transform.mode == "index"
 
-    if name.startswith(("efficientat", "dymn", "dcase2025_task1_efficientat", "dcase2025_task1_dymn", "passt", "dcase2025_task1_passt")):
+    if name.startswith(
+        (
+            "efficientat",
+            "dymn",
+            "dcase2025_task1_efficientat",
+            "dcase2025_task1_dymn",
+            "passt",
+            "dcase2025_task1_passt",
+        )
+    ):
         assert preset.layout == "bcft"
-    elif name.startswith(("ced", "dcase2025_task1_ced", "panns", "audioset", "audio_default_32k", "ast")):
+    elif name.startswith(
+        ("ced", "dcase2025_task1_ced", "panns", "audioset", "audio_default_32k", "ast")
+    ):
         assert preset.layout == "btf"
     else:
         assert preset.layout == "bt"
@@ -213,7 +226,9 @@ def test_preset_hash_includes_frontend():
     preset = _preset("efficientat_32k_10s_logmel128")
     changed = replace(
         preset,
-        frontend=replace(preset.frontend, mel=replace(preset.frontend.mel, f_max=14000.0)),
+        frontend=replace(
+            preset.frontend, mel=replace(preset.frontend.mel, f_max=14000.0)
+        ),
     )
 
     assert changed.hash() != preset.hash()

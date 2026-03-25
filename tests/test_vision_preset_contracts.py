@@ -108,7 +108,11 @@ def test_vision_preset_contract_fields_and_hash(name):
     assert postproc.get("val_resize_size", "auto") == expected["val_resize_size"]
     assert postproc["normalization_params"] == expected["normalization"]
     assert model_input["layout"] == "bchw"
-    assert model_input["static_shape"] == (3, expected["image_size"], expected["image_size"])
+    assert model_input["static_shape"] == (
+        3,
+        expected["image_size"],
+        expected["image_size"],
+    )
     assert model_input["normalization"]["mean"] == expected["normalization"][0]
     assert model_input["normalization"]["std"] == expected["normalization"][1]
 

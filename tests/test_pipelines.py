@@ -13,8 +13,14 @@ import pytest
 import tensorflow as tf
 
 from justdata.vision.augmentations.color import color_jitter
-from justdata.vision.augmentations.composed import create_global_crops, create_local_crops
-from justdata.vision.augmentations.registry import get_augment_strategy, get_crop_strategy
+from justdata.vision.augmentations.composed import (
+    create_global_crops,
+    create_local_crops,
+)
+from justdata.vision.augmentations.registry import (
+    get_augment_strategy,
+    get_crop_strategy,
+)
 from justdata.vision.presets import get_dataset_presets, merge_with_presets
 from justdata.core.registry import get_pipeline_for_dataset
 from justdata.vision.tasks.classification import (

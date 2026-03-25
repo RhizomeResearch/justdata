@@ -2,7 +2,6 @@ from uuid import uuid4
 
 import pytest
 
-import justdata.acoustic
 from justdata.acoustic.registry import (
     get_audio_frontend,
     has_audio_frontend,

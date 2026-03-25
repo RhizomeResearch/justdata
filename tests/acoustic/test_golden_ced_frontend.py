@@ -9,7 +9,9 @@ def test_same_waveform_same_ced_features_against_hf_extractor():
 
 
 def test_same_waveform_same_ced_features_against_onnx_kaldi_path():
-    pytest.skip("CED ONNX/Kaldi reference fixture is not checked into tests/acoustic/golden.")
+    pytest.skip(
+        "CED ONNX/Kaldi reference fixture is not checked into tests/acoustic/golden."
+    )
 
 
 def test_same_frontend_tensor_same_equimo_logits_after_checkpoint_conversion():

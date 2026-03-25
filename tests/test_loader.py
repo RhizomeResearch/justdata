@@ -1,6 +1,5 @@
 from unittest.mock import patch
 
-import pytest
 import tensorflow as tf
 
 from justdata.core.loader import load_ds
@@ -18,7 +17,9 @@ def test_load_ds_classification(synthetic_classification_ds):
         postproc_kwargs={"image_size": 32, "num_classes": 10},
     )
 
-    with patch("justdata.core.loader.fetch_ds", return_value=synthetic_classification_ds):
+    with patch(
+        "justdata.core.loader.fetch_ds", return_value=synthetic_classification_ds
+    ):
         ds, N = load_ds(
             dataset_names_arg="mock",
             splits_arg="train",
@@ -87,7 +88,9 @@ def test_create_minic_datasets(synthetic_classification_ds):
         postproc_kwargs={"image_size": 32, "num_classes": 10},
     )
 
-    with patch("justdata.core.loader.fetch_ds", return_value=synthetic_classification_ds):
+    with patch(
+        "justdata.core.loader.fetch_ds", return_value=synthetic_classification_ds
+    ):
         ds_list, N = create_minic_datasets(
             corruption_types=["noise", "blur"],
             severity=1,

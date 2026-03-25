@@ -1,7 +1,6 @@
 import json
 from uuid import uuid4
 
-import justdata.vision
 from justdata.acoustic.configs import (
     AudioPreset,
     AudioPreprocessConfig,
@@ -18,7 +17,9 @@ def make_audio_preset(name: str) -> AudioPreset:
         name=name,
         input_duration=1.0,
         target_sample_rate=16000,
-        preprocess=AudioPreprocessConfig(target_sample_rate=16000, resampler="identity"),
+        preprocess=AudioPreprocessConfig(
+            target_sample_rate=16000, resampler="identity"
+        ),
         segment=SegmentStrategyConfig(
             clip_duration=1.0,
             train_mode="pad_or_crop",

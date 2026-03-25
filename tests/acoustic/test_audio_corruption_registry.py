@@ -30,7 +30,9 @@ def test_register_audio_corruption_duplicate_raises():
 def test_unknown_audio_corruption_raises():
     audio = tf.zeros([16, 1], dtype=tf.float32)
 
-    with pytest.raises(ValueError, match="Audio corruption 'missing_corruption' not found"):
+    with pytest.raises(
+        ValueError, match="Audio corruption 'missing_corruption' not found"
+    ):
         apply_audio_corruption(
             audio,
             "missing_corruption",

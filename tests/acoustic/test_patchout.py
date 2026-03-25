@@ -11,7 +11,9 @@ from justdata.acoustic.schema import FEATURES, LABEL, METADATA
 
 
 def _grid(time: int = 6, freq: int = 8, channels: int = 2) -> tf.Tensor:
-    return tf.reshape(tf.range(time * freq * channels, dtype=tf.float32), [time, freq, channels])
+    return tf.reshape(
+        tf.range(time * freq * channels, dtype=tf.float32), [time, freq, channels]
+    )
 
 
 def test_patchout_structured_frequency_count():

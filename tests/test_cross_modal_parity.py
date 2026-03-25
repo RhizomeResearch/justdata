@@ -116,13 +116,17 @@ def test_both_modalities_have_deterministic_eval():
         is_training=False
     )
     vision_sample = {
-        "image": tf.reshape(tf.cast(tf.range(40 * 48 * 3) % 256, tf.uint8), [40, 48, 3]),
+        "image": tf.reshape(
+            tf.cast(tf.range(40 * 48 * 3) % 256, tf.uint8), [40, 48, 3]
+        ),
         "label": tf.constant(3, dtype=tf.int64),
     }
 
     first_vision = vision_postproc(vision_preproc(vision_sample), num_classes=10)
     second_vision = vision_postproc(vision_preproc(vision_sample), num_classes=10)
-    np.testing.assert_allclose(first_vision["image"].numpy(), second_vision["image"].numpy())
+    np.testing.assert_allclose(
+        first_vision["image"].numpy(), second_vision["image"].numpy()
+    )
 
     acoustic_pipeline = get_pipeline(dataset="speech_commands")
     acoustic_preproc, _acoustic_aug, _acoustic_late, acoustic_postproc = (
@@ -134,8 +138,12 @@ def test_both_modalities_have_deterministic_eval():
         "label": tf.constant(3, dtype=tf.int64),
     }
 
-    first_acoustic = acoustic_postproc(acoustic_preproc(acoustic_sample), num_classes=35)
-    second_acoustic = acoustic_postproc(acoustic_preproc(acoustic_sample), num_classes=35)
+    first_acoustic = acoustic_postproc(
+        acoustic_preproc(acoustic_sample), num_classes=35
+    )
+    second_acoustic = acoustic_postproc(
+        acoustic_preproc(acoustic_sample), num_classes=35
+    )
     np.testing.assert_allclose(
         first_acoustic["waveform"].numpy(),
         second_acoustic["waveform"].numpy(),
@@ -211,7 +219,10 @@ def test_both_modalities_preserve_padding_mask():
 
 
 def test_both_modalities_support_as_numpy():
-    for raw_ds, key in ((_vision_dataset(), "image"), (_acoustic_dataset(), "waveform")):
+    for raw_ds, key in (
+        (_vision_dataset(), "image"),
+        (_acoustic_dataset(), "waveform"),
+    ):
         iterator, _n = _load_with_mocked_fetch(raw_ds, as_numpy=True)
         batch = next(iter(iterator))
 
@@ -231,13 +242,22 @@ def test_docs_and_examples_cover_both_modalities():
         assert (root / path).is_file()
 
     example_pairs = (
-        ("examples/vision/cifar10_classification.py", "examples/acoustic/dcase2025_efficientat.py"),
-        ("examples/vision/hf_vision_dataset.py", "examples/acoustic/hf_audio_dataset.py"),
+        (
+            "examples/vision/cifar10_classification.py",
+            "examples/acoustic/dcase2025_efficientat.py",
+        ),
+        (
+            "examples/vision/hf_vision_dataset.py",
+            "examples/acoustic/hf_audio_dataset.py",
+        ),
         (
             "examples/vision/compute_cifar_channel_stats.py",
             "examples/acoustic/compute_dcase_source_stats.py",
         ),
-        ("examples/vision/create_minic_corruptions.py", "examples/acoustic/create_audio_corruptions.py"),
+        (
+            "examples/vision/create_minic_corruptions.py",
+            "examples/acoustic/create_audio_corruptions.py",
+        ),
     )
     for vision_example, acoustic_example in example_pairs:
         assert (root / vision_example).is_file()

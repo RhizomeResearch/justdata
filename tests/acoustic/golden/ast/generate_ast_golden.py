@@ -83,7 +83,9 @@ def main() -> None:
         )
         np.savez_compressed(ROOT / filename, waveform=waveform, features=features)
 
-    (ROOT / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+    (ROOT / "metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n"
+    )
 
 
 if __name__ == "__main__":

@@ -29,7 +29,9 @@ def test_ast_pad_or_crop_fbank_right_pads_and_front_crops():
 
     assert padded.shape == (4, 3, 1)
     np.testing.assert_array_equal(padded.numpy()[:2], fbank.numpy())
-    np.testing.assert_array_equal(padded.numpy()[2:], np.zeros([2, 3, 1], dtype=np.float32))
+    np.testing.assert_array_equal(
+        padded.numpy()[2:], np.zeros([2, 3, 1], dtype=np.float32)
+    )
     np.testing.assert_array_equal(cropped.numpy(), fbank.numpy()[:1])
 
 

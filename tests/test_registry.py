@@ -45,14 +45,16 @@ class TestPipelineRegistry:
 
     def test_unknown_pipeline_raises(self):
         with pytest.raises(ValueError, match="not found"):
-            get_pipeline("nonexistent_pipeline_xyz")
+            pipeline = get_pipeline(pipeline_name="nonexistent_pipeline_xyz")
+            pipeline.build(is_training=True)
 
     def test_classification_pipeline_returns_4_callables(self):
-        result = get_pipeline(
+        pipeline = get_pipeline(
             "classification",
             aug_kwargs={"image_size": 32},
             postproc_kwargs={"image_size": 32},
         )
+        result = pipeline.build(is_training=True)
         assert len(result) == 4
         assert all(callable(fn) for fn in result)
 

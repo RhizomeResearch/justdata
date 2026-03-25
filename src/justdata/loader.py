@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 import datasets
 import numpy as np
@@ -246,11 +246,12 @@ def load_ds(
     dataset_type: str,
     batch_size: int,
     seed: int,
-    preprocess_fn,
-    augment_fn,
-    late_augment_fn,
-    postprocess_fn,
-    num_classes: int,
+    num_classes: Optional[int] = None,
+    pipeline: Optional[Any] = None,
+    preprocess_fn=None,
+    augment_fn=None,
+    late_augment_fn=None,
+    postprocess_fn=None,
     shuffle_buffer: int = 10_000,
     cache_dataset: bool = True,
     drop_remainder: bool = False,
@@ -272,11 +273,13 @@ def load_ds(
                       Affects caching, shuffling, and augmentation.
         batch_size: The batch size for the output dataset.
         seed: Random seed for shuffling and augmentations.
-        preprocess_fn: Preprocessing function.
-        augment_fn: Augmentation function.
-        late_augment_fn: Late augmentation function.
-        postprocess_fn: Postprocessing function.
         num_classes: Number of classes (needed for one-hot encoding/mixup).
+        pipeline: A `DataPipeline` object from `justdata.registry`. If provided,
+                  it builds the necessary functions based on `dataset_type`.
+        preprocess_fn: Preprocessing function (fallback if `pipeline` is None).
+        augment_fn: Augmentation function (fallback if `pipeline` is None).
+        late_augment_fn: Late augmentation function (fallback if `pipeline` is None).
+        postprocess_fn: Postprocessing function (fallback if `pipeline` is None).
         shuffle_buffer: Size of the shuffle buffer.
         cache_dataset: Whether to cache the dataset after preprocessing.
         drop_remainder: Choose to drop or pad batches without the correct size,
@@ -326,12 +329,17 @@ def load_ds(
             "Check logs for details on dataset names, splits, or data issues."
         )
 
+    if pipeline is not None:
+        preprocess_fn, augment_fn, late_augment_fn, postprocess_fn = pipeline.build(
+            is_training=is_training
+        )
+
     def seeded_augment(sample):
         seed = rng.make_seeds(1)[:, 0]
         return augment_fn(sample, seed=seed)
 
     def seeded_late_augment(batch):
-        seed = rng.make_seeds(2)[:, 0]
+        seed = rng.make_seeds(1)[:, 0]
         return late_augment_fn(batch, num_classes=num_classes, seed=seed)
 
     ds = ds.map(preprocess_fn, num_parallel_calls=tf.data.AUTOTUNE)
@@ -359,11 +367,18 @@ def load_ds(
         num_parallel_calls=tf.data.AUTOTUNE,
     )
     ds = ds.batch(batch_size, drop_remainder=drop_remainder)
+
+    # Ensure padding_mask is always present for API consistency
+    if drop_remainder:
+        ds = ds.map(
+            lambda b: b | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)},
+            num_parallel_calls=tf.data.AUTOTUNE,
+        )
+    else:
+        ds = _pad_dataset(ds, batch_size)
+
     if is_training:
         ds = ds.map(seeded_late_augment, num_parallel_calls=tf.data.AUTOTUNE)
-
-    if not drop_remainder:
-        ds = _pad_dataset(ds, batch_size)
 
     ds = ds.prefetch(tf.data.AUTOTUNE)
 
@@ -422,7 +437,12 @@ def create_minic_datasets(
 
         ds_c = ds_c.batch(batch_size, drop_remainder=drop_remainder)
 
-        if not drop_remainder:
+        if drop_remainder:
+            ds_c = ds_c.map(
+                lambda b: b | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)},
+                num_parallel_calls=tf.data.AUTOTUNE,
+            )
+        else:
             ds_c = _pad_dataset(ds_c, batch_size)
 
         ds_c = ds_c.prefetch(tf.data.AUTOTUNE)

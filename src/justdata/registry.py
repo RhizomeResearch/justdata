@@ -1,8 +1,9 @@
-from typing import Callable, Dict, Literal, Tuple
+from typing import Any, Callable, Dict, Literal, Tuple
 
 KnownDataset = Literal[
     "cifar10",
     "cifar100",
+    "imagenet",
     "imagenette",
     "stanford_dogs",
     "voc",
@@ -19,6 +20,7 @@ TaskType = Literal[
 _DATASET_TASK_MAP: Dict[str, str] = {
     "cifar10": "classification",
     "cifar100": "classification",
+    "imagenet": "classification",
     "imagenette": "classification",
     "stanford_dogs": "classification",
     "voc": "object_detection",
@@ -35,10 +37,47 @@ def register_dataset(name: str, task_type: str):
 
 
 def get_task_for_dataset(name: str) -> str | None:
-    return _DATASET_TASK_MAP.get(name)
+    if name in _DATASET_TASK_MAP:
+        return _DATASET_TASK_MAP[name]
+    # Check prefix match (e.g. "imagenet_a3" -> "imagenet")
+    for key, val in _DATASET_TASK_MAP.items():
+        if name.startswith(key):
+            return val
+    return None
 
 
 PipelineFuncs = Tuple[Callable, Callable, Callable, Callable]
+
+
+class DataPipeline:
+    """Encapsulates task-specific logic and configuration."""
+
+    def __init__(self, pipeline_name: str, _is_training_legacy: bool = False, **kwargs):
+        self.pipeline_name = pipeline_name
+        self.kwargs = kwargs
+        self._is_training_legacy = _is_training_legacy
+
+    def build(self, is_training: bool) -> PipelineFuncs:
+        """Returns the 4 callables (preprocess, augment, late_augment, postprocess)."""
+        import copy
+
+        # Deep copy to avoid mutating the original configuration
+        config = copy.deepcopy(self.kwargs)
+        postproc = config.setdefault("postproc_kwargs", {})
+        postproc["is_training"] = is_training
+
+        if self.pipeline_name not in _PIPELINES:
+            raise ValueError(f"Pipeline '{self.pipeline_name}' not found.")
+
+        return _PIPELINES[self.pipeline_name](**config)
+
+    def __iter__(self):
+        """Allows legacy unpacking: a, b, c, d = get_pipeline(...)"""
+        return iter(self.build(is_training=self._is_training_legacy))
+
+    def __repr__(self):
+        return f"DataPipeline(task={self.pipeline_name}, config={self.kwargs})"
+
 
 _PIPELINES: Dict[str, Callable[..., PipelineFuncs]] = {}
 
@@ -57,15 +96,47 @@ def register_pipeline(name: str):
     return decorator
 
 
-def get_pipeline(name: str, **kwargs) -> PipelineFuncs:
+def get_pipeline(
+    dataset: str | None = None,
+    preset: str | None = None,
+    task: TaskType | None = None,
+    pipeline_name: str | None = None,
+    apply_presets: bool = True,
+    **kwargs,
+) -> DataPipeline:
     """
-    Get a specific registered pipeline by name.
+    Resolves and configures a pipeline.
+
+    Args:
+        dataset: Actual dataset name (used for task inference).
+        preset: Preset name for default hyperparameters (defaults to `dataset`).
+        task: Explicit task type (e.g. "classification").
+        pipeline_name: Explicit pipeline name (alias for `task`).
+        apply_presets: Whether to merge with registered presets.
+        **kwargs: Overrides for pipeline/preset parameters.
     """
-    if name not in _PIPELINES:
+    from justdata.presets import merge_with_presets
+
+    # 1. Resolve preset name (falls back to dataset name)
+    preset_name = preset or dataset
+
+    if apply_presets and preset_name:
+        kwargs = merge_with_presets(preset_name, kwargs)
+
+    # 2. Resolve task/pipeline name
+    effective_task = pipeline_name or task
+    if effective_task is None and dataset:
+        effective_task = get_task_for_dataset(dataset)
+        if effective_task is None and dataset in _PIPELINES:
+            effective_task = dataset
+
+    if effective_task is None:
         raise ValueError(
-            f"Pipeline '{name}' not found. Available pipelines: {list(_PIPELINES.keys())}"
+            f"Could not resolve task for dataset='{dataset}' and preset='{preset}'. "
+            "Please specify `task` or `pipeline_name`."
         )
-    return _PIPELINES[name](**kwargs)
+
+    return DataPipeline(effective_task, **kwargs)
 
 
 def get_pipeline_for_dataset(
@@ -75,32 +146,16 @@ def get_pipeline_for_dataset(
     apply_presets: bool = True,
     is_training: bool = False,
     **kwargs,
-) -> PipelineFuncs:
-    """
-    Resolves the pipeline dynamically based on user choices, dataset, or task.
-    If `pipeline_name` is provided, it has the highest priority (e.g. for quick experimentation).
-    Otherwise, it infers the task from the dataset and falls back to the default pipeline for that task.
-    If `apply_presets` is True, it merges the dataset's default preset settings with any kwargs.
-    """
-    from justdata.presets import merge_with_presets
-
-    if apply_presets:
-        kwargs = merge_with_presets(dataset, kwargs)
-
-    postproc = kwargs.setdefault("postproc_kwargs", {})
-    postproc.setdefault("is_training", is_training)
-
-    if pipeline_name is None:
-        # Infer task type if not explicitly provided
-        task = task_type or get_task_for_dataset(dataset)
-        if task is None:
-            raise ValueError(
-                f"Cannot infer task/pipeline for unknown dataset '{dataset}'. Please specify `task_type` or `pipeline_name`."
-            )
-        # By default, use the task type as the pipeline name
-        pipeline_name = task
-
-    return get_pipeline(pipeline_name, **kwargs)
+) -> DataPipeline:
+    """Legacy entry point. Use `get_pipeline` instead."""
+    return get_pipeline(
+        dataset=dataset,
+        task=task_type,
+        pipeline_name=pipeline_name,
+        apply_presets=apply_presets,
+        _is_training_legacy=is_training,
+        **kwargs,
+    )
 
 
 @register_pipeline("classification")

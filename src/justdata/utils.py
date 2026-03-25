@@ -231,7 +231,7 @@ def _fill_rectangle(
     mask = tf.tile(mask, [1, 1, num_channels])
 
     if replace is None:
-        fill_seed = seed if seed is not None else [0, 0]
+        fill_seed = seed if seed is not None else tf.constant([0, 0], dtype=tf.int32)
         fill = tf.random.stateless_normal(
             tf.shape(image), seed=fill_seed, dtype=image.dtype
         )

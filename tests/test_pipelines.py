@@ -724,7 +724,7 @@ class TestRegistryIntegration:
 
         sample = preproc(sample)
         sample = aug(sample, seed=seed)
-        sample = postproc(sample)
+        sample = postproc(sample, num_classes=10)
 
         # CIFAR training: 32x32 -> CHW (3, 32, 32)
         assert sample["image"].shape == (3, 32, 32)

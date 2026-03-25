@@ -177,6 +177,7 @@ def random_erasing(
 ) -> tf.Tensor:
     batch_size = tf.shape(images)[0]
     seeds = tf.random.split(seed, batch_size)
+    seeds = tf.stack(seeds)
 
     def apply_erasing(args):
         img, s = args

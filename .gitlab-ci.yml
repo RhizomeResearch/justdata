@@ -1,0 +1,14 @@
+stages:
+  - test
+
+test:
+  stage: test
+  image: nixos/nix:latest
+  variables:
+    # Enable flakes & the nix-command interface required by devenv
+    NIX_CONFIG: "accept-flake-config = true\nexperimental-features = nix-command flakes"
+  before_script:
+    - git config --global --add safe.directory $CI_PROJECT_DIR
+    - nix profile install --accept-flake-config github:cachix/devenv/latest
+  script:
+    - devenv test

@@ -2,12 +2,23 @@ from justdata.acoustic import (
     adapters,
     configs,
     datasets,
+    decoding,
     pipelines,
     presets,
     registry,
+    resampling,
     schema,
     sources,
     tasks,
+)
+from justdata.acoustic.adapters import (
+    AcousticAdapter,
+    adapt_acoustic_sample,
+    ensure_audio_rank,
+    infer_duration,
+    make_audio_metadata,
+    standardize_waveform_layout,
+    to_float32_waveform,
 )
 from justdata.acoustic.configs import (
     AudioPreset,
@@ -20,12 +31,26 @@ from justdata.acoustic.configs import (
     STFTConfig,
     SegmentStrategyConfig,
 )
+from justdata.acoustic.datasets import (
+    AUDIO_CLASSIFICATION_MULTI_LABEL,
+    AUDIO_CLASSIFICATION_SINGLE_LABEL,
+    AUDIO_EVENT_DETECTION,
+    AUDIO_RETRIEVAL,
+    AUDIO_SELF_SUPERVISED,
+    AUDIO_TEXT_PAIR,
+)
+from justdata.acoustic.decoding import (
+    decode_audio_file,
+    decode_wav_bytes,
+    decode_wav_file,
+)
 from justdata.acoustic.presets import (
     get_dataset_presets,
     get_resolved_preset,
     merge_with_presets,
     register_preset,
 )
+from justdata.acoustic.resampling import resample_sample, resample_waveform
 from justdata.acoustic.registry import (
     get_audio_batch_augment,
     get_audio_channel_strategy,
@@ -78,6 +103,13 @@ from justdata.acoustic.registry import (
 )
 
 __all__ = [
+    "AUDIO_CLASSIFICATION_MULTI_LABEL",
+    "AUDIO_CLASSIFICATION_SINGLE_LABEL",
+    "AUDIO_EVENT_DETECTION",
+    "AUDIO_RETRIEVAL",
+    "AUDIO_SELF_SUPERVISED",
+    "AUDIO_TEXT_PAIR",
+    "AcousticAdapter",
     "AudioPreset",
     "AudioPreprocessConfig",
     "FeatureNormConfig",
@@ -87,9 +119,15 @@ __all__ = [
     "MelConfig",
     "STFTConfig",
     "SegmentStrategyConfig",
+    "adapt_acoustic_sample",
     "adapters",
     "configs",
     "datasets",
+    "decode_audio_file",
+    "decode_wav_bytes",
+    "decode_wav_file",
+    "decoding",
+    "ensure_audio_rank",
     "get_audio_batch_augment",
     "get_audio_channel_strategy",
     "get_audio_corruption",
@@ -116,6 +154,7 @@ __all__ = [
     "has_audio_segment_strategy",
     "has_audio_spectrogram_augment",
     "has_audio_waveform_augment",
+    "infer_duration",
     "list_audio_batch_augments",
     "list_audio_channel_strategies",
     "list_audio_corruptions",
@@ -129,6 +168,7 @@ __all__ = [
     "list_audio_spectrogram_augments",
     "list_audio_waveform_augments",
     "merge_with_presets",
+    "make_audio_metadata",
     "pipelines",
     "presets",
     "register_audio_batch_augment",
@@ -145,7 +185,12 @@ __all__ = [
     "register_audio_waveform_augment",
     "register_preset",
     "registry",
+    "resample_sample",
+    "resample_waveform",
+    "resampling",
     "schema",
     "sources",
+    "standardize_waveform_layout",
     "tasks",
+    "to_float32_waveform",
 ]

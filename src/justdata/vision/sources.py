@@ -14,6 +14,8 @@ def load_huggingface_vision_splits(
     dataset_name: str,
     splits: list[str],
     data_dir: Union[None, str, os.PathLike] = None,
+    *,
+    include_metadata: bool = False,
 ) -> list[tf.data.Dataset]:
     hf_name = dataset_name[3:]
     loaded_splits = []
@@ -31,20 +33,40 @@ def load_huggingface_vision_splits(
                 f"'label' columns. Found columns: {ds_hf.column_names}."
             )
 
-        def gen(_ds=ds_hf):
+        def gen(_ds=ds_hf, _split=split):
+            example_index = 0
             for batch in _ds.iter(batch_size=1024):
                 for img, lbl in zip(batch["image"], batch["label"]):
-                    yield {
+                    item = {
                         "image": np.array(img),
                         "label": lbl,
                     }
+                    if include_metadata:
+                        filename = getattr(img, "filename", "") or ""
+                        item["metadata"] = {
+                            "dataset": hf_name,
+                            "split": _split,
+                            "example_id": str(example_index),
+                            "filename": os.path.basename(filename) if filename else "",
+                        }
+                    example_index += 1
+                    yield item
+
+        output_signature = {
+            "image": tf.TensorSpec(shape=None, dtype=tf.uint8),
+            "label": tf.TensorSpec(shape=(), dtype=tf.int64),
+        }
+        if include_metadata:
+            output_signature["metadata"] = {
+                "dataset": tf.TensorSpec(shape=(), dtype=tf.string),
+                "split": tf.TensorSpec(shape=(), dtype=tf.string),
+                "example_id": tf.TensorSpec(shape=(), dtype=tf.string),
+                "filename": tf.TensorSpec(shape=(), dtype=tf.string),
+            }
 
         ds_tf = tf.data.Dataset.from_generator(
             gen,
-            output_signature={
-                "image": tf.TensorSpec(shape=None, dtype=tf.uint8),
-                "label": tf.TensorSpec(shape=(), dtype=tf.int64),
-            },
+            output_signature=output_signature,
         )
 
         try:

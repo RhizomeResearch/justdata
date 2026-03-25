@@ -150,11 +150,33 @@ def _pad_dataset(ds, batch_size):
     and adds a 'padding_mask' key.
     """
 
+    def _first_tensor(value):
+        if isinstance(value, dict):
+            for child in value.values():
+                found = _first_tensor(child)
+                if found is not None:
+                    return found
+            return None
+        return value
+
     def _get_batch_dim(batch):
         """Get current batch size from the first tensor in the batch."""
         for v in batch.values():
-            return tf.shape(v)[0]
+            tensor = _first_tensor(v)
+            if tensor is not None:
+                return tf.shape(tensor)[0]
         return tf.constant(0, dtype=tf.int32)
+
+    def _pad_value(value, pad_size):
+        if isinstance(value, dict):
+            return {k: _pad_value(v, pad_size) for k, v in value.items()}
+
+        pad_shape = tf.concat([[pad_size], tf.shape(value)[1:]], axis=0)
+        if value.dtype == tf.string:
+            fill = tf.fill(pad_shape, tf.constant("", dtype=tf.string))
+        else:
+            fill = tf.zeros(pad_shape, dtype=value.dtype)
+        return tf.concat([value, fill], axis=0)
 
     def pad_batch(batch):
         curr_size = _get_batch_dim(batch)
@@ -170,11 +192,7 @@ def _pad_dataset(ds, batch_size):
 
         padded_batch = {}
         for k, v in batch.items():
-            rank = tf.rank(v)
-            paddings = tf.concat(
-                [[[0, pad_size]], tf.zeros((rank - 1, 2), dtype=tf.int32)], axis=0
-            )
-            padded_batch[k] = tf.pad(v, paddings)
+            padded_batch[k] = _pad_value(v, pad_size)
 
         padded_batch["padding_mask"] = mask
         return padded_batch

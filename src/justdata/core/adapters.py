@@ -27,7 +27,14 @@ def register_adapter(dataset_name: str):
 
 
 def get_adapter(dataset_name: str) -> DatasetAdapter:
-    return _ADAPTERS.get(dataset_name, _default_adapter)
+    if dataset_name in _ADAPTERS:
+        return _ADAPTERS[dataset_name]
+
+    for key, adapter in sorted(_ADAPTERS.items(), key=lambda kv: len(kv[0]), reverse=True):
+        if dataset_name.startswith(key):
+            return adapter
+
+    return _default_adapter
 
 
 def _default_adapter(sample: dict) -> dict:

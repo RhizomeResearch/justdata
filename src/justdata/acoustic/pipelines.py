@@ -30,6 +30,11 @@ def default_pipeline(
 register_pipeline("acoustic/default")(default_pipeline)
 
 
+@register_pipeline("acoustic/classification")
+def classification_pipeline(**kwargs) -> PipelineFuncs:
+    return default_pipeline(**kwargs)
+
+
 @register_pipeline("acoustic/identity")
 def identity_pipeline(**kwargs) -> PipelineFuncs:
     return default_pipeline(**kwargs)

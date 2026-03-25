@@ -4,6 +4,10 @@
 preprocessing, augmentation, batching, metadata, DCASE helpers, and corruption
 benchmarks.
 
+The vision counterpart is [docs/vision.md](vision.md). Keep the two documents
+aligned when changing shared loader behavior, preset contracts, metadata modes,
+or corruption dataset APIs.
+
 ## 1. Why justdata owns audio frontends
 
 Audio checkpoints usually assume exact frontend semantics: resampling, channel

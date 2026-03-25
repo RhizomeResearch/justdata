@@ -528,11 +528,17 @@ ds, n = load_ds(
 )
 ```
 
-Acoustic documentation:
+Modality documentation:
 
+- [docs/vision.md](docs/vision.md): vision schema, four stages, preset contracts, metadata modes, Mini-C, and parity matrix.
 - [docs/acoustic.md](docs/acoustic.md): canonical schema, four stages, metadata modes, golden tests, corruption benchmark, and parity matrix.
 - [docs/dcase2025.md](docs/dcase2025.md): DCASE Task 1 source/target helpers and split safety.
+- [docs/presets.md](docs/presets.md): vision and acoustic preset selection and hashable contracts.
 - [docs/golden_tests.md](docs/golden_tests.md): optional golden compatibility test workflow.
+
+Examples are split by modality under `examples/vision/` and
+`examples/acoustic/`. Each directory includes loading, Hugging Face source,
+statistics, and corruption benchmark examples.
 
 ______________________________________________________________________
 

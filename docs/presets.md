@@ -25,16 +25,43 @@ presets preserve the benchmark source duration. The 10 s padding variants adapt
 Resolved presets expose stable JSON and a short SHA-256 hash:
 
 ```python
-import justdata.acoustic
-from justdata.acoustic.presets import get_resolved_preset
+import justdata.acoustic  # noqa: F401
+import justdata.vision  # noqa: F401
+from justdata.acoustic.presets import get_resolved_preset as get_audio_preset
+from justdata.vision.presets import get_resolved_preset as get_vision_preset
 
-preset = get_resolved_preset("dcase2025_task1_efficientat_32k_1s")
-print(preset.to_json())
-print(preset.hash())
+vision_preset = get_vision_preset("cifar10")
+audio_preset = get_audio_preset("dcase2025_task1_efficientat_32k_1s")
+
+print(vision_preset.hash())
+print(audio_preset.hash())
 ```
 
 Store the hash in experiment metadata. If the hash changes, rerun compatibility
 checks because the preprocessing contract changed.
+
+## Vision contracts
+
+CIFAR presets use 32 px inputs, random padded crop, horizontal flip,
+TrivialAugmentWide, CIFAR-specific normalization, `bchw` layout, and
+classification labels. `cifar10` resolves through the `cifar` prefix while
+`cifar100` has its own normalization contract.
+
+ImageNet presets use ImageNet mean/std normalization, deterministic validation
+views, and recipe-specific train augmentation:
+
+| Preset | Contract |
+| :-- | :-- |
+| `_default` | 224 px ImageNet-style ViT/ConvNeXt recipe with RandAugment. |
+| `imagenet_resnet` | 224 px legacy ResNet recipe with ColorJitter. |
+| `imagenet_a1` | Heavy RSB recipe for larger ResNets. |
+| `imagenet_a2` | Moderate RSB recipe for standard ResNet-50 training. |
+| `imagenet_a3` | Light RSB recipe with 160 px train size and FixRes-style eval. |
+| `dinov2` | SSL multi-crop contract with global and local crops. |
+
+Use `tests/test_vision_preset_contracts.py` as the source of truth for pinned
+vision preset hashes, static shapes, normalization, and deterministic eval
+behavior.
 
 ## EfficientAT/DyMN contract
 

@@ -31,12 +31,35 @@ normal development and CI do not download heavyweight reference stacks.
 
 Use golden tests for:
 
+- Same image -> same normalized tensor against torchvision, timm, or another
+  reference preprocessing path for a named vision preset.
+- Same image tensor -> same checkpoint logits after checkpoint conversion.
 - Same waveform -> same frontend tensor against EfficientAT, PaSST, CED, or PANNs references.
 - Same frontend tensor -> same checkpoint logits after conversion.
 - Reference fixtures that prove windowing, mel filters, log compression, layout, and normalization.
 
 Do not use golden tests for basic shape, dtype, metadata, registry, or padding
 behavior. Those belong in ordinary non-golden tests.
+
+## Vision coverage
+
+Vision has non-external preset contract tests in
+`tests/test_vision_preset_contracts.py`. These pin hashable presets, static
+model input contracts, normalization, and deterministic validation
+postprocessing. Add optional `golden` vision tests only when an external
+reference implementation or checkpoint fixture is available.
+
+Suggested vision golden tests:
+
+- `cifar10` and `cifar100` preprocessing against a reference normalized tensor.
+- ImageNet default and RSB A1/A2/A3 eval transforms against torchvision/timm.
+- DINOv2 multi-crop shape and normalization parity against the target reference recipe.
+
+## Acoustic coverage
+
+Acoustic optional golden tests live under `tests/acoustic/test_golden_*`. They
+are placeholders for EfficientAT, PaSST, CED, and PANNs frontend or converted
+checkpoint references.
 
 ## Compatibility contract
 

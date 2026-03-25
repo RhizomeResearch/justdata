@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -216,3 +217,28 @@ def test_both_modalities_support_as_numpy():
 
         assert isinstance(batch[key], np.ndarray)
         assert isinstance(batch["padding_mask"], np.ndarray)
+
+
+def test_docs_and_examples_cover_both_modalities():
+    root = Path(__file__).parents[1]
+
+    for path in (
+        "docs/vision.md",
+        "docs/acoustic.md",
+        "docs/presets.md",
+        "docs/golden_tests.md",
+    ):
+        assert (root / path).is_file()
+
+    example_pairs = (
+        ("examples/vision/cifar10_classification.py", "examples/acoustic/dcase2025_efficientat.py"),
+        ("examples/vision/hf_vision_dataset.py", "examples/acoustic/hf_audio_dataset.py"),
+        (
+            "examples/vision/compute_cifar_channel_stats.py",
+            "examples/acoustic/compute_dcase_source_stats.py",
+        ),
+        ("examples/vision/create_minic_corruptions.py", "examples/acoustic/create_audio_corruptions.py"),
+    )
+    for vision_example, acoustic_example in example_pairs:
+        assert (root / vision_example).is_file()
+        assert (root / acoustic_example).is_file()

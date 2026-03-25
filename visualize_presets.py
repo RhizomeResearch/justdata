@@ -13,9 +13,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 
-from justdata.loader import load_ds
-from justdata.presets import get_dataset_presets
-from justdata.registry import get_pipeline, get_pipeline_for_dataset
+from justdata.core.loader import load_ds
+from justdata.core.registry import get_pipeline, get_pipeline_for_dataset
+from justdata.vision.presets import get_dataset_presets
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ def _build_pipeline(preset_name: str, num_classes: int, is_training: bool):
     pp = kwargs.setdefault("postproc_kwargs", {})
     pp["is_training"] = is_training
     pp["num_classes"] = num_classes
-    return get_pipeline("classification", **kwargs)
+    return get_pipeline("vision/classification", **kwargs)
 
 
 def _fetch(

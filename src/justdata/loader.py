@@ -128,11 +128,12 @@ def fetch_ds(
                         )
 
                     def gen(_ds=ds_hf):
-                        for sample in _ds:
-                            yield {
-                                "image": np.array(sample["image"]),
-                                "label": sample["label"],
-                            }
+                        for batch in _ds.iter(batch_size=1024):
+                            for img, lbl in zip(batch["image"], batch["label"]):
+                                yield {
+                                    "image": np.array(img),
+                                    "label": lbl,
+                                }
 
                     # Convert to a tf.data.Dataset
                     # We batch then unbatch to get a proper TF dataset structure
@@ -349,7 +350,11 @@ def load_ds(
         seed = rng.make_seeds(1)[:, 0]
         return late_augment_fn(batch, num_classes=num_classes, seed=seed)
 
-    ds = ds.map(preprocess_fn, num_parallel_calls=tf.data.AUTOTUNE)
+    ds = ds.map(
+        preprocess_fn,
+        num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=False if is_training else None,
+    )
 
     # For big datasets or datasets with big images, caching can put your RAM on
     # fire and destroy your computer
@@ -366,12 +371,17 @@ def load_ds(
         return (ds, {"postprocess_fn": postprocess_fn, "rng": rng})
 
     if is_training:
-        ds = ds.map(seeded_augment, num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.map(
+            seeded_augment,
+            num_parallel_calls=tf.data.AUTOTUNE,
+            deterministic=False,
+        )
         ds = ds.shuffle(shuffle_buffer, seed=seed)
 
     ds = ds.map(
         lambda x: postprocess_fn(x, num_classes=num_classes),
         num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=False if is_training else None,
     )
     ds = ds.batch(batch_size, drop_remainder=drop_remainder)
 
@@ -380,12 +390,17 @@ def load_ds(
         ds = ds.map(
             lambda b: b | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)},
             num_parallel_calls=tf.data.AUTOTUNE,
+            deterministic=False if is_training else None,
         )
     else:
         ds = _pad_dataset(ds, batch_size)
 
     if is_training:
-        ds = ds.map(seeded_late_augment, num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.map(
+            seeded_late_augment,
+            num_parallel_calls=tf.data.AUTOTUNE,
+            deterministic=False,
+        )
 
     ds = ds.prefetch(tf.data.AUTOTUNE)
 

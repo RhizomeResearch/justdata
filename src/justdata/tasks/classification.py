@@ -118,6 +118,7 @@ def make_late_augmentations(
     prob: float = 1.0,
     switch_prob: float = 0.5,
     label_smoothing: float = 0.1,
+    bce_target: bool = False,
     permute_image: bool = True,
     mode: Literal["ssl", "sl"] = "sl",
     random_erasing_prob: float = 0.0,
@@ -161,6 +162,7 @@ def make_late_augmentations(
                 prob=prob,
                 switch_prob=switch_prob,
                 label_smoothing=label_smoothing,
+                bce_target=bce_target,
             )
 
         should_permute = tf.constant(permute_image)

@@ -14,6 +14,7 @@ def mixup_cutmix(
     prob: float = 1.0,
     switch_prob: float = 0.5,
     label_smoothing: float = 0.1,
+    bce_target: bool = False,
 ) -> Tuple[tf.Tensor, tf.Tensor]:
     if mixup_alpha > 0 and cutmix_alpha == 0:
         switch_prob = -1.0
@@ -69,7 +70,14 @@ def mixup_cutmix(
         labels_1 = _smooth_labels(lbls)
         labels_2 = _smooth_labels(gather_shuffled(lbls))
         lam = tf.reshape(lam, [-1, 1])
-        new_labels = lam * labels_1 + (1.0 - lam) * labels_2
+
+        # Mirrors the ResNet strike back paper BCE requirements
+        # Treats mixed images as multi-label.
+        if bce_target:
+            new_labels = tf.maximum(labels_1, labels_2)
+        else:
+            new_labels = lam * labels_1 + (1.0 - lam) * labels_2
+
         return imgs, new_labels
 
     def _mixup(imgs, lbls):

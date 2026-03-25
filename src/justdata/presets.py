@@ -159,6 +159,7 @@ register_preset(
             "prob": 1.0,
             "switch_prob": 0.5,
             "random_erasing_prob": 0.25,
+            "bce_target": False,
         },
         "postproc_kwargs": {
             "image_size": 224,
@@ -254,6 +255,7 @@ register_preset(
             "prob": 1.0,
             "switch_prob": 0.5,
             "random_erasing_prob": 0.0,
+            "bce_target": False,
         },
         "postproc_kwargs": {
             "image_size": 224,

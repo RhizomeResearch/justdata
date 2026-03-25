@@ -354,7 +354,10 @@ def load_ds(
         ds = ds.map(seeded_augment, num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.shuffle(shuffle_buffer, seed=seed)
 
-    ds = ds.map(postprocess_fn, num_parallel_calls=tf.data.AUTOTUNE)
+    ds = ds.map(
+        lambda x: postprocess_fn(x, num_classes=num_classes),
+        num_parallel_calls=tf.data.AUTOTUNE,
+    )
     ds = ds.batch(batch_size, drop_remainder=drop_remainder)
     if is_training:
         ds = ds.map(seeded_late_augment, num_parallel_calls=tf.data.AUTOTUNE)
@@ -395,6 +398,7 @@ def create_minic_datasets(
     rng = tools["rng"]
 
     batch_size = load_ds_kwargs.get("batch_size", 32)
+    num_classes = load_ds_kwargs.get("num_classes")
     drop_remainder = load_ds_kwargs.get("drop_remainder", False)
 
     return_list = isinstance(corruption_types, list)
@@ -411,7 +415,10 @@ def create_minic_datasets(
             return sample | {"image": img_corrupted}
 
         ds_c = ds.map(corrupt_fn, num_parallel_calls=tf.data.AUTOTUNE)
-        ds_c = ds_c.map(postprocess_fn, num_parallel_calls=tf.data.AUTOTUNE)
+        ds_c = ds_c.map(
+            lambda x: postprocess_fn(x, num_classes=num_classes),
+            num_parallel_calls=tf.data.AUTOTUNE,
+        )
 
         ds_c = ds_c.batch(batch_size, drop_remainder=drop_remainder)
 

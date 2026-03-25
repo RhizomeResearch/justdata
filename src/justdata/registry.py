@@ -115,6 +115,11 @@ def default_classification_pipeline(
     laug_kwargs = laug_kwargs or {}
     postproc_kwargs = postproc_kwargs or {}
 
+    # Automatically enable one-hot labels if MixUp/CutMix is used to ensure
+    # shape consistency between training and validation labels.
+    if laug_kwargs.get("mixup_alpha", 0) > 0 or laug_kwargs.get("cutmix_alpha", 0) > 0:
+        postproc_kwargs.setdefault("one_hot_labels", True)
+
     from justdata.tasks.classification import (
         make_augmentations,
         make_late_augmentations,

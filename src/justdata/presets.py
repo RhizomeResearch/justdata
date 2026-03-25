@@ -1,3 +1,4 @@
+import copy
 from typing import Any, Dict
 
 _PRESETS: Dict[str, Dict[str, Any]] = {}
@@ -315,7 +316,8 @@ def merge_with_presets(dataset: str, user_kwargs: Dict[str, Any]) -> Dict[str, A
     unmodified configuration default and the dataset-specific preset takes precedence.
     If it differs, it's treated as a conscious user override.
     """
-    dataset_presets = get_dataset_presets(dataset)
+
+    dataset_presets = copy.deepcopy(get_dataset_presets(dataset))
     default_presets = get_dataset_presets("imagenet")
 
     def smart_merge(base, user, default):

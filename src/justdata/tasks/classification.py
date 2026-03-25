@@ -206,7 +206,7 @@ def make_postprocessing(
         train_image_size if (is_training and train_image_size) else image_size
     )
 
-    def postprocessing(sample):
+    def postprocessing(sample, num_classes=num_classes):
         sample = resize_and_normalize(
             sample,
             image_keys=image_keys,

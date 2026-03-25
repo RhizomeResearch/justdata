@@ -37,16 +37,10 @@ def make_augmentations(
     def augmentations(sample, seed):
         seeds = tf.random.split(seed, 2)
 
-        # Co-transform: same spatial crop applied to both image and mask
-        sample = co_transform(
-            sample,
-            image_key="image",
-            mask_key="mask",
-            transform_fn=lambda img, s: crop_fn(
-                img, size=image_size, seed=s, padding=padding, pad_mode=pad_mode
-            ),
-            seed=seeds[0],
-        )
+        # Apply same spatial crop to both image and mask, using nearest interpolation for the mask
+        image = crop_fn(sample["image"], size=image_size, seed=seeds[0], padding=padding, pad_mode=pad_mode)
+        mask = crop_fn(sample["mask"], size=image_size, seed=seeds[0], padding=padding, pad_mode=pad_mode, interpolation="nearest")
+        sample = sample | {"image": image, "mask": mask}
 
         # Color augmentation on image only (not mask)
         aug_kwargs_dict = ra_kwargs if augment_type == "rand_augment" else ta_kwargs

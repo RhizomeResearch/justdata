@@ -27,7 +27,7 @@ def make_augmentations(
     enable: bool = True,
     local_crops: bool = True,
     n_global_crops: int = 2,
-    n_local_crops: int = 6,
+    n_local_crops: int = 8,
     mode: Literal["ssl", "sl"] = "sl",
     ra_kwargs: dict = None,
     ta_kwargs: dict = None,
@@ -52,6 +52,11 @@ def make_augmentations(
     ta_kwargs = ta_kwargs or {}
     gc_kwargs = gc_kwargs or {}
     lc_kwargs = lc_kwargs or {}
+
+    gc_kwargs.setdefault("size", image_size)
+    gc_kwargs.setdefault("scale", (0.4, 1.0))
+    lc_kwargs.setdefault("size", int(image_size * 0.425))
+    lc_kwargs.setdefault("scale", (0.05, 0.4))
 
     def augmentations(sample, seed):
         seeds = tf.random.split(seed, 2)

@@ -204,7 +204,7 @@ def _pad_dataset(ds, batch_size):
     """
     Applies padding to a batched dataset.
     If the last batch is smaller than batch_size, it pads it with zeros
-    and adds a 'mask' key.
+    and adds a 'padding_mask' key.
     """
 
     def pad_batch(batch):
@@ -227,14 +227,14 @@ def _pad_dataset(ds, batch_size):
             )
             padded_batch[k] = tf.pad(v, paddings)
 
-        padded_batch["mask"] = mask
+        padded_batch["padding_mask"] = mask
         return padded_batch
 
     return ds.map(
         lambda b: tf.cond(
             tf.shape(b["label"])[0] < batch_size,
             lambda: pad_batch(b),
-            lambda: b | {"mask": tf.ones((batch_size,), dtype=tf.bool)},
+            lambda: b | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)},
         ),
         num_parallel_calls=tf.data.AUTOTUNE,
     )

@@ -239,8 +239,8 @@ def random_crop_with_pad(
 
 
 @register_crop_strategy("random_resized")
-def _crop_random_resized(image, size, seed, **kwargs):
-    return random_resized_crop(image, size=size, seed=seed)
+def _crop_random_resized(image, size, seed, interpolation="bilinear", **kwargs):
+    return random_resized_crop(image, size=size, seed=seed, interpolation=interpolation)
 
 
 @register_crop_strategy("random_pad")

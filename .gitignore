@@ -212,8 +212,8 @@ pyrightconfig.json
 
 # Personal dev stuff
 _tests/
-.aider*
 .wandb/
+tmp/
 
 .devenv
 # Devenv

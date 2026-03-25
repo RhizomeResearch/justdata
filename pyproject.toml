@@ -24,7 +24,9 @@ acoustic = [
     "soxr>=0.5",
     "librosa>=0.11",
 ]
-golden = []
+golden = [
+    "torchaudio==2.10.0",
+]
 dev = [
     "datasets[audio]>=4.5.0",
     "datasets[vision]>=4.5.0",

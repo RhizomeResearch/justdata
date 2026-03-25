@@ -1,5 +1,10 @@
 from typing import Any, Dict
 
+from justdata.acoustic.compat.ast import (
+    ast_audioset_16k_10s_fbank128,
+    ast_esc50_16k_5s_fbank128,
+    ast_speechcommands_16k_1s_fbank128,
+)
 from justdata.acoustic.compat.ced import (
     ced_base_16k_logmel64,
     ced_mini_16k_logmel64,
@@ -242,6 +247,9 @@ def _register_builtin_presets() -> None:
         dcase2025_task1_ced_16k_1s(),
         panns_cnn14_32k_10s_logmel64(),
         panns_cnn14_16k_10s_logmel64(),
+        ast_audioset_16k_10s_fbank128(),
+        ast_esc50_16k_5s_fbank128(),
+        ast_speechcommands_16k_1s_fbank128(),
     ):
         register_preset(preset.name, preset)
 

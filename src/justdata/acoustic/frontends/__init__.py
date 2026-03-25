@@ -1,3 +1,4 @@
+from justdata.acoustic.frontends.ast import ast_kaldi_fbank
 from justdata.acoustic.frontends.kaldi import kaldi_fbank
 from justdata.acoustic.frontends.log import compress_log, logmel, pcen_compression
 from justdata.acoustic.frontends.mel import mel_power, mel_spectrogram, mel_weight_matrix
@@ -14,6 +15,7 @@ from justdata.acoustic.frontends.stft import (
 
 __all__ = [
     "compress_log",
+    "ast_kaldi_fbank",
     "compute_num_frames",
     "ensure_waveform_tc",
     "kaldi_fbank",

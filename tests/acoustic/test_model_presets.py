@@ -38,6 +38,9 @@ EXPECTED_HASHES = {
     "dcase2025_task1_ced_16k_1s": "139c16c9629fef50",
     "panns_cnn14_32k_10s_logmel64": "c98250d06de4965b",
     "panns_cnn14_16k_10s_logmel64": "ec3411b8dfbe97b6",
+    "ast_audioset_16k_10s_fbank128": "ba89920c62c4eebd",
+    "ast_esc50_16k_5s_fbank128": "4bba2ece4b2b2bcc",
+    "ast_speechcommands_16k_1s_fbank128": "b62c85e524041c0a",
 }
 
 EXPECTED_SHAPES = {
@@ -64,6 +67,9 @@ EXPECTED_SHAPES = {
     "dcase2025_task1_ced_16k_1s": (98, 64),
     "panns_cnn14_32k_10s_logmel64": (1001, 64),
     "panns_cnn14_16k_10s_logmel64": (1001, 64),
+    "ast_audioset_16k_10s_fbank128": (1024, 128),
+    "ast_esc50_16k_5s_fbank128": (512, 128),
+    "ast_speechcommands_16k_1s_fbank128": (128, 128),
 }
 
 
@@ -92,15 +98,20 @@ def test_layout_and_label_transform_match_contract(name):
         assert preset.label_transform.mode == "index"
         assert preset.label_transform.num_classes == 10
         assert preset.label_transform.class_names == DCASE_CLASSES
-    elif name.startswith(("audioset", "efficientat", "dymn", "passt", "ced", "panns")):
+    elif name.startswith(("audioset", "efficientat", "dymn", "passt", "ced", "panns", "ast")):
         assert preset.label_transform.mode == "multi_hot"
-        assert preset.label_transform.num_classes == 527
+        if name.startswith("ast_esc50"):
+            assert preset.label_transform.num_classes == 50
+        elif name.startswith("ast_speechcommands"):
+            assert preset.label_transform.num_classes == 35
+        else:
+            assert preset.label_transform.num_classes == 527
     else:
         assert preset.label_transform.mode == "index"
 
     if name.startswith(("efficientat", "dymn", "dcase2025_task1_efficientat", "dcase2025_task1_dymn", "passt", "dcase2025_task1_passt")):
         assert preset.layout == "bcft"
-    elif name.startswith(("ced", "dcase2025_task1_ced", "panns", "audioset", "audio_default_32k")):
+    elif name.startswith(("ced", "dcase2025_task1_ced", "panns", "audioset", "audio_default_32k", "ast")):
         assert preset.layout == "btf"
     else:
         assert preset.layout == "bt"
@@ -249,3 +260,30 @@ def test_panns_reference_presets_use_documented_window_hop_and_mel_bins():
     assert p16.frontend.stft.n_fft == 512
     assert p16.frontend.stft.hop_length == 160
     assert p16.frontend.mel.f_max == 8000.0
+
+
+def test_ast_presets_match_official_recipe_constants():
+    audioset = _preset("ast_audioset_16k_10s_fbank128")
+    esc50 = _preset("ast_esc50_16k_5s_fbank128")
+    speech = _preset("ast_speechcommands_16k_1s_fbank128")
+
+    assert audioset.frontend.name == "ast_kaldi_fbank"
+    assert audioset.target_sample_rate == 16000
+    assert audioset.frontend.stft.n_fft == 512
+    assert audioset.frontend.stft.win_length == 400
+    assert audioset.frontend.stft.hop_length == 160
+    assert audioset.metadata["ast"]["target_length"] == 1024
+    assert audioset.metadata["ast"]["freqm"] == 48
+    assert audioset.metadata["ast"]["timem"] == 192
+    assert audioset.metadata["ast"]["mixup"] == 0.5
+    assert audioset.metadata["ast"]["mean"] == -4.2677393
+    assert audioset.metadata["ast"]["std"] == 4.5689974
+
+    assert esc50.metadata["ast"]["target_length"] == 512
+    assert esc50.metadata["ast"]["freqm"] == 24
+    assert esc50.metadata["ast"]["timem"] == 96
+    assert esc50.label_transform.num_classes == 50
+
+    assert speech.metadata["ast"]["target_length"] == 128
+    assert speech.metadata["ast"]["noise"] is True
+    assert speech.label_transform.num_classes == 35

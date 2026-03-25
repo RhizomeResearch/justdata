@@ -57,9 +57,11 @@ Suggested vision golden tests:
 
 ## Acoustic coverage
 
-Acoustic optional golden tests live under `tests/acoustic/test_golden_*`. They
-are placeholders for EfficientAT, PaSST, CED, and PANNs frontend or converted
-checkpoint references.
+Acoustic optional golden tests live under `tests/acoustic/test_golden_*`. AST
+fixtures can be generated under `tests/acoustic/golden/ast/` with the
+Python 3.12-compatible Torch/Torchaudio stack in the `golden` extra.
+EfficientAT, PaSST, CED, and PANNs tests remain placeholders for frontend or
+converted checkpoint references.
 
 ## Compatibility contract
 

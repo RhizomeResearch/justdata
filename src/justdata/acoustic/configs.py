@@ -323,6 +323,7 @@ class FeatureNormConfig(_SerializableConfig):
 class FrontendConfig(_SerializableConfig):
     name: Literal[
         "raw_waveform",
+        "ast_kaldi_fbank",
         "stft_magnitude",
         "mel_power",
         "logmel",
@@ -353,6 +354,7 @@ class FrontendConfig(_SerializableConfig):
             self.name,
             {
                 "raw_waveform",
+                "ast_kaldi_fbank",
                 "stft_magnitude",
                 "mel_power",
                 "logmel",

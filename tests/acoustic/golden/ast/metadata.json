@@ -1,0 +1,24 @@
+{
+  "recipes": {
+    "ast_audioset_eval.npz": {
+      "mean": -4.2677393,
+      "samples": 160000,
+      "std": 4.5689974,
+      "target_length": 1024
+    },
+    "ast_esc50_eval.npz": {
+      "mean": -6.6268077,
+      "samples": 80000,
+      "std": 5.358466,
+      "target_length": 512
+    },
+    "ast_speechcommands_eval.npz": {
+      "mean": -6.845978,
+      "samples": 16000,
+      "std": 5.5654526,
+      "target_length": 128
+    }
+  },
+  "torch": "2.10.0+cu128",
+  "torchaudio": "2.10.0+cu128"
+}

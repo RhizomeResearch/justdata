@@ -94,6 +94,13 @@ def classification_pipeline(**kwargs) -> PipelineFuncs:
     return default_pipeline(**kwargs)
 
 
+@register_pipeline("acoustic/ast_classification")
+def ast_classification_pipeline(**kwargs) -> PipelineFuncs:
+    from justdata.acoustic.compat.ast import ast_pipeline
+
+    return ast_pipeline(**kwargs)
+
+
 @register_pipeline("acoustic/identity")
 def identity_pipeline(**kwargs) -> PipelineFuncs:
     return default_pipeline(**kwargs)

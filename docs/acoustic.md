@@ -68,6 +68,7 @@ dataset duration policy:
 | :-- | :-- |
 | EfficientAT or DyMN checkpoints trained on 32 kHz log-mel inputs | `efficientat_32k_10s_logmel128`, `dymn_32k_10s_logmel128`, or the DCASE 1 s variants. |
 | PaSST checkpoints with 128-bin 32 kHz log-mel input and patchout | `passt_32k_10s_logmel128` or the DCASE 1 s variants. |
+| AST checkpoints from YuanGongND/ast | `ast_audioset_16k_10s_fbank128`, `ast_esc50_16k_5s_fbank128`, or `ast_speechcommands_16k_1s_fbank128` with `pipeline_name="acoustic/ast_classification"`. |
 | CED checkpoints using 16 kHz Kaldi-style fbank features | `ced_tiny_16k_logmel64`, `ced_mini_16k_logmel64`, `ced_small_16k_logmel64`, `ced_base_16k_logmel64`, or `dcase2025_task1_ced_16k_1s`. |
 | Generic waveform experiments | `audio_default_16k_waveform`. |
 | Generic log-mel experiments | `audio_default_32k_logmel64` or `audio_default_32k_logmel128`. |
@@ -75,7 +76,83 @@ dataset duration policy:
 Use `justdata.acoustic.presets.get_resolved_preset(name).hash()` in experiment
 metadata. A changed hash means the frontend or pipeline contract changed.
 
-## 5. EfficientAT/DyMN, PaSST, CED preset contracts
+### Usage Examples
+
+Inspect a preset before wiring it into an experiment:
+
+```python
+import justdata.acoustic  # registers acoustic presets and pipelines
+from justdata.acoustic.presets import get_resolved_preset
+
+preset = get_resolved_preset("efficientat_32k_10s_logmel128")
+
+print(preset.hash())
+print(preset["target_sample_rate"])
+print(preset["frontend"]["name"])
+print(preset["layout"])
+```
+
+Use a model preset with `load_ds` by resolving the matching acoustic pipeline
+and passing the resulting `DataPipeline` to the loader:
+
+```python
+import justdata.acoustic
+from justdata.core.loader import load_ds
+from justdata.core.registry import get_pipeline
+
+pipeline = get_pipeline(
+    dataset="dcase2025_task1",
+    preset="dcase2025_task1_efficientat_32k_1s",
+)
+
+ds, n = load_ds(
+    dataset_names_arg=["dcase2025:task1"],
+    splits_arg={"dcase2025:task1": ["dev_train_25"]},
+    dataset_type="train",
+    batch_size=64,
+    seed=0,
+    pipeline=pipeline,
+    num_classes=10,
+    metadata_mode="numeric_only",
+    as_numpy=True,
+)
+
+batch = next(iter(ds))
+inputs = batch["features"]
+labels = batch["label"]
+padding_mask = batch["padding_mask"]
+```
+
+AST presets use a dedicated pipeline because the original recipe applies fbank
+padding/cropping, SpecAugment, normalization, and optional waveform mixup in a
+specific order:
+
+```python
+import tensorflow as tf
+
+import justdata.acoustic
+from justdata.core.registry import get_pipeline
+
+pipeline = get_pipeline(
+    dataset="audioset",
+    preset="ast_audioset_16k_10s_fbank128",
+    pipeline_name="acoustic/ast_classification",
+)
+
+preprocess, augment, late_augment, postprocess = pipeline.build(is_training=False)
+sample = {
+    "waveform": tf.zeros([160000, 1], dtype=tf.float32),
+    "sample_rate": tf.constant(16000, dtype=tf.int32),
+    "label": tf.constant([0, 137], dtype=tf.int64),
+}
+
+model_sample = postprocess(preprocess(sample), num_classes=527)
+
+assert model_sample["features"].shape == (1024, 128)
+assert model_sample["label"].shape == (527,)
+```
+
+## 5. EfficientAT/DyMN, PaSST, CED, AST preset contracts
 
 EfficientAT and DyMN DCASE presets use 32 kHz mono audio, 128 mel bins, HTK mel
 scale, Kaldi-compatible filterbanks, log compression, `bcft` layout, 10 DCASE
@@ -89,6 +166,15 @@ share the DCASE 10-class label contract.
 CED presets use 16 kHz mono audio, Kaldi-style fbank features with 64 mel bins,
 Povey windowing, `btf` layout, and DCASE or AudioSet label contracts depending
 on the preset.
+
+AST presets use 16 kHz mono audio, the official AST Torchaudio/Kaldi fbank
+recipe with 128 mel bins, `btf` layout, target-frame right padding/front
+cropping, and AST normalization `(x - mean) / (std * 2)`. Use the dedicated
+`acoustic/ast_classification` pipeline so training SpecAugment runs after fbank
+padding/cropping and before normalization. Operation-exact waveform mixup is
+available when samples include explicit `ast_mix_waveform`, `ast_mix_label`,
+and `ast_mix_lambda` fields; the pipeline does not reproduce AST's Python,
+NumPy, and Torch RNG stream.
 
 ## 6. DCASE split safety
 
@@ -125,8 +211,10 @@ NumPy/JAX friendly.
 ## 8. Golden compatibility tests
 
 Golden tests live under `tests/acoustic/test_golden_*`. They are marked
-`golden` and excluded from default CI. Run them only when reference packages,
-fixtures, or converted checkpoints are available:
+`golden` and excluded from default CI. AST golden tests run when
+`tests/acoustic/golden/ast/*.npz` fixtures have been generated with the
+Python 3.12-compatible Torch/Torchaudio stack in the `golden` extra. Run them
+only when reference packages, fixtures, or converted checkpoints are available:
 
 ```bash
 uv sync --extra golden

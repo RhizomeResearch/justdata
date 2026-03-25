@@ -96,6 +96,7 @@ from justdata.acoustic.channel import (
 )
 from justdata.acoustic.eval_views import generate_eval_views, make_eval_views
 from justdata.acoustic.frontends import (
+    ast_kaldi_fbank,
     compress_log,
     compute_num_frames,
     kaldi_fbank,
@@ -214,6 +215,7 @@ __all__ = [
     "apply_channel_strategy",
     "apply_audio_corruption",
     "as_numpy_iterator",
+    "ast_kaldi_fbank",
     "FeatureNormConfig",
     "FrontendConfig",
     "LabelTransformConfig",

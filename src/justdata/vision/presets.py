@@ -1,27 +1,18 @@
-import copy
-import threading
 from typing import Any, Dict
 
-_PRESETS: Dict[str, Dict[str, Any]] = {}
-_PRESET_LOCK = threading.Lock()
+from justdata.core.presets import (
+    get_dataset_presets as _get_dataset_presets,
+    merge_with_presets as _merge_with_presets,
+    register_preset as _register_preset,
+)
 
 
 def register_preset(dataset: str, config: Dict[str, Any]):
-    with _PRESET_LOCK:
-        _PRESETS[dataset.lower()] = config
+    _register_preset(dataset, config, modality="vision")
 
 
 def get_dataset_presets(dataset: str) -> Dict[str, Any]:
-    dataset = dataset.lower()
-    # Check exact match first
-    if dataset in _PRESETS:
-        return _PRESETS[dataset]
-    # Check prefix match, longest first so "cifar100" beats "cifar"
-    # for a query like "cifar100_corrupted".
-    for key, val in sorted(_PRESETS.items(), key=lambda kv: len(kv[0]), reverse=True):
-        if key != "_default" and dataset.startswith(key):
-            return val
-    return _PRESETS.get("_default", {})
+    return _get_dataset_presets(dataset, modality="vision")
 
 
 # ImageNet normalization stats (shared across ImageNet presets)
@@ -316,55 +307,4 @@ register_preset(
 
 
 def merge_with_presets(dataset: str, user_kwargs: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Smartly merges user-provided kwargs with dataset-specific presets.
-    If a user kwarg matches the global/ImageNet default, it is assumed to be an
-    unmodified configuration default and the dataset-specific preset takes precedence.
-    If it differs, it's treated as a conscious user override.
-    """
-
-    dataset_presets = copy.deepcopy(get_dataset_presets(dataset))
-    default_presets = get_dataset_presets("_default")
-
-    def smart_merge(base, user, default):
-        result = base.copy()
-        for k, v in user.items():
-            if isinstance(v, dict) and k in base and isinstance(base[k], dict):
-                result[k] = smart_merge(
-                    base[k], v, default.get(k, {}) if isinstance(default, dict) else {}
-                )
-            else:
-                default_val = default.get(k) if isinstance(default, dict) else None
-                # If the user value differs from the default preset, OR it's not in the default preset,
-                # we consider it an explicit user override.
-                # Tuples/Lists can be tricky, so let's normalize them for comparison
-                val_to_compare = tuple(v) if isinstance(v, list) else v
-                def_to_compare = (
-                    tuple(default_val) if isinstance(default_val, list) else default_val
-                )
-
-                # Check for nested tuples inside like normalization_params
-                if (
-                    isinstance(val_to_compare, tuple)
-                    and len(val_to_compare) > 0
-                    and isinstance(val_to_compare[0], list)
-                ):
-                    val_to_compare = tuple(
-                        tuple(x) if isinstance(x, list) else x for x in val_to_compare
-                    )
-                if (
-                    isinstance(def_to_compare, tuple)
-                    and len(def_to_compare) > 0
-                    and isinstance(def_to_compare[0], list)
-                ):
-                    def_to_compare = tuple(
-                        tuple(x) if isinstance(x, list) else x for x in def_to_compare
-                    )
-
-                if k not in default or val_to_compare != def_to_compare or k not in result:
-                    result[k] = v
-        return result
-
-    # The user_kwargs generally has keys like 'preproc_kwargs', 'aug_kwargs', etc.
-    # So we do a top-level smart merge.
-    return smart_merge(dataset_presets, user_kwargs, default_presets)
+    return _merge_with_presets(dataset, user_kwargs, modality="vision")

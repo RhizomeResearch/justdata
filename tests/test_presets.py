@@ -1,4 +1,4 @@
-from justdata.presets import (
+from justdata.vision.presets import (
     get_dataset_presets,
     merge_with_presets,
     register_preset,

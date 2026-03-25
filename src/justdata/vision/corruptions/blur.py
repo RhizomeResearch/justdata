@@ -1,7 +1,7 @@
 import tensorflow as tf
 
-from justdata.corruptions.registry import _get_severity_index, register_corruption
-from justdata.utils import _pad, from_4d, gaussian_filter2d, to_4d
+from justdata.vision.corruptions.registry import _get_severity_index, register_corruption
+from justdata.vision.utils import _pad, from_4d, gaussian_filter2d, to_4d
 
 DEFOCUS_RADIUS = (3.0, 4.0, 6.0, 8.0, 10.0)
 

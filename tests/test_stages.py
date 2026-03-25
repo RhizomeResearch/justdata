@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-from justdata.stages import normalize_image_format, resize_and_normalize
+from justdata.vision.stages import normalize_image_format, resize_and_normalize
 
 
 class TestNormalizeImageFormat:

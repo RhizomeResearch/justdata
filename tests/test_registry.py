@@ -1,11 +1,13 @@
 import pytest
 
-from justdata.augmentations.registry import (
+from justdata.vision.augmentations.registry import (
     get_augment_strategy,
     get_crop_strategy,
 )
-from justdata.registry import (
+import justdata.vision
+from justdata.core.registry import (
     DataPipeline,
+    get_dataset_info,
     get_pipeline,
     get_pipeline_for_dataset,
     get_task_for_dataset,
@@ -28,8 +30,9 @@ class TestDatasetTaskMapping:
         assert get_task_for_dataset("unknown_ds_xyz") is None
 
     def test_register_custom_dataset(self):
-        register_dataset("my_custom_ds", "classification")
+        register_dataset("my_custom_ds", "classification", modality="vision")
         assert get_task_for_dataset("my_custom_ds") == "classification"
+        assert get_dataset_info("my_custom_ds").modality == "vision"
 
     def test_prefix_match_imagenet_variant(self):
         """'imagenet_a3' should resolve via 'imagenet' prefix."""
@@ -53,48 +56,48 @@ class TestGetPipeline:
     # Explicit task / pipeline_name
 
     def test_explicit_task(self):
-        p = get_pipeline(task="classification", apply_presets=False)
+        p = get_pipeline(task="classification", modality="vision", apply_presets=False)
         assert isinstance(p, DataPipeline)
-        assert p.pipeline_name == "classification"
+        assert p.pipeline_name == "vision/classification"
 
     def test_explicit_pipeline_name(self):
-        p = get_pipeline(pipeline_name="segmentation", apply_presets=False)
-        assert p.pipeline_name == "segmentation"
+        p = get_pipeline(pipeline_name="vision/segmentation", apply_presets=False)
+        assert p.pipeline_name == "vision/segmentation"
 
     def test_pipeline_name_takes_precedence_over_task(self):
         p = get_pipeline(
             task="classification",
-            pipeline_name="segmentation",
+            pipeline_name="vision/segmentation",
             apply_presets=False,
         )
-        assert p.pipeline_name == "segmentation"
+        assert p.pipeline_name == "vision/segmentation"
 
     # Dataset-driven resolution
 
     def test_dataset_resolves_task_from_map(self):
         p = get_pipeline(dataset="cifar10", apply_presets=False)
-        assert p.pipeline_name == "classification"
+        assert p.pipeline_name == "vision/classification"
 
     def test_dataset_with_explicit_task_uses_task(self):
         """Explicit task overrides dataset-inferred task."""
         p = get_pipeline(dataset="cifar10", task="segmentation", apply_presets=False)
-        assert p.pipeline_name == "segmentation"
+        assert p.pipeline_name == "vision/segmentation"
 
     def test_dataset_prefix_resolves(self):
         p = get_pipeline(dataset="imagenet_a3", apply_presets=False)
-        assert p.pipeline_name == "classification"
+        assert p.pipeline_name == "vision/classification"
 
     # Pipeline-name-as-dataset convenience
 
     def test_pipeline_name_as_first_arg(self):
-        """get_pipeline('classification') should work as a convenience."""
-        p = get_pipeline("classification", apply_presets=False)
-        assert p.pipeline_name == "classification"
+        """get_pipeline('vision/classification') should work as a convenience."""
+        p = get_pipeline("vision/classification", apply_presets=False)
+        assert p.pipeline_name == "vision/classification"
 
     def test_pipeline_name_as_first_arg_no_preset_leak(self):
         """When dataset arg matches a pipeline name (not a real dataset),
         presets must NOT be applied — no ImageNet defaults should leak in."""
-        p = get_pipeline("classification")
+        p = get_pipeline("vision/classification")
         # kwargs should be empty (no preset config injected)
         assert "postproc_kwargs" not in p.kwargs
         assert "aug_kwargs" not in p.kwargs
@@ -102,7 +105,7 @@ class TestGetPipeline:
     def test_pipeline_name_as_first_arg_with_explicit_preset(self):
         """An explicit preset= should still be honoured even when dataset
         matches a pipeline name."""
-        p = get_pipeline("classification", preset="cifar10")
+        p = get_pipeline("vision/classification", preset="cifar10")
         # CIFAR presets should be present
         assert p.kwargs.get("postproc_kwargs", {}).get("image_size") == 32
 
@@ -110,7 +113,7 @@ class TestGetPipeline:
         """User kwargs passed alongside a pipeline-name-as-dataset should
         appear in the DataPipeline config without preset merging."""
         p = get_pipeline(
-            "classification",
+            "vision/classification",
             aug_kwargs={"image_size": 64},
             postproc_kwargs={"image_size": 64},
         )
@@ -158,7 +161,7 @@ class TestGetPipeline:
 
     def test_build_returns_4_callables(self):
         p = get_pipeline(
-            "classification",
+            "vision/classification",
             aug_kwargs={"image_size": 32},
             postproc_kwargs={"image_size": 32},
         )
@@ -169,7 +172,7 @@ class TestGetPipeline:
     def test_build_injects_is_training(self):
         """build(is_training=True) should set postproc_kwargs.is_training."""
         p = get_pipeline(
-            "classification",
+            "vision/classification",
             aug_kwargs={"image_size": 32},
             postproc_kwargs={"image_size": 32},
         )
@@ -180,7 +183,7 @@ class TestGetPipeline:
 
     def test_build_does_not_mutate_kwargs(self):
         p = get_pipeline(
-            "classification",
+            "vision/classification",
             aug_kwargs={"image_size": 32},
             postproc_kwargs={"image_size": 32},
         )
@@ -196,7 +199,7 @@ class TestGetPipeline:
 
     def test_legacy_iter_unpacking(self):
         p = get_pipeline(
-            "classification",
+            "vision/classification",
             aug_kwargs={"image_size": 32},
             postproc_kwargs={"image_size": 32},
         )
@@ -208,7 +211,7 @@ class TestGetPipeline:
 
     def test_get_pipeline_for_dataset_basic(self):
         p = get_pipeline_for_dataset("cifar10", apply_presets=True)
-        assert p.pipeline_name == "classification"
+        assert p.pipeline_name == "vision/classification"
         assert p.kwargs["postproc_kwargs"]["image_size"] == 32
 
     def test_get_pipeline_for_dataset_is_training_legacy(self):
@@ -230,12 +233,12 @@ class TestGetPipeline:
             aug_kwargs={"image_size": 32},
             postproc_kwargs={"image_size": 32},
         )
-        assert p.pipeline_name == "segmentation"
+        assert p.pipeline_name == "vision/segmentation"
 
     # repr
 
     def test_repr(self):
-        p = get_pipeline("classification", apply_presets=False)
+        p = get_pipeline("vision/classification", apply_presets=False)
         r = repr(p)
         assert "classification" in r
         assert "DataPipeline" in r

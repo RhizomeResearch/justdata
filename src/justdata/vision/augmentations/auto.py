@@ -2,8 +2,8 @@ from typing import List, Optional, Tuple, Union
 
 import tensorflow as tf
 
-from justdata.augmentations.registry import register_augment_strategy
-from justdata.utils import (
+from justdata.vision.augmentations.registry import register_augment_strategy
+from justdata.vision.utils import (
     _autocontrast,
     _brightness,
     _color,

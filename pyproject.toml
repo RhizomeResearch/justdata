@@ -8,11 +8,15 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "datasets[vision]>=4.5.0",
     "importlib-resources>=6.5.2",
     "loguru>=0.7.3",
     "tensorflow>=2.18.1",
     "tensorflow-datasets>=4.9.9",
+]
+
+[project.optional-dependencies]
+vision = [
+    "datasets[vision]>=4.5.0",
 ]
 
 [build-system]
@@ -21,6 +25,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "datasets[vision]>=4.5.0",
     "matplotlib>=3.10.8",
     "pytest>=9.0.2",
 ]

@@ -2,8 +2,8 @@ from typing import Optional
 
 import tensorflow as tf
 
-from justdata.augmentations.registry import register_augment_strategy
-from justdata.utils import gaussian_filter2d
+from justdata.vision.augmentations.registry import register_augment_strategy
+from justdata.vision.utils import gaussian_filter2d
 
 
 @tf.function

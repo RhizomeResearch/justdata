@@ -1,13 +1,11 @@
 import os
 from typing import Any, Dict, Optional, Union
 
-import datasets
-import numpy as np
 import tensorflow as tf
-import tensorflow_datasets as tfds
 from loguru import logger
 
-from justdata.corruptions.registry import apply_minic_corruption
+from justdata.core.adapters import get_adapter
+from justdata.core.sources import get_source_loader
 
 
 def _concatenate_tf_datasets(
@@ -107,65 +105,11 @@ def fetch_ds(
             return None
 
         try:
-            if dataset_name.startswith("hf:"):
-                loaded_splits = []
-                hf_name = dataset_name[3:]
-                for s in splits_to_load:
-                    # Load the dataset from Hugging Face
-                    ds_hf = datasets.load_dataset(
-                        hf_name,
-                        split=s,
-                        cache_dir=str(data_dir) if data_dir else None,
-                    )
-
-                    if (
-                        "image" not in ds_hf.column_names
-                        or "label" not in ds_hf.column_names
-                    ):
-                        raise ValueError(
-                            f"Hugging Face dataset '{hf_name}' must contain 'image' and 'label' columns. "
-                            f"Found columns: {ds_hf.column_names}. Custom schemas are not yet supported."
-                        )
-
-                    def gen(_ds=ds_hf):
-                        for batch in _ds.iter(batch_size=1024):
-                            for img, lbl in zip(batch["image"], batch["label"]):
-                                yield {
-                                    "image": np.array(img),
-                                    "label": lbl,
-                                }
-
-                    # Convert to a tf.data.Dataset
-                    # We batch then unbatch to get a proper TF dataset structure
-                    ds_tf = tf.data.Dataset.from_generator(
-                        gen,
-                        output_signature={
-                            "image": tf.TensorSpec(shape=None, dtype=tf.uint8),
-                            "label": tf.TensorSpec(shape=(), dtype=tf.int64),
-                        },
-                    )
-
-                    try:
-                        ds_tf = ds_tf.apply(
-                            tf.data.experimental.assert_cardinality(len(ds_hf))
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to assert cardinality for HF dataset {hf_name}: {e}"
-                        )
-
-                    loaded_splits.append(ds_tf)
-            else:
-                loaded_splits = [
-                    tfds.load(
-                        dataset_name,
-                        split=s,
-                        as_supervised=False,
-                        shuffle_files=False,
-                        data_dir=data_dir,
-                    )
-                    for s in splits_to_load
-                ]
+            loaded_splits = get_source_loader(dataset_name)(
+                dataset_name,
+                splits_to_load,
+                data_dir,
+            )
         except Exception as e:
             logger.warning(
                 f"Warning: Failed to load splits for dataset '{dataset_name}'. "
@@ -183,8 +127,6 @@ def fetch_ds(
         concatenated_splits = _concatenate_tf_datasets(loaded_splits)
 
         if concatenated_splits:
-            from justdata.adapters import get_adapter
-
             adapter = get_adapter(dataset_name)
             concatenated_splits = concatenated_splits.map(
                 adapter, num_parallel_calls=tf.data.AUTOTUNE
@@ -283,7 +225,7 @@ def load_ds(
         batch_size: The batch size for the output dataset.
         seed: Random seed for shuffling and augmentations.
         num_classes: Number of classes (needed for one-hot encoding/mixup).
-        pipeline: A `DataPipeline` object from `justdata.registry`. If provided,
+        pipeline: A `DataPipeline` object from `justdata.core.registry`. If provided,
                   it builds the necessary functions based on `dataset_type`.
         preprocess_fn: Preprocessing function (fallback if `pipeline` is None).
         augment_fn: Augmentation function (fallback if `pipeline` is None).
@@ -412,76 +354,3 @@ def load_ds(
 
     N = tf.data.Dataset.cardinality(ds)
     return ds, N
-
-
-def create_minic_datasets(
-    corruption_types: Union[str, list[str]], severity: int = 3, **load_ds_kwargs
-) -> Union[tuple[tf.data.Dataset, int], tuple[list[tf.data.Dataset], int]]:
-    """
-    Wrapper around load_ds to create Mini-C corruption datasets.
-
-    This function calls load_ds with `return_raw_ds=True` to get the
-    preprocessed (and cached) dataset, then applies specific corruption
-    logic instead of the standard augmentations.
-
-    Args:
-        corruption_types: A single corruption string or list of strings.
-        severity: Severity level (1-5).
-        **load_ds_kwargs: Arguments passed directly to load_ds.
-
-    Returns:
-        (dataset, N) or (list_of_datasets, N)
-    """
-
-    load_ds_kwargs["return_raw_ds"] = True
-
-    ds, tools = load_ds(**load_ds_kwargs)
-
-    postprocess_fn = tools["postprocess_fn"]
-    rng = tools["rng"]
-
-    batch_size = load_ds_kwargs.get("batch_size", 32)
-    num_classes = load_ds_kwargs.get("num_classes")
-    drop_remainder = load_ds_kwargs.get("drop_remainder", False)
-
-    return_list = isinstance(corruption_types, list)
-    c_list = corruption_types if return_list else [corruption_types]
-
-    datasets_out = []
-
-    for c_name in c_list:
-
-        def corrupt_fn(sample, c_name=c_name):
-            s_seed = rng.make_seeds(1)[:, 0]
-            img = sample["image"]
-            img_corrupted = apply_minic_corruption(img, c_name, severity, s_seed)
-            return sample | {"image": img_corrupted}
-
-        ds_c = ds.map(corrupt_fn, num_parallel_calls=tf.data.AUTOTUNE)
-        ds_c = ds_c.map(
-            lambda x: postprocess_fn(x, num_classes=num_classes),
-            num_parallel_calls=tf.data.AUTOTUNE,
-        )
-
-        ds_c = ds_c.batch(batch_size, drop_remainder=drop_remainder)
-
-        if drop_remainder:
-            ds_c = ds_c.map(
-                lambda b: b | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)},
-                num_parallel_calls=tf.data.AUTOTUNE,
-            )
-        else:
-            ds_c = _pad_dataset(ds_c, batch_size)
-
-        ds_c = ds_c.prefetch(tf.data.AUTOTUNE)
-        datasets_out.append(ds_c)
-
-    if datasets_out:
-        N = tf.data.Dataset.cardinality(datasets_out[0])
-    else:
-        N = 0
-
-    if return_list:
-        return datasets_out, N
-    else:
-        return datasets_out[0], N

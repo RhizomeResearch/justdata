@@ -2,17 +2,17 @@ from typing import Literal
 
 import tensorflow as tf
 
-from justdata.augmentations.composed import (
+from justdata.vision.augmentations.composed import (
     create_global_crops,
     create_local_crops,
 )
-from justdata.augmentations.mixing import (
+from justdata.vision.augmentations.mixing import (
     mixup_cutmix,
     random_erasing,
 )
-from justdata.augmentations.registry import get_augment_strategy, get_crop_strategy
-from justdata.stages import normalize_image_format, resize_and_normalize
-from justdata.transforms import nhwc_to_nchw
+from justdata.vision.augmentations.registry import get_augment_strategy, get_crop_strategy
+from justdata.vision.stages import normalize_image_format, resize_and_normalize
+from justdata.vision.transforms import nhwc_to_nchw
 
 
 def make_preprocessing(image_key: str = "image"):

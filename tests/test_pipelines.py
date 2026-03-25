@@ -12,21 +12,21 @@ import numpy as np
 import pytest
 import tensorflow as tf
 
-from justdata.augmentations.color import color_jitter
-from justdata.augmentations.composed import create_global_crops, create_local_crops
-from justdata.augmentations.registry import get_augment_strategy, get_crop_strategy
-from justdata.presets import get_dataset_presets, merge_with_presets
-from justdata.registry import get_pipeline_for_dataset
-from justdata.tasks.classification import (
+from justdata.vision.augmentations.color import color_jitter
+from justdata.vision.augmentations.composed import create_global_crops, create_local_crops
+from justdata.vision.augmentations.registry import get_augment_strategy, get_crop_strategy
+from justdata.vision.presets import get_dataset_presets, merge_with_presets
+from justdata.core.registry import get_pipeline_for_dataset
+from justdata.vision.tasks.classification import (
     make_augmentations,
     make_late_augmentations,
     make_postprocessing,
     make_preprocessing,
 )
-from justdata.tasks.segmentation import (
+from justdata.vision.tasks.segmentation import (
     make_postprocessing as seg_make_postprocessing,
 )
-from justdata.transforms import pad_to_patch_multiple
+from justdata.vision.transforms import pad_to_patch_multiple
 
 
 @pytest.fixture
@@ -126,7 +126,7 @@ class TestAutoAugmentStrategies:
 
     def test_ra_14_op_pool(self):
         """Default RA pool is the strict 14-op RA space (no Invert/Cutout/SolarizeAdd)."""
-        from justdata.augmentations.auto import _NON_RA_OPS
+        from justdata.vision.augmentations.auto import _NON_RA_OPS
 
         ra_14_ops = {
             "Identity",
@@ -148,14 +148,14 @@ class TestAutoAugmentStrategies:
 
     def test_ta_excludes_non_ra_ops(self, cifar_image, seed):
         """TA passes non-RA ops to exclude; result must still be valid."""
-        from justdata.augmentations.auto import trivial_augment, _NON_RA_OPS
+        from justdata.vision.augmentations.auto import trivial_augment, _NON_RA_OPS
 
         result = trivial_augment(cifar_image, seed=seed, exclude_ops=_NON_RA_OPS)
         assert result.shape == (32, 32, 3)
 
     def test_taw_wide_bounds_run_without_error(self, imagenet_image, seed):
         """TA-Wide wide params (±135°, shear ±0.99, enhance ±0.99, min 2 bits posterize)."""
-        from justdata.augmentations.auto import trivial_augment_wide
+        from justdata.vision.augmentations.auto import trivial_augment_wide
 
         result = trivial_augment_wide(imagenet_image, seed=seed)
         assert result.shape == imagenet_image.shape

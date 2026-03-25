@@ -1,8 +1,8 @@
 import tensorflow as tf
 
-from justdata.augmentations.registry import get_augment_strategy, get_crop_strategy
-from justdata.stages import normalize_image_format, resize_and_normalize
-from justdata.transforms import normalize, pad_to_patch_multiple, resize_short_side
+from justdata.vision.augmentations.registry import get_augment_strategy, get_crop_strategy
+from justdata.vision.stages import normalize_image_format, resize_and_normalize
+from justdata.vision.transforms import normalize, pad_to_patch_multiple, resize_short_side
 
 
 def make_preprocessing(image_key="image", mask_key="mask"):
@@ -120,7 +120,7 @@ def make_postprocessing(
                 image = normalize(image, *normalization_params)
             image = pad_to_patch_multiple(image, patch_size=patch_size)
             if permute_image:
-                from justdata.transforms import nhwc_to_nchw
+                from justdata.vision.transforms import nhwc_to_nchw
 
                 image = nhwc_to_nchw(image)
             sample = sample | {"image": image}

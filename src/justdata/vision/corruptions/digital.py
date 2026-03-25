@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-from justdata.corruptions.registry import _get_severity_index, register_corruption
+from justdata.vision.corruptions.registry import _get_severity_index, register_corruption
 
 PIXELATE_RATIOS = (0.6, 0.5, 0.4, 0.3, 0.25)
 

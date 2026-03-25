@@ -967,30 +967,37 @@ name = "justdata"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "datasets", extra = ["vision"] },
     { name = "importlib-resources" },
     { name = "loguru" },
     { name = "tensorflow" },
     { name = "tensorflow-datasets" },
 ]
 
+[package.optional-dependencies]
+vision = [
+    { name = "datasets", extra = ["vision"] },
+]
+
 [package.dev-dependencies]
 dev = [
+    { name = "datasets", extra = ["vision"] },
     { name = "matplotlib" },
     { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "datasets", extras = ["vision"], specifier = ">=4.5.0" },
+    { name = "datasets", extras = ["vision"], marker = "extra == 'vision'", specifier = ">=4.5.0" },
     { name = "importlib-resources", specifier = ">=6.5.2" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "tensorflow", specifier = ">=2.18.1" },
     { name = "tensorflow-datasets", specifier = ">=4.9.9" },
 ]
+provides-extras = ["vision"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "datasets", extras = ["vision"], specifier = ">=4.5.0" },
     { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "pytest", specifier = ">=9.0.2" },
 ]

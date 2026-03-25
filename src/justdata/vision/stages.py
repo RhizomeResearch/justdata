@@ -1,7 +1,7 @@
 import tensorflow as tf
 
-from justdata.augmentations.registry import get_crop_strategy
-from justdata.transforms import nhwc_to_nchw, normalize, resize_image
+from justdata.vision.augmentations.registry import get_crop_strategy
+from justdata.vision.transforms import nhwc_to_nchw, normalize, resize_image
 
 
 def normalize_image_format(sample: dict, *, image_key: str = "image") -> dict:

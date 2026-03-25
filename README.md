@@ -1,6 +1,6 @@
 # justdata
 
-A TensorFlow-native data pipeline library providing optimized preprocessing, augmentation, and evaluation recipes for modern supervised and self-supervised computer vision architectures. `justdata` wraps [TensorFlow Datasets](https://www.tensorflow.org/datasets) (TFDS) and [Hugging Face `datasets`](https://huggingface.co/docs/datasets) behind a unified interface, encoding best-practice recipes for architectures such as ConvNeXt, ViT, ResNet, and DINOv2 as first-class, versioned presets.
+A TensorFlow-native data pipeline library with a modality-neutral core and first-class computer vision recipes. `justdata.core` owns loading, adapter, preset, and pipeline execution machinery; `justdata.vision` owns image schemas, transforms, augmentations, corruptions, tasks, and vision presets. A `justdata.acoustic` namespace exists as a registration skeleton for future audio support.
 
 ______________________________________________________________________
 
@@ -41,7 +41,7 @@ ______________________________________________________________________
 (preprocess_fn, augment_fn, late_augment_fn, postprocess_fn)
 ```
 
-These are assembled by `loader.load_ds` into the following execution graph:
+These are assembled by `justdata.core.load_ds` into the following execution graph:
 
 ```
 fetch_ds -> adapter -> preprocess -> cache -> augment -> shuffle -> postprocess -> batch -> late_augment -> pad -> prefetch
@@ -53,11 +53,11 @@ The strict ordering reflects the execution domain requirements articulated throu
 
 | Function                                                             | Description                                                                                                    |
 | :------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------- |
-| `loader.fetch_ds(dataset_names, splits_info, data_dir)`              | Raw dataset loading from TFDS or Hugging Face. Returns a `tf.data.Dataset` in canonical schema.                |
-| `loader.load_ds(...)`                                                | Full pipeline for training or evaluation. Handles caching, augmentation, shuffling, batching, and prefetching. |
-| `loader.create_minic_datasets(corruption_types, severity, **kwargs)` | Constructs Mini-C corruption benchmark datasets from a preprocessed, cached base dataset.                      |
+| `justdata.core.fetch_ds(dataset_names, splits_info, data_dir)`        | Raw dataset loading through registered source loaders. Returns a `tf.data.Dataset` in canonical schema.        |
+| `justdata.core.load_ds(...)`                                         | Full pipeline for training or evaluation. Handles caching, augmentation, shuffling, batching, and prefetching. |
+| `justdata.vision.minic.create_minic_datasets(...)`                   | Constructs Mini-C corruption benchmark datasets from a preprocessed, cached base dataset.                      |
 
-Hugging Face datasets are referenced with the `hf:` prefix (e.g., `hf:cifar10`). They are expected to expose `image` and `label` columns and are converted to `tf.data.Dataset` via a generator.
+Import `justdata.vision` before resolving built-in vision datasets or pipelines. Hugging Face vision datasets are referenced with the `hf:` prefix (e.g., `hf:cifar10`) and are registered by the vision package.
 
 ______________________________________________________________________
 
@@ -386,7 +386,7 @@ The per-crop asymmetry is structurally enforced by three distinct `Compose` pipe
 Standard supervised inference transforms: `Resize(256, Bicubic)` -> `CenterCrop(224)` -> `ToImage()` -> `ToDtype(float32)` -> `Normalize`. Features are extracted from the `[CLS]` token or a concatenation of `[CLS]` and average-pooled patch tokens.
 
 **Dense Tasks (Segmentation / Depth Validation — Patch Alignment):**
-To avoid dropping boundary pixels or forcing complex interpolation during dense evaluation, images are resized to the target scale and padded (reflection or zero) on the bottom and right edges such that both height and width are exact multiples of the ViT patch size (e.g., 14). This is implemented in `transforms.pad_to_patch_multiple`.
+To avoid dropping boundary pixels or forcing complex interpolation during dense evaluation, images are resized to the target scale and padded (reflection or zero) on the bottom and right edges such that both height and width are exact multiples of the ViT patch size (e.g., 14). This is implemented in `justdata.vision.transforms.pad_to_patch_multiple`.
 
 ______________________________________________________________________
 
@@ -396,12 +396,13 @@ All extensible components in `justdata` use a decorator-based registry pattern w
 
 | Registry              | Decorator                           | Lookup                        |
 | :-------------------- | :---------------------------------- | :---------------------------- |
-| Crop strategies       | `@register_crop_strategy(name)`     | `get_crop_strategy(name)`     |
-| Augment strategies    | `@register_augment_strategy(name)`  | `get_augment_strategy(name)`  |
-| Corruptions           | `@register_corruption(name)`        | `apply_minic_corruption(...)` |
-| Dataset adapters      | `@register_adapter(dataset_name)`   | `get_adapter(dataset_name)`   |
-| Pipelines             | `@register_pipeline(name)`          | `get_pipeline(name)`          |
-| Dataset->task mapping | `register_dataset(name, task_type)` | `get_task_for_dataset(name)`  |
+| Crop strategies       | `@register_crop_strategy(name)`     | `justdata.vision.augmentations.get_crop_strategy(name)` |
+| Augment strategies    | `@register_augment_strategy(name)`  | `justdata.vision.augmentations.get_augment_strategy(name)` |
+| Corruptions           | `@register_corruption(name)`        | `justdata.vision.corruptions.apply_minic_corruption(...)` |
+| Dataset adapters      | `@register_adapter(dataset_name)`   | `justdata.core.get_adapter(dataset_name)` |
+| Source loaders        | `@register_source_loader(prefix)`   | `justdata.core.get_source_loader(dataset_name)` |
+| Pipelines             | `@register_pipeline("modality/task")` | `justdata.core.get_pipeline(...)` |
+| Dataset metadata      | `register_dataset(name, task_type, modality=...)` | `justdata.core.get_dataset_info(name)` |
 
 `get_pipeline` is the high-level resolver: it infers the task type from the dataset name, merges preset defaults with user-supplied kwargs (via smart merge; see below), and invokes the appropriate pipeline factory.
 
@@ -413,7 +414,7 @@ ______________________________________________________________________
 
 ## Presets and Smart Merging
 
-`presets.py` stores dataset-specific default kwargs for all four pipeline stages. The `_default` preset (ImageNet statistics, 224px, RandAugment) serves as the fallback.
+`justdata.vision.presets` stores dataset-specific default kwargs for all four vision pipeline stages. The vision `_default` preset (ImageNet statistics, 224px, RandAugment) serves as the fallback for vision only.
 
 **Available presets:**
 
@@ -432,20 +433,24 @@ ______________________________________________________________________
 
 ### Automatic preset resolution
 
-When a dataset has a registered preset (e.g., `cifar10` → `cifar`, `cifar100` → `cifar100`), `get_pipeline_for_dataset` automatically applies it. Datasets without a dedicated preset fall back to `_default`.
+When a vision dataset has a registered preset (e.g., `cifar10` -> `cifar`, `cifar100` -> `cifar100`), `get_pipeline` automatically applies it. Vision datasets without a dedicated preset fall back to the vision `_default`.
 
 ```python
+import justdata.vision
+from justdata.core.registry import get_pipeline
+
 # cifar10 automatically gets the 'cifar' preset (32px, TrivialAugmentWide, CIFAR-10 stats)
 pipeline = get_pipeline(dataset="cifar10")
 ```
 
 ### Applying a named preset to any dataset
 
-The `dataset` argument in `get_pipeline_for_dataset` drives preset lookup, not just task inference. To apply a specific named preset to a dataset that does not have its own preset (e.g., using `imagenet_a3` for `imagenette`), pass the preset name as `dataset` and set `pipeline_name` explicitly (since the preset name is not itself a registered dataset):
+The `dataset` argument in `get_pipeline` drives preset lookup, not just task inference. To apply a specific named preset to a dataset that does not have its own preset (e.g., using `imagenet_a3` for `imagenette`), pass it as `preset`:
 
 ```python
-from justdata.loader import load_ds
-from justdata.registry import get_pipeline
+import justdata.vision
+from justdata.core.loader import load_ds
+from justdata.core.registry import get_pipeline
 
 # Resolve the A3 (RSB light) pipeline for imagenette
 pipeline = get_pipeline(
@@ -487,7 +492,7 @@ ______________________________________________________________________
 Adapters map raw dataset schemas to the canonical schema expected by all pipeline stages (`image`, `label`, and optionally `mask`, `depth`). The identity adapter is applied by default when no specific adapter is registered for a dataset.
 
 ```python
-from justdata.adapters import register_adapter
+from justdata.core.adapters import register_adapter
 
 @register_adapter("my_dataset")
 def my_adapter(sample):
@@ -512,10 +517,11 @@ ______________________________________________________________________
 Each corruption is parameterized by severity levels 1–5 via pre-defined lookup tables.
 
 ```python
-from justdata.loader import create_minic_datasets
-from justdata.registry import get_pipeline
+import justdata.vision
+from justdata.vision.minic import create_minic_datasets
+from justdata.core.registry import get_pipeline
 
-pipeline = get_pipeline(dataset="imagenet", task="classification")
+pipeline = get_pipeline(dataset="imagenet")
 
 datasets = create_minic_datasets(
     corruption_types=["gaussian_noise", "defocus_blur", "fog"],
@@ -537,8 +543,9 @@ ______________________________________________________________________
 ### Basic Classification Pipeline
 
 ```python
-from justdata.loader import load_ds
-from justdata.registry import get_pipeline
+import justdata.vision
+from justdata.core.loader import load_ds
+from justdata.core.registry import get_pipeline
 
 pipeline = get_pipeline(dataset="cifar10")
 
@@ -565,7 +572,7 @@ train_ds = load_ds(
 
 ### Applying a Named Preset
 
-To use a specific preset for any dataset, pass the preset name as `dataset` and set `pipeline_name` explicitly:
+To use a specific preset for any dataset, pass the preset name as `preset`:
 
 ```python
 # Load imagenette with the RSB A3 (light) recipe: 160px training, RandAugment m=6, Mixup α=0.1
@@ -599,7 +606,7 @@ pipeline = get_pipeline(
 ```python
 pipeline = get_pipeline(
     preset="dinov2",
-    task="classification",
+    pipeline_name="vision/classification",
 )
 ```
 

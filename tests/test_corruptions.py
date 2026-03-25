@@ -1,7 +1,7 @@
 import pytest
 import tensorflow as tf
 
-from justdata.corruptions.registry import _CORRUPTION_REGISTRY, apply_minic_corruption
+from justdata.vision.corruptions.registry import _CORRUPTION_REGISTRY, apply_minic_corruption
 
 
 def test_corruptions_registered():

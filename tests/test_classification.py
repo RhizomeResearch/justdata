@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-from justdata.tasks.classification import (
+from justdata.vision.tasks.classification import (
     make_augmentations,
     make_late_augmentations,
     make_postprocessing,

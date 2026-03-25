@@ -3,8 +3,9 @@ from unittest.mock import patch
 import pytest
 import tensorflow as tf
 
-from justdata.loader import create_minic_datasets, load_ds
-from justdata.registry import get_pipeline_for_dataset
+from justdata.core.loader import load_ds
+from justdata.core.registry import get_pipeline_for_dataset
+from justdata.vision.minic import create_minic_datasets
 
 
 def test_load_ds_classification(synthetic_classification_ds):
@@ -17,7 +18,7 @@ def test_load_ds_classification(synthetic_classification_ds):
         postproc_kwargs={"image_size": 32, "num_classes": 10},
     )
 
-    with patch("justdata.loader.fetch_ds", return_value=synthetic_classification_ds):
+    with patch("justdata.core.loader.fetch_ds", return_value=synthetic_classification_ds):
         ds, N = load_ds(
             dataset_names_arg="mock",
             splits_arg="train",
@@ -52,7 +53,7 @@ def test_load_ds_segmentation(synthetic_segmentation_ds):
         postproc_kwargs={"image_size": 32},
     )
 
-    with patch("justdata.loader.fetch_ds", return_value=synthetic_segmentation_ds):
+    with patch("justdata.core.loader.fetch_ds", return_value=synthetic_segmentation_ds):
         ds, N = load_ds(
             dataset_names_arg="mock",
             splits_arg="train",
@@ -86,7 +87,7 @@ def test_create_minic_datasets(synthetic_classification_ds):
         postproc_kwargs={"image_size": 32, "num_classes": 10},
     )
 
-    with patch("justdata.loader.fetch_ds", return_value=synthetic_classification_ds):
+    with patch("justdata.core.loader.fetch_ds", return_value=synthetic_classification_ds):
         ds_list, N = create_minic_datasets(
             corruption_types=["noise", "blur"],
             severity=1,

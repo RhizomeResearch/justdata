@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-from justdata.adapters import (
+from justdata.core.adapters import (
     _default_adapter,
     get_adapter,
     register_adapter,
@@ -24,7 +24,7 @@ class TestAdapterRegistry:
         assert adapter is _default_adapter
 
     def test_register_and_retrieve(self):
-        from justdata.adapters import _ADAPTERS
+        from justdata.core.adapters import _ADAPTERS
 
         # Clean up in case of re-runs
         _ADAPTERS.pop("test_ds_adapter", None)

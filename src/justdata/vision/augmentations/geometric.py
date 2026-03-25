@@ -2,7 +2,7 @@ from typing import Tuple, Union
 
 import tensorflow as tf
 
-from justdata.augmentations.registry import register_crop_strategy
+from justdata.vision.augmentations.registry import register_crop_strategy
 
 
 @tf.function

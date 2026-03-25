@@ -2,9 +2,9 @@ from typing import Tuple, Union
 
 import tensorflow as tf
 
-from justdata.augmentations.color import color_jitter, gaussian_blur, solarize
-from justdata.augmentations.geometric import random_horizontal_flip, random_resized_crop
-from justdata.encodings.heatmaps import bboxes_to_gaussian_heatmaps
+from justdata.vision.augmentations.color import color_jitter, gaussian_blur, solarize
+from justdata.vision.augmentations.geometric import random_horizontal_flip, random_resized_crop
+from justdata.vision.encodings.heatmaps import bboxes_to_gaussian_heatmaps
 
 
 @tf.function

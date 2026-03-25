@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-from justdata.tasks.segmentation import (
+from justdata.vision.tasks.segmentation import (
     make_augmentations,
     make_late_augmentations,
     make_postprocessing,

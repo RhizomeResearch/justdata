@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 
-from justdata.transforms import (
+from justdata.vision.transforms import (
     center_crop,
     nhwc_to_nchw,
     normalize,

@@ -420,8 +420,8 @@ ______________________________________________________________________
 | Preset            | Description                                               |
 | :---------------- | :-------------------------------------------------------- |
 | `_default`        | ImageNet-1K statistics, 224px, RandAugment, modern branch |
-| `cifar`           | 32px, TrivialAugment, CIFAR-10 normalization, no resizing |
-| `cifar100`        | 32px, TrivialAugment, CIFAR-100 normalization             |
+| `cifar`           | 32px, TrivialAugmentWide, CIFAR-10 normalization, no resizing |
+| `cifar100`        | 32px, TrivialAugmentWide, CIFAR-100 normalization             |
 | `imagenet_resnet` | ImageNet statistics, legacy branch with ColorJitter       |
 | `imagenet_a1`     | RSB A1: heavy augmentation, BCE loss, 600 epochs          |
 | `imagenet_a2`     | RSB A2: moderate augmentation, BCE loss, 300 epochs       |
@@ -429,6 +429,70 @@ ______________________________________________________________________
 | `dinov2`          | Asymmetric multi-crop SSL pipeline                        |
 
 `merge_with_presets(dataset, user_kwargs)` implements a **smart merge**: user-supplied kwargs that are identical to the `_default` preset values are treated as "not explicitly overridden," allowing dataset-specific preset values to take precedence. Only kwargs that genuinely differ from the defaults are considered intentional user overrides.
+
+### Automatic preset resolution
+
+When a dataset has a registered preset (e.g., `cifar10` → `cifar`, `cifar100` → `cifar100`), `get_pipeline_for_dataset` automatically applies it. Datasets without a dedicated preset fall back to `_default`.
+
+```python
+# cifar10 automatically gets the 'cifar' preset (32px, TrivialAugmentWide, CIFAR-10 stats)
+preprocess_fn, augment_fn, late_augment_fn, postprocess_fn = get_pipeline_for_dataset(
+    dataset="cifar10",
+    is_training=True,
+)
+```
+
+### Applying a named preset to any dataset
+
+The `dataset` argument in `get_pipeline_for_dataset` drives preset lookup, not just task inference. To apply a specific named preset to a dataset that does not have its own preset (e.g., using `imagenet_a3` for `imagenette`), pass the preset name as `dataset` and set `pipeline_name` explicitly (since the preset name is not itself a registered dataset):
+
+```python
+from justdata.loader import load_ds
+from justdata.registry import get_pipeline_for_dataset
+
+# Resolve the A3 (RSB light) pipeline for imagenette
+preprocess_fn, augment_fn, late_augment_fn, postprocess_fn = get_pipeline_for_dataset(
+    dataset="imagenet_a3",       # drives preset lookup: 160px train, 224px val, RandAugment m=6
+    pipeline_name="classification",  # required: imagenet_a3 is a preset, not a registered dataset
+    is_training=True,
+)
+
+train_ds, N = load_ds(
+    dataset_names_arg=["imagenette"],  # actual dataset to load
+    splits_arg={"imagenette": ["train"]},
+    dataset_type="train",
+    batch_size=128,
+    seed=42,
+    preprocess_fn=preprocess_fn,
+    augment_fn=augment_fn,
+    late_augment_fn=late_augment_fn,
+    postprocess_fn=postprocess_fn,
+    num_classes=10,
+)
+```
+
+The validation pipeline uses the same preset name; the A3 preset's FixRes strategy (`train_image_size=160`, `val_resize_size=236`) is applied automatically:
+
+```python
+preprocess_fn, augment_fn, late_augment_fn, postprocess_fn = get_pipeline_for_dataset(
+    dataset="imagenet_a3",
+    pipeline_name="classification",
+    is_training=False,  # switches to deterministic center-crop resize (236 → CenterCrop 224)
+)
+
+val_ds, N = load_ds(
+    dataset_names_arg=["imagenette"],
+    splits_arg={"imagenette": ["validation"]},
+    dataset_type="validation",
+    batch_size=256,
+    seed=0,
+    preprocess_fn=preprocess_fn,
+    augment_fn=augment_fn,
+    late_augment_fn=late_augment_fn,
+    postprocess_fn=postprocess_fn,
+    num_classes=10,
+)
+```
 
 ______________________________________________________________________
 
@@ -463,13 +527,27 @@ Each corruption is parameterized by severity levels 1–5 via pre-defined lookup
 
 ```python
 from justdata.loader import create_minic_datasets
+from justdata.registry import get_pipeline_for_dataset
+
+preprocess_fn, augment_fn, late_augment_fn, postprocess_fn = get_pipeline_for_dataset(
+    dataset="imagenet2012",
+    pipeline_name="classification",
+    is_training=False,
+)
 
 datasets = create_minic_datasets(
     corruption_types=["gaussian_noise", "defocus_blur", "fog"],
     severity=3,
     dataset_names_arg=["imagenet2012"],
     splits_arg={"imagenet2012": ["validation"]},
+    dataset_type="validation",
     batch_size=256,
+    seed=0,
+    preprocess_fn=preprocess_fn,
+    augment_fn=augment_fn,
+    late_augment_fn=late_augment_fn,
+    postprocess_fn=postprocess_fn,
+    num_classes=1000,
 )
 ```
 
@@ -488,10 +566,10 @@ preprocess_fn, augment_fn, late_augment_fn, postprocess_fn = get_pipeline_for_da
     is_training=True,
 )
 
-train_ds = load_ds(
+train_ds, N = load_ds(
     dataset_names_arg=["cifar10"],
     splits_arg={"cifar10": ["train"]},
-    dataset_type="classification",
+    dataset_type="train",
     batch_size=128,
     seed=42,
     preprocess_fn=preprocess_fn,
@@ -512,6 +590,32 @@ train_ds = load_ds(
 )
 ```
 
+### Applying a Named Preset
+
+To use a specific preset for any dataset, pass the preset name as `dataset` and set `pipeline_name` explicitly:
+
+```python
+# Load imagenette with the RSB A3 (light) recipe: 160px training, RandAugment m=6, Mixup α=0.1
+preprocess_fn, augment_fn, late_augment_fn, postprocess_fn = get_pipeline_for_dataset(
+    dataset="imagenet_a3",        # preset to apply
+    pipeline_name="classification",  # required when preset name ≠ dataset name
+    is_training=True,
+)
+
+train_ds, N = load_ds(
+    dataset_names_arg=["imagenette"],
+    splits_arg={"imagenette": ["train"]},
+    dataset_type="train",
+    batch_size=128,
+    seed=42,
+    preprocess_fn=preprocess_fn,
+    augment_fn=augment_fn,
+    late_augment_fn=late_augment_fn,
+    postprocess_fn=postprocess_fn,
+    num_classes=10,
+)
+```
+
 ### Overriding Preset Parameters
 
 ```python
@@ -526,11 +630,9 @@ preprocess_fn, augment_fn, late_augment_fn, postprocess_fn = get_pipeline_for_da
 
 ```python
 preprocess_fn, augment_fn, late_augment_fn, postprocess_fn = get_pipeline_for_dataset(
-    dataset="imagenet2012",
+    dataset="dinov2",
     pipeline_name="classification",
     is_training=True,
-    apply_presets=True,
-    aug_kwargs={"mode": "ssl"},
 )
 ```
 

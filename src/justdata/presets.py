@@ -39,14 +39,13 @@ register_preset(
             "crop_type": "random_pad",
             "padding": 4,
             "pad_mode": "CONSTANT",
-            "augment_type": "trivial_augment",
+            "augment_type": "trivial_augment_wide",
             "ra_kwargs": {
                 "num_layers": 2,
                 "magnitude": 9.0,
                 "cutout_const": 14.0,
                 "translate_const": 14.0,
             },
-            "ta_kwargs": {"cutout_const": 14.0, "translate_const": 14.0},
             "gc_kwargs": {"size": 32, "scale": (0.32, 1.0)},
             "lc_kwargs": {"size": 16, "scale": (0.05, 0.32)},
         },
@@ -74,14 +73,13 @@ register_preset(
             "crop_type": "random_pad",
             "padding": 4,
             "pad_mode": "CONSTANT",
-            "augment_type": "trivial_augment",
+            "augment_type": "trivial_augment_wide",
             "ra_kwargs": {
                 "num_layers": 2,
                 "magnitude": 9.0,
                 "cutout_const": 14.0,
                 "translate_const": 14.0,
             },
-            "ta_kwargs": {"cutout_const": 14.0, "translate_const": 14.0},
             "gc_kwargs": {"size": 32, "scale": (0.32, 1.0)},
             "lc_kwargs": {"size": 16, "scale": (0.05, 0.32)},
         },
@@ -114,7 +112,7 @@ register_preset(
                 "num_layers": 2,
                 "magnitude": 9.0,
                 "cutout_const": 40.0,
-                "translate_const": 100.0,
+                "translate_const": 101.0,
             },
             "gc_kwargs": {"size": 224, "scale": (0.32, 1.0)},
             "lc_kwargs": {"size": 96, "scale": (0.05, 0.32)},
@@ -177,7 +175,7 @@ register_preset(
                 "num_layers": 2,
                 "magnitude": 7.0,
                 "cutout_const": 40.0,
-                "translate_const": 100.0,
+                "translate_const": 101.0,
             },
         },
         "laug_kwargs": {
@@ -209,7 +207,7 @@ register_preset(
                 "num_layers": 2,
                 "magnitude": 6.0,
                 "cutout_const": 40.0,
-                "translate_const": 100.0,
+                "translate_const": 101.0,
             },
         },
         "laug_kwargs": {
@@ -242,7 +240,7 @@ register_preset(
                 "num_layers": 2,
                 "magnitude": 6.0,
                 "cutout_const": 40.0,
-                "translate_const": 100.0,
+                "translate_const": 72.0,
             },
         },
         "laug_kwargs": {
@@ -254,7 +252,8 @@ register_preset(
         },
         "postproc_kwargs": {
             "image_size": 224,
-            # FixRes: resize to 236, center crop to 224
+            # FixRes: train at 160, validate at 224 (resize to 236, center crop 224)
+            "train_image_size": 160,
             "val_resize_size": 236,
             "normalization_params": _IMAGENET_NORM,
         },

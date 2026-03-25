@@ -10,6 +10,7 @@ ______________________________________________________________________
 1. [Architecture](#architecture)
 1. [Data Pipeline Stages](#data-pipeline-stages)
 1. [Supervised Learning — Training Pipelines](#supervised-learning--training-pipelines)
+1. [Automatic Augmentation Policies: RandAugment, TrivialAugment, and TrivialAugmentWide](#automatic-augmentation-policies-randaugment-trivialaugment-and-trivialaugmentwide)
 1. [Supervised Learning — Validation Pipelines](#supervised-learning--validation-pipelines)
 1. [The `timm` ImageNet Recipes (ResNet Strikes Back: A1/A2/A3)](#the-timm-imagenet-recipes-resnet-strikes-back-a1a2a3)
 1. [Self-Supervised Learning Pipeline (DINOv2)](#self-supervised-learning-pipeline-dinov2)
@@ -95,7 +96,7 @@ To ensure mathematical correctness, the training pipeline is strictly segregated
 
 The photometric augmentation strategy is architecture-dependent and the two branches are mutually exclusive.
 
-- **Modern Branch (ViT / ConvNeXt):** Apply `RandAugment(num_ops=2, magnitude=9)` or `TrivialAugmentWide`. Color Jitter is explicitly disabled to prevent redundant and destructive color space distortion.
+- **Modern Branch (ViT / ConvNeXt):** Apply `RandAugment(num_ops=2, magnitude=9)`, `TrivialAugment`, or `TrivialAugmentWide` (see the [Automatic Augmentation Policies](#automatic-augmentation-policies-randaugment-trivialaugment-and-trivialaugmentwide) section for full specifications). Color Jitter is explicitly disabled to prevent redundant and destructive color space distortion.
 - **Legacy Branch (ResNet):** Apply `ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1)`. RandAugment is disabled.
 
 ### 2. Tensor Domain
@@ -117,6 +118,182 @@ Applied across the batch dimension during training.
   - **CutMix:** Replaces a rectangular bounding box region; $\lambda \sim \mathrm{Beta}(1.0,, 1.0)$.
   - *Note: The $\alpha$ values (0.8 and 1.0) reflect the DeiT baseline. Mixup/CutMix parameters are strictly recipe-dependent; see the A1/A2/A3 section for ResNet-specific variations.*
 - **Label Smoothing:** Cross-entropy loss modification with $\varepsilon = 0.1$.
+
+______________________________________________________________________
+
+## Automatic Augmentation Policies: RandAugment, TrivialAugment, and TrivialAugmentWide
+
+`justdata` provides native TensorFlow implementations of three closely related automatic augmentation policies: **RandAugment** (Cubuk et al., 2020), **TrivialAugment** (Müller & Hutter, 2021), and **TrivialAugmentWide** (Müller & Hutter, 2021). All three are registered under the `augment_strategy` registry and share a common operation pool and magnitude discretization framework.
+
+### 1. Pipeline Position and Domain Constraints
+
+To guarantee deterministic reproduction of published results, all three policies are applied exclusively in the **image domain** (integer `uint8` tensors, pixel values $\in [0, 255]$), before tensor conversion to floating-point and channel-wise normalization. The canonical execution order within the per-sample augmentation stage is:
+
+1. Random Resized Crop (or Random Pad Crop for CIFAR)
+2. **RandAugment / TrivialAugment / TrivialAugmentWide**
+3. Random Horizontal Flip *(integrated into the crop strategy)*
+4. `ToTensor` — scales to float $[0.0, 1.0]$ *(postprocessing stage)*
+5. `Normalize` — subtracts dataset mean, divides by standard deviation *(postprocessing stage)*
+
+Applying photometric and geometric distortions prior to floating-point conversion ensures that operations such as `Posterize` and `Solarize`, which are defined on integer pixel arithmetic, remain numerically well-founded, and that fill values for geometric operations are expressed in the same integer domain as the source image.
+
+### 2. The RA Operation Space ($K = 14$)
+
+All three algorithms draw from the **RA augmentation space**, a fixed pool of $K = 14$ operations. The pool is partitioned into two subsets based on magnitude dependency.
+
+#### Magnitude-Independent Operations (3 ops)
+
+These operations ignore the sampled magnitude $m$ entirely.
+
+| Operation | Description |
+| :--- | :--- |
+| `Identity` | Returns the image unmodified. |
+| `AutoContrast` | Linearly scales the pixel intensity histogram so that the darkest pixel maps to 0 and the brightest to 255. |
+| `Equalize` | Equalizes the image histogram per channel using a cumulative distribution function. |
+
+#### Magnitude-Dependent Operations (11 ops)
+
+These operations scale their physical intensity as a function of the sampled magnitude index $m$.
+
+**Sign randomization.** For all geometric operations (`Rotate`, `ShearX`, `ShearY`, `TranslateX`, `TranslateY`) and all color enhancement operations (`Brightness`, `Color`, `Contrast`, `Sharpness`), the direction of the applied transformation is randomized bidirectionally. Given a raw physical magnitude $v$ computed from $m$, the applied value is:
+
+$$v' = v \cdot s, \quad s \sim \mathcal{U}\{-1, +1\}$$
+
+This sign randomization is sampled independently per operation per sample, using a stateless seed derived from the layer's random state.
+
+**Geometric fill.** When pixels are shifted outside the image boundary by `Rotate`, `ShearX`, `ShearY`, `TranslateX`, or `TranslateY`, the vacated regions are filled with a constant value (default: 128). The interpolation mode defaults to nearest-neighbor for exact integer arithmetic; this may be overridden to bilinear to match the `torchvision` ImageNet presets.
+
+**Solarize semantics.** `Solarize` inverts all pixel values that are greater than or equal to the computed threshold $\tau$. Formally, for each pixel $p$:
+
+$$p' = \begin{cases} 255 - p & \text{if } p \geq \tau \\ p & \text{otherwise} \end{cases}$$
+
+where $\tau = 255 \cdot (1 - m / B)$. At $m = 0$, the threshold is 255 (no pixels inverted); at $m = B$, the threshold is 0 (all pixels inverted).
+
+### 3. Magnitude Discretization and Physical Mappings
+
+The magnitude scale is a **31-bin discrete framework** with bin indices $m \in \{0, 1, \ldots, 30\}$ and $B = 30$ (the maximum bin index). This parameterization is the native scale of the `torchvision` (v0.13+) implementation of both RandAugment and TrivialAugmentWide.
+
+The table below specifies the physical mapping formula and the operation-specific bound for each of the two spaces. $W$ and $H$ denote the input image width and height at the moment the augmentation is applied.
+
+| Operation | Sign Rand. | Physical Mapping | Standard Bound (RA / TA) | Wide Bound (TA-Wide) |
+| :--- | :---: | :--- | :--- | :--- |
+| **Rotate** | Yes | $(m / B) \cdot \text{MaxDeg} \cdot s$ | 30.0° | 135.0° |
+| **TranslateX** | Yes | $(m / B) \cdot \text{MaxPx}_X \cdot s$ | $(150 / 331) \times W$ | 32.0 px |
+| **TranslateY** | Yes | $(m / B) \cdot \text{MaxPx}_Y \cdot s$ | $(150 / 331) \times H$ | 32.0 px |
+| **ShearX** | Yes | $(m / B) \cdot \text{MaxShear} \cdot s$ | 0.3 | 0.99 |
+| **ShearY** | Yes | $(m / B) \cdot \text{MaxShear} \cdot s$ | 0.3 | 0.99 |
+| **Brightness** | Yes | $1.0 + (m / B) \cdot \text{MaxDelta} \cdot s$ | 0.9 | 0.99 |
+| **Color** | Yes | $1.0 + (m / B) \cdot \text{MaxDelta} \cdot s$ | 0.9 | 0.99 |
+| **Contrast** | Yes | $1.0 + (m / B) \cdot \text{MaxDelta} \cdot s$ | 0.9 | 0.99 |
+| **Sharpness** | Yes | $1.0 + (m / B) \cdot \text{MaxDelta} \cdot s$ | 0.9 | 0.99 |
+| **Posterize** | No | $8 - \mathrm{round}\!\left((m / B) \cdot \text{MaxBits}\right)$ | MaxBits = 4 (min 4 bits retained) | MaxBits = 6 (min 2 bits retained) |
+| **Solarize** | No | $255.0 \cdot (1 - m / B)$ | threshold down to 0 | threshold down to 0 |
+| **Identity** | — | — | — | — |
+| **AutoContrast** | — | — | — | — |
+| **Equalize** | — | — | — | — |
+
+> **Note on TranslateX / TranslateY:** Translation is a deliberate exception to the "wider bounds" pattern. The TA-Wide space specifies a fixed ceiling of 32 px for both axes. For any image dimension exceeding approximately 71 px, the Standard RA space—whose ceiling scales proportionally with the image dimension—admits a **larger** maximum translation than the Wide space.
+
+### 4. Algorithm Specifications
+
+#### 4.1 RandAugment (RA)
+
+RandAugment (Cubuk et al., 2020) reduces the search space of AutoAugment from $\mathcal{O}(K^N)$ policies to two scalar hyperparameters: the number of sequential operations $N$ and the global magnitude $M$.
+
+**Procedure.**  Given a training image $x$:
+
+1. Independently sample $N$ operation indices $k_1, \ldots, k_N$ uniformly at random **with replacement** from the pool of $K$ operations.
+2. For each selected operation $T_{k_i}$, map the fixed global magnitude $M$ to a physical parameter via the operation-specific formula in the table above, applying sign randomization where applicable.
+3. Apply the operations sequentially: $x \leftarrow T_{k_N}(\cdots T_{k_1}(x))$.
+
+The magnitude $M$ is expressed on the **31-bin scale** ($M \in \{0, \ldots, 30\}$) used throughout `justdata`. An optional magnitude perturbation $\sigma > 0$ samples the effective level per layer from $\mathcal{N}(M, \sigma^2)$, clipped to $[0, B]$.
+
+**API parameters** (`augment_strategy = "rand_augment"` or direct call to `rand_augment`):
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `num_layers` | `int` | 2 | Number of operations $N$ applied per image. |
+| `magnitude` | `float` | 9.0 | Global magnitude $M$ on the 31-bin scale. |
+| `magnitude_std` | `float` | 0.0 | Per-layer Gaussian magnitude noise $\sigma$. Set to 0.5 to replicate `timm` stochastic magnitude. |
+| `prob_to_apply` | `float \| None` | `None` | If set, each layer is skipped with probability $1 - p$. |
+| `rotate_max` | `float` | 30.0 | Maximum rotation angle in degrees. |
+| `shear_max` | `float` | 0.3 | Maximum shear coefficient (Standard RA space). |
+| `enhance_max` | `float` | 0.9 | Maximum delta for brightness, color, contrast, sharpness. |
+| `posterize_max_bits` | `int` | 4 | Bits removed at maximum magnitude; min retained = $8 - \text{MaxBits}$. |
+| `translate_const` | `float` | 100.0 | Absolute translate ceiling in pixels. For Standard RA, set to $(150/331) \times \text{image\_width}$. |
+| `exclude_ops` | `list[str] \| None` | `None` | Operations to exclude from the sampling pool. |
+
+**Published optimal hyperparameters and 31-bin scale conversion.** The original paper (Cubuk et al., 2020) reports hyperparameters on an **11-level scale** ($M_{\text{paper}} \in \{0, \ldots, 10\}$). To replicate those results using the 31-bin scale employed by `justdata`, apply the conversion $m = M_{\text{paper}} \times 3$.
+
+| Dataset | Architecture | $N$ | $M_{\text{paper}}$ | $m$ (31-bin) |
+| :--- | :--- | :---: | :---: | :---: |
+| CIFAR-10 | WideResNet-28-2 | 3 | 4 | 12 |
+| CIFAR-10 | WideResNet-28-10 | 3 | 5 | 15 |
+| CIFAR-10 | PyramidNet + ShakeDrop | 3 | 7 | 21 |
+| CIFAR-10 | Shake-Shake | 3 | 9 | 27 |
+| ImageNet-1K | ResNet-50 | 2 | 9 | 27 |
+| ImageNet-1K | EfficientNet-B7 | 2 | — | 28† |
+
+> †The EfficientNet-B7 value was reported on an extended scale beyond 10; cross-verify against the target codebase before use. The `torchvision` default of `magnitude=9` on the 31-bin scale corresponds to moderate augmentation and is **not** equivalent to the paper's $M_{\text{paper}} = 9$.
+
+#### 4.2 TrivialAugment (TA)
+
+TrivialAugment (Müller & Hutter, 2021) eliminates hyperparameter search entirely by selecting a single operation and sampling its magnitude uniformly at random from the full discrete range on each forward pass.
+
+**Procedure.** Given a training image $x$:
+
+1. Sample one operation index $k \sim \mathcal{U}\{1, \ldots, K\}$ uniformly from the 14-op RA pool.
+2. Sample a magnitude $m \sim \mathcal{U}\{0, 1, \ldots, 30\}$ uniformly from the full 31-bin range.
+3. Map $m$ to a physical parameter via the **Standard** bounds in the table above, applying sign randomization where applicable.
+4. Apply the single operation: $x \leftarrow T_k(x)$.
+
+The proportional translate ceiling is computed dynamically as $(150 / 331) \times W$ (image width), matching the Standard RA space definition.
+
+**API:** `augment_strategy = "trivial_augment"`. Accepts `translate_const` (float, optional; computed from image width if not supplied) and `exclude_ops` (list of strings, optional).
+
+#### 4.3 TrivialAugmentWide (TA-Wide)
+
+TrivialAugmentWide (Müller & Hutter, 2021) is the native `torchvision` variant of TrivialAugment. It uses the same zero-hyperparameter, single-operation protocol as baseline TA, but operates over the **Wide** magnitude bounds, substantially expanding the geometric and photometric search range.
+
+**Procedure.** Identical to TrivialAugment, with two differences:
+
+1. The **Wide** physical bounds from the table above are applied in place of the Standard bounds.
+2. The translate ceiling is a fixed **32 px** (not image-proportional).
+
+Wide bounds summary:
+
+| Transformation | Standard RA / TA | TA-Wide |
+| :--- | :--- | :--- |
+| Rotation range | ±30° | **±135°** |
+| Shear range (X and Y) | ±0.3 | **±0.99** |
+| Enhancement delta (Brightness, Color, Contrast, Sharpness) | ±0.9 | **±0.99** |
+| Posterize (minimum bits retained) | 4 | **2** |
+| Translation (fixed ceiling) | $(150/331) \times \text{dim}$ | **32 px** |
+
+**API:** `augment_strategy = "trivial_augment_wide"`. Accepts `exclude_ops` (list of strings, optional). The wide bounds are fixed by design and cannot be overridden via kwargs; to use custom bounds, call `rand_augment` directly with `num_layers=1` and the desired parameters.
+
+### 5. Algorithm Comparison
+
+| Property | RandAugment | TrivialAugment | TrivialAugmentWide |
+| :--- | :--- | :--- | :--- |
+| **Operations applied per image** | $N$ (tunable, with replacement) | 1 (fixed) | 1 (fixed) |
+| **Magnitude $m$** | Fixed global $M$, constant across ops | Sampled: $m \sim \mathcal{U}\{0, \ldots, 30\}$ | Sampled: $m \sim \mathcal{U}\{0, \ldots, 30\}$ |
+| **Hyperparameter search required** | Grid search over $(N, M)$ | None | None |
+| **Transformation bounds** | Standard RA space | Standard RA space | Wide space |
+| **Translate ceiling** | Configurable (default 100 px) | $(150/331) \times W$ (image-proportional) | 32 px (fixed) |
+| **Reference implementation** | `torchvision` | `automl/trivialaugment` | `torchvision` |
+| **`justdata` registry key** | `rand_augment` | `trivial_augment` | `trivial_augment_wide` |
+
+### 6. Non-RA Operations
+
+The following operations exist in `NAME_TO_FUNC` and can be invoked via direct calls to `rand_augment` but are **excluded from the default 14-op RA pool** and therefore not reachable through any of the three automatic augmentation strategies:
+
+| Operation | Notes |
+| :--- | :--- |
+| `Invert` | Inverts all pixel values: $p' = 255 - p$. |
+| `Cutout` | Erases a random square patch (fill with constant). Superseded by the `random_erasing` late-augmentation stage. |
+| `SolarizeAdd` | Additive solarization variant. |
+| `Grayscale` | Converts to single-channel luminance and broadcasts to RGB. |
 
 ______________________________________________________________________
 
@@ -230,7 +407,7 @@ All extensible components in `justdata` use a decorator-based registry pattern w
 
 **Built-in crop strategies:** `random_resized`, `random_pad`.
 
-**Built-in augment strategies:** `rand_augment`, `trivial_augment`, `color_jitter`.
+**Built-in augment strategies:** `rand_augment`, `trivial_augment`, `trivial_augment_wide`, `color_jitter`, `none`.
 
 ______________________________________________________________________
 

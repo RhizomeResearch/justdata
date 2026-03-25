@@ -61,6 +61,107 @@ def imagenet_sample(imagenet_image):
 # Supervised Training
 
 
+class TestAutoAugmentStrategies:
+    """RandAugment, TrivialAugment, and TrivialAugmentWide contract tests."""
+
+    def test_rand_augment_registered(self):
+        assert get_augment_strategy("rand_augment") is not None
+
+    def test_trivial_augment_registered(self):
+        assert get_augment_strategy("trivial_augment") is not None
+
+    def test_trivial_augment_wide_registered(self):
+        assert get_augment_strategy("trivial_augment_wide") is not None
+
+    def test_rand_augment_shape_preserved(self, cifar_image, seed):
+        aug_fn = get_augment_strategy("rand_augment")
+        result = aug_fn(cifar_image, seed=seed, num_layers=2, magnitude=9.0)
+        assert result.shape == (32, 32, 3)
+
+    def test_rand_augment_multi_layer(self, cifar_image, seed):
+        """RA applies N ops with replacement; N=3 should still preserve shape."""
+        aug_fn = get_augment_strategy("rand_augment")
+        result = aug_fn(cifar_image, seed=seed, num_layers=3, magnitude=12.0)
+        assert result.shape == (32, 32, 3)
+
+    def test_rand_augment_dtype_preserved(self, cifar_image, seed):
+        aug_fn = get_augment_strategy("rand_augment")
+        result = aug_fn(cifar_image, seed=seed)
+        assert result.dtype == tf.uint8
+
+    def test_trivial_augment_shape_preserved(self, cifar_image, seed):
+        aug_fn = get_augment_strategy("trivial_augment")
+        result = aug_fn(cifar_image, seed=seed)
+        assert result.shape == (32, 32, 3)
+
+    def test_trivial_augment_wide_shape_cifar(self, cifar_image, seed):
+        aug_fn = get_augment_strategy("trivial_augment_wide")
+        result = aug_fn(cifar_image, seed=seed)
+        assert result.shape == (32, 32, 3)
+
+    def test_trivial_augment_wide_shape_imagenet(self, imagenet_image, seed):
+        """TA-Wide uses fixed 32 px translate (not image-proportional)."""
+        aug_fn = get_augment_strategy("trivial_augment_wide")
+        result = aug_fn(imagenet_image, seed=seed)
+        assert result.shape == imagenet_image.shape
+
+    def test_trivial_augment_wide_dtype_preserved(self, cifar_image, seed):
+        aug_fn = get_augment_strategy("trivial_augment_wide")
+        result = aug_fn(cifar_image, seed=seed)
+        assert result.dtype == tf.uint8
+
+    def test_ta_and_taw_vary_with_seed(self, cifar_image):
+        """TA and TA-Wide sample m ~ U{0,...,30}; different seeds give different output."""
+        for strategy in ("trivial_augment", "trivial_augment_wide"):
+            aug_fn = get_augment_strategy(strategy)
+            results = [
+                aug_fn(
+                    cifar_image, seed=tf.constant([i * 13 + 1, i * 7], dtype=tf.int32)
+                ).numpy()
+                for i in range(10)
+            ]
+            assert not all(np.array_equal(results[0], r) for r in results[1:]), (
+                f"{strategy} produced identical output for all seeds"
+            )
+
+    def test_ra_14_op_pool(self):
+        """Default RA pool is the strict 14-op RA space (no Invert/Cutout/SolarizeAdd)."""
+        from justdata.augmentations.auto import _NON_RA_OPS
+
+        ra_14_ops = {
+            "Identity",
+            "AutoContrast",
+            "Equalize",
+            "Rotate",
+            "TranslateX",
+            "TranslateY",
+            "ShearX",
+            "ShearY",
+            "Brightness",
+            "Color",
+            "Contrast",
+            "Sharpness",
+            "Posterize",
+            "Solarize",
+        }
+        assert set(_NON_RA_OPS).isdisjoint(ra_14_ops)
+
+    def test_ta_excludes_non_ra_ops(self, cifar_image, seed):
+        """TA passes non-RA ops to exclude; result must still be valid."""
+        from justdata.augmentations.auto import trivial_augment, _NON_RA_OPS
+
+        result = trivial_augment(cifar_image, seed=seed, exclude_ops=_NON_RA_OPS)
+        assert result.shape == (32, 32, 3)
+
+    def test_taw_wide_bounds_run_without_error(self, imagenet_image, seed):
+        """TA-Wide wide params (±135°, shear ±0.99, enhance ±0.99, min 2 bits posterize)."""
+        from justdata.augmentations.auto import trivial_augment_wide
+
+        result = trivial_augment_wide(imagenet_image, seed=seed)
+        assert result.shape == imagenet_image.shape
+        assert result.dtype == tf.uint8
+
+
 class TestCIFARTrainingPipeline:
     """CIFAR-10/100: RandomCrop(32, padding=4, zeros) -> HFlip -> TrivialAugment."""
 
@@ -81,7 +182,7 @@ class TestCIFARTrainingPipeline:
 
     def test_cifar_trivial_augment_strategy(self, cifar_image, seed):
         aug_fn = get_augment_strategy("trivial_augment")
-        result = aug_fn(cifar_image, seed=seed, cutout_const=14.0, translate_const=14.0)
+        result = aug_fn(cifar_image, seed=seed, translate_const=14.0)
         assert result.shape == (32, 32, 3)
 
     def test_cifar_full_sl_pipeline(self, cifar_sample, seed):

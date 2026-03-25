@@ -177,6 +177,7 @@ def make_late_augmentations(
 
 def make_postprocessing(
     image_size: int,
+    train_image_size: int | None = None,
     is_training: bool = False,
     normalize_image: bool = True,
     normalization_params: tuple | None = (
@@ -201,11 +202,15 @@ def make_postprocessing(
     else:
         val_resize_buffer = val_resize_size
 
+    effective_image_size = (
+        train_image_size if (is_training and train_image_size) else image_size
+    )
+
     def postprocessing(sample):
         sample = resize_and_normalize(
             sample,
             image_keys=image_keys,
-            image_size=image_size,
+            image_size=effective_image_size,
             resize_size=val_resize_buffer if not is_training else None,
             normalize_image=normalize_image,
             normalization_params=normalization_params,

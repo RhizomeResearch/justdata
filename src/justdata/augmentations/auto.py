@@ -27,6 +27,16 @@ from justdata.utils import (
     _wrapped_rotate,
 )
 
+# 31-bin scale: magnitude m ∈ {0, …, 30}, B = max index = 30
+_B = 30.0
+
+# Ops outside the strict 14-op RA space; not in the default pool for any algorithm
+_NON_RA_OPS = ["Invert", "Cutout", "SolarizeAdd", "Grayscale"]
+
+
+def _identity(image):
+    return image
+
 
 @tf.function
 def rand_augment(
@@ -34,13 +44,27 @@ def rand_augment(
     seed: tf.Tensor,
     bboxes: Optional[tf.Tensor] = None,
     num_layers: int = 2,
-    magnitude: float = 10.0,
+    magnitude: float = 9.0,
     cutout_const: float = 40.0,
     translate_const: float = 100.0,
     magnitude_std: float = 0.0,
     prob_to_apply: Optional[float] = None,
     exclude_ops: Optional[List[str]] = None,
+    rotate_max: float = 30.0,
+    shear_max: float = 0.3,
+    enhance_max: float = 0.9,
+    posterize_max_bits: int = 4,
 ) -> Union[tf.Tensor, Tuple[tf.Tensor, tf.Tensor]]:
+    """RandAugment on the 31-bin (m ∈ {0…30}, B=30) scale.
+
+    Physical mappings per the spec:
+    - Rotate:    (m/B) * rotate_max * s          default ±30°
+    - Translate: (m/B) * translate_const * s
+    - Shear:     (m/B) * shear_max * s            default ±0.3
+    - Enhance:   1 + (m/B) * enhance_max * s      default MaxDelta=0.9
+    - Posterize: 8 - round(m * posterize_max_bits / B)  default min 4 bits
+    - Solarize:  255 * (1 - m/B)
+    """
     input_image_type = image.dtype
     if input_image_type != tf.uint8:
         image = tf.clip_by_value(image, 0.0, 255.0)
@@ -49,34 +73,41 @@ def rand_augment(
     replace_value = 128
 
     def _rotate_level_to_arg(level, seed):
-        level = (level / 10) * 30.0
+        level = (level / _B) * rotate_max
         level = _randomly_negate_tensor(level, seed)
         return (level,)
 
     def _enhance_level_to_arg(level, seed):
-        return ((level / 10) * 1.8 + 0.1,)
+        # v' = 1.0 + (m/B) * MaxDelta * s,  s ∈ {-1, +1}
+        delta = (level / _B) * enhance_max
+        delta = _randomly_negate_tensor(delta, seed)
+        return (1.0 + delta,)
 
     def _shear_level_to_arg(level, seed):
-        level = (level / 10) * 0.3
+        level = (level / _B) * shear_max
         level = _randomly_negate_tensor(level, seed)
         return (level,)
 
-    def _translate_level_to_arg(level, translate_const, seed):
-        level = (level / 10) * float(translate_const)
+    def _translate_level_to_arg(level, t_const, seed):
+        level = (level / _B) * t_const
         level = _randomly_negate_tensor(level, seed)
         return (level,)
 
     def _mult_to_arg(level, multiplier=1.0):
-        return (tf.cast((level / 10) * multiplier, tf.int32),)
+        return (tf.cast((level / _B) * multiplier, tf.int32),)
 
     def level_to_arg(name, level, seed):
-        if name in ["AutoContrast", "Equalize", "Invert", "Grayscale"]:
+        if name in ["Identity", "AutoContrast", "Equalize", "Invert", "Grayscale"]:
             return ()
         if name == "Posterize":
-            num_bits = tf.cast(8 - (level / 10) * 4, tf.int32)
+            # 8 - round(m / (B / MaxBits)) = 8 - round(m * MaxBits / B)
+            num_bits = 8 - tf.cast(
+                tf.round((level / _B) * float(posterize_max_bits)), tf.int32
+            )
             return (num_bits,)
         if name == "Solarize":
-            threshold = tf.cast(256 * (1.0 - level / 10), tf.int32)
+            # Inverts pixels >= threshold; threshold decreases with magnitude
+            threshold = tf.cast(255.0 * (1.0 - level / _B), tf.int32)
             return (threshold,)
         if name == "SolarizeAdd":
             return _mult_to_arg(level, 110)
@@ -132,6 +163,7 @@ def rand_augment(
         return wrapped
 
     NAME_TO_FUNC = {
+        "Identity": _identity,
         "AutoContrast": _autocontrast,
         "Equalize": _equalize,
         "Invert": _invert,
@@ -164,10 +196,11 @@ def rand_augment(
         ),
     }
 
+    # Strict 14-op RA space: 3 magnitude-independent + 11 magnitude-dependent
     available_ops = [
+        "Identity",
         "AutoContrast",
         "Equalize",
-        "Invert",
         "Rotate",
         "Posterize",
         "Solarize",
@@ -179,8 +212,6 @@ def rand_augment(
         "ShearY",
         "TranslateX",
         "TranslateY",
-        "Cutout",
-        "SolarizeAdd",
     ]
 
     if bboxes is not None:
@@ -217,7 +248,7 @@ def rand_augment(
         level = magnitude
         if magnitude_std > 0:
             level += tf.random.stateless_normal([], seed=seeds[2]) * magnitude_std
-        level = tf.clip_by_value(level, 0.0, 10)
+        level = tf.clip_by_value(level, 0.0, _B)
 
         branch_fns = []
         op_seeds = tf.random.split(seeds[3], len(available_ops))
@@ -257,21 +288,81 @@ def trivial_augment(
     image: tf.Tensor,
     seed: tf.Tensor,
     bboxes: Optional[tf.Tensor] = None,
-    cutout_const: float = 40.0,
-    translate_const: float = 100.0,
+    translate_const: Optional[float] = None,
     exclude_ops: Optional[List[str]] = None,
 ) -> Union[tf.Tensor, Tuple[tf.Tensor, tf.Tensor]]:
+    """TrivialAugment: one op from the strict 14-op RA space, m ~ U{0,…,30}.
+
+    Standard bounds. translate_const defaults to (150/331)*image_width if not
+    provided, matching the proportional RA-space definition.
+    """
     seeds = tf.random.split(seed, 2)
-    magnitude = tf.random.stateless_uniform([], minval=0.0, maxval=10.0, seed=seeds[0])
+    # Discrete uniform magnitude: m ~ U{0, 1, …, 30}
+    magnitude = tf.cast(
+        tf.random.stateless_uniform([], minval=0, maxval=31, dtype=tf.int32, seed=seeds[0]),
+        tf.float32,
+    )
+
+    # Standard translate bound: proportional to image width
+    if translate_const is None:
+        translate_const = tf.cast(tf.shape(image)[1], tf.float32) * (150.0 / 331.0)
+
+    # Strict 14-op RA space: exclude ops not in the pool
+    ta_exclude = list(_NON_RA_OPS)
+    if exclude_ops:
+        ta_exclude = ta_exclude + [op for op in exclude_ops if op not in ta_exclude]
+
     return rand_augment(
         image=image,
         seed=seeds[1],
         bboxes=bboxes,
         num_layers=1,
         magnitude=magnitude,
-        cutout_const=cutout_const,
         translate_const=translate_const,
-        exclude_ops=exclude_ops,
+        exclude_ops=ta_exclude,
+    )
+
+
+@tf.function
+def trivial_augment_wide(
+    image: tf.Tensor,
+    seed: tf.Tensor,
+    bboxes: Optional[tf.Tensor] = None,
+    exclude_ops: Optional[List[str]] = None,
+) -> Union[tf.Tensor, Tuple[tf.Tensor, tf.Tensor]]:
+    """TrivialAugmentWide: one op from the strict 14-op RA space, m ~ U{0,…,30}.
+
+    Wide bounds per the spec:
+    - Rotate:    ±135°   (vs standard ±30°)
+    - Translate: ±32 px fixed  (vs proportional; note: standard may exceed wide
+                               for images wider than ~71 px)
+    - Shear:     ±0.99   (vs standard ±0.3)
+    - Enhance:   MaxDelta=0.99  (vs standard 0.9)
+    - Posterize: min 2 bits  (vs standard min 4 bits)
+    """
+    seeds = tf.random.split(seed, 2)
+    # Discrete uniform magnitude: m ~ U{0, 1, …, 30}
+    magnitude = tf.cast(
+        tf.random.stateless_uniform([], minval=0, maxval=31, dtype=tf.int32, seed=seeds[0]),
+        tf.float32,
+    )
+
+    ta_exclude = list(_NON_RA_OPS)
+    if exclude_ops:
+        ta_exclude = ta_exclude + [op for op in exclude_ops if op not in ta_exclude]
+
+    return rand_augment(
+        image=image,
+        seed=seeds[1],
+        bboxes=bboxes,
+        num_layers=1,
+        magnitude=magnitude,
+        translate_const=32.0,   # Wide: fixed 32 px (not image-proportional)
+        rotate_max=135.0,       # Wide: ±135°
+        shear_max=0.99,         # Wide: ±0.99
+        enhance_max=0.99,       # Wide: MaxDelta=0.99
+        posterize_max_bits=6,   # Wide: min 2 bits kept (8 − 6 = 2)
+        exclude_ops=ta_exclude,
     )
 
 
@@ -283,6 +374,11 @@ def _aug_rand_augment(image, seed, **kwargs):
 @register_augment_strategy("trivial_augment")
 def _aug_trivial_augment(image, seed, **kwargs):
     return trivial_augment(image, seed, **kwargs)
+
+
+@register_augment_strategy("trivial_augment_wide")
+def _aug_trivial_augment_wide(image, seed, **kwargs):
+    return trivial_augment_wide(image, seed, **kwargs)
 
 
 @register_augment_strategy("none")

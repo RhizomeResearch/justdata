@@ -67,12 +67,55 @@ Choose the preset that matches the dataset scale and model recipe:
 | Legacy ImageNet ResNet recipe | `imagenet_resnet`. |
 | ResNet Strikes Back recipes | `imagenet_a1`, `imagenet_a2`, or `imagenet_a3`. |
 | DINOv2-style self-supervised multi-crop | `dinov2`. |
+| WILDS image classification | Benchmark defaults: `wilds:camelyon17`, `wilds:fmow`, `wilds:iwildcam`, or `wilds:rxrx1`. Strong opt-ins add `_strong`. |
 
 Use `justdata.vision.presets.get_resolved_preset(name).hash()` in experiment
 metadata. A changed hash means the image preprocessing or augmentation contract
 changed.
 
-## 5. CIFAR, ImageNet, and DINOv2 preset contracts
+## 5. WILDS source loading
+
+Install `justdata[wilds]` and import `justdata.vision` before resolving WILDS
+pipelines. WILDS datasets use the same `load_ds` syntax as TFDS and Hugging
+Face sources:
+
+```python
+wilds_ds = "wilds:fmow?split_scheme=time_after_2016"
+pipeline = get_pipeline(dataset="wilds:fmow")
+
+ds, n = load_ds(
+    dataset_names_arg=[wilds_ds],
+    splits_arg={wilds_ds: ["train"]},
+    dataset_type="train",
+    batch_size=32,
+    seed=0,
+    pipeline=pipeline,
+    num_classes=62,
+    data_dir="data",
+    metadata_mode="numeric_only",
+)
+```
+
+Supported WILDS datasets are image classification only: Camelyon17, FMoW,
+iWildCam, and RxRx1. FMoW temporal drift testing uses WILDS split schemes such
+as `?split_scheme=time_after_2016`. Labeled and unlabeled splits must be loaded
+in separate `load_ds` calls.
+
+WILDS downloads are disabled by default (`download=false`). To let WILDS
+download the dataset into `data_dir`, add `download=true` to the dataset string.
+Use `&` between query options:
+
+```python
+wilds_ds = "wilds:fmow?split_scheme=time_after_2016&download=true"
+```
+
+For datasets without other options, use:
+
+```python
+wilds_ds = "wilds:camelyon17?download=true"
+```
+
+## 6. CIFAR, ImageNet, DINOv2, and WILDS preset contracts
 
 CIFAR presets use 32 px inputs, random padded crop, horizontal flip,
 TrivialAugmentWide, CIFAR-specific normalization, `bchw` model layout, and
@@ -90,7 +133,19 @@ resize behavior, and train/eval resolution policy.
 DINOv2 uses asymmetric multi-crop training with global and local crops while
 keeping the downstream evaluation path deterministic.
 
-## 6. Evaluation split safety
+WILDS benchmark presets keep the reference input policy and avoid broad
+ImageNet-style training recipes by default: Camelyon17 uses 96 px ImageNet
+normalization, FMoW uses 224 px ImageNet normalization, iWildCam uses 448 px
+ImageNet normalization, and RxRx1 uses 256 px inputs with per-image per-channel
+standardization plus train-only 90-degree rotations and horizontal flips.
+
+Opt-in WILDS `_strong` presets keep the same input sizes but add stronger
+training augmentation. Camelyon17 uses mild color jitter with rotation/flip,
+FMoW and iWildCam use resize/flip plus RandAugment, and RxRx1 adds random
+erasing while keeping per-image normalization. Mixup and CutMix stay disabled
+for WILDS presets unless the caller explicitly overrides them.
+
+## 7. Evaluation split safety
 
 Vision pipelines keep training-only stochastic transforms out of validation and
 test views. `load_ds(..., dataset_type="validation")` builds the pipeline with
@@ -101,7 +156,7 @@ When computing validation metrics or corruption benchmarks, use
 `dataset_type="validation"` and `deterministic=True` if the input order must be
 stable.
 
-## 7. Metadata modes for JAX
+## 8. Metadata modes for JAX
 
 `load_ds(..., metadata_mode=...)` is shared by vision and acoustic:
 
@@ -115,7 +170,7 @@ Use `metadata_mode="numeric_only"` with `as_numpy=True` for JAX-friendly arrays.
 If string metadata is needed for later joins, pass
 `sidecar_metadata_path="metadata.jsonl"` and keep batches numeric.
 
-## 8. Golden compatibility tests
+## 9. Golden compatibility tests
 
 Vision preset contracts live in `tests/test_vision_preset_contracts.py`. They
 pin preset hashes, model input fields, normalization, static shapes, and
@@ -125,7 +180,7 @@ Optional external-reference golden tests should be marked `golden` and placed
 under a vision-specific test file when a reference implementation is available,
 for example torchvision/timm preprocessing parity for a named ImageNet recipe.
 
-## 9. Mini-C corruption benchmark
+## 10. Mini-C corruption benchmark
 
 `create_minic_datasets` forks a raw preprocessed dataset, applies deterministic
 severity 1-5 image corruptions, runs postprocessing, batches, and preserves

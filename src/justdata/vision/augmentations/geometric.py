@@ -238,6 +238,28 @@ def random_crop_with_pad(
     return crop
 
 
+@tf.function
+def resize_to_square(
+    image: tf.Tensor,
+    size: Union[Tuple[int, int], int],
+    interpolation: str = "bilinear",
+) -> tf.Tensor:
+    if isinstance(size, int):
+        size = (size, size)
+    return tf.image.resize(
+        tf.cast(image, tf.float32),
+        size,
+        method=interpolation,
+        antialias=True,
+    )
+
+
+@tf.function
+def random_rot90(image: tf.Tensor, seed) -> tf.Tensor:
+    k = tf.random.stateless_uniform([], minval=0, maxval=4, dtype=tf.int32, seed=seed)
+    return tf.image.rot90(image, k=k)
+
+
 @register_crop_strategy("random_resized")
 def _crop_random_resized(image, size, seed, interpolation="bilinear", **kwargs):
     s = tf.random.split(seed, 2)
@@ -254,6 +276,27 @@ def _crop_random_pad(image, size, seed, padding=4, pad_mode="REFLECT", **kwargs)
         image, size=size, padding=padding, pad_mode=pad_mode, seed=s[0]
     )
     return random_horizontal_flip(cropped, seed=s[1])
+
+
+@register_crop_strategy("random_hflip")
+def _crop_random_hflip(image, size, seed, **kwargs):
+    return random_horizontal_flip(image, seed=seed)
+
+
+@register_crop_strategy("resize_random_hflip")
+def _crop_resize_random_hflip(
+    image, size, seed, interpolation="bilinear", **kwargs
+):
+    s = tf.random.split(seed, 2)
+    resized = resize_to_square(image, size=size, interpolation=interpolation)
+    return random_horizontal_flip(resized, seed=s[1])
+
+
+@register_crop_strategy("random_rot90_hflip")
+def _crop_random_rot90_hflip(image, size, seed, **kwargs):
+    s = tf.random.split(seed, 2)
+    rotated = random_rot90(image, seed=s[0])
+    return random_horizontal_flip(rotated, seed=s[1])
 
 
 @register_crop_strategy("none")

@@ -182,6 +182,40 @@ def normalize_image_format(sample: dict, *, image_key: str = "image") -> dict:
     return sample | {image_key: image}
 
 
+def _per_image_channel_standardize(image: tf.Tensor) -> tf.Tensor:
+    image = tf.cast(image, tf.float32) / 255.0
+    if image.shape.rank == 4:
+        axes = [1, 2]
+    else:
+        axes = [0, 1]
+
+    mean = tf.reduce_mean(image, axis=axes, keepdims=True)
+    variance = tf.reduce_mean(tf.square(image - mean), axis=axes, keepdims=True)
+    std = tf.sqrt(variance)
+    centered = image - mean
+    has_variance = std > 1e-6
+    safe_std = tf.where(has_variance, std, tf.ones_like(std))
+    return tf.where(has_variance, centered / safe_std, tf.zeros_like(centered))
+
+
+def _normalize_image(
+    image: tf.Tensor,
+    *,
+    normalization_mode: Literal["mean_std", "per_image"],
+    normalization_params: tuple | None,
+) -> tf.Tensor:
+    if normalization_mode == "per_image":
+        return _per_image_channel_standardize(image)
+    if normalization_mode != "mean_std":
+        raise ValueError("normalization_mode must be 'mean_std' or 'per_image'")
+    if normalization_params is None:
+        raise ValueError(
+            "`normalization_params` needs to be provided when "
+            "`normalization_mode='mean_std'`"
+        )
+    return normalize(image, *normalization_params)
+
+
 def resize_and_normalize(
     sample: dict,
     *,
@@ -189,6 +223,7 @@ def resize_and_normalize(
     image_size: int,
     resize_size: int | None = None,
     normalize_image: bool = True,
+    normalization_mode: Literal["mean_std", "per_image"] = "mean_std",
     normalization_params: tuple | None = None,
     permute: bool = True,
 ) -> dict:
@@ -206,11 +241,11 @@ def resize_and_normalize(
                 resize_size=resize_size,
             )
         if normalize_image:
-            if normalization_params is None:
-                raise ValueError(
-                    "`normalization_params` needs to be provided if `normalize_image` is True"
-                )
-            image = normalize(image, *normalization_params)
+            image = _normalize_image(
+                image,
+                normalization_mode=normalization_mode,
+                normalization_params=normalization_params,
+            )
         if permute:
             image = nhwc_to_nchw(image)
 

@@ -1,3 +1,4 @@
+import numpy as np
 import tensorflow as tf
 
 from justdata.vision.stages import (
@@ -111,6 +112,42 @@ class TestResizeAndNormalize:
         # Should still be float (from resize) but not normalized
         assert result["image"].dtype == tf.float32
         assert tf.reduce_max(result["image"]) <= 255.0
+
+    def test_per_image_channel_standardization(self):
+        image = tf.reshape(
+            tf.cast(tf.range(16 * 16 * 3), tf.uint8),
+            [16, 16, 3],
+        )
+        result = resize_and_normalize(
+            {"image": image},
+            image_keys=["image"],
+            image_size=16,
+            resize_size=None,
+            normalize_image=True,
+            normalization_mode="per_image",
+            normalization_params=None,
+            permute=False,
+        )
+
+        means = tf.reduce_mean(result["image"], axis=[0, 1]).numpy()
+        stds = tf.math.reduce_std(result["image"], axis=[0, 1]).numpy()
+        np.testing.assert_allclose(means, np.zeros(3), atol=1e-6)
+        np.testing.assert_allclose(stds, np.ones(3), atol=1e-6)
+
+    def test_per_image_channel_standardization_handles_constant_channels(self):
+        image = tf.ones([16, 16, 3], dtype=tf.uint8) * 7
+        result = resize_and_normalize(
+            {"image": image},
+            image_keys=["image"],
+            image_size=16,
+            resize_size=None,
+            normalize_image=True,
+            normalization_mode="per_image",
+            normalization_params=None,
+            permute=False,
+        )
+
+        np.testing.assert_allclose(result["image"].numpy(), np.zeros([16, 16, 3]))
 
 
 def test_vision_eval_views_add_metadata_and_flip_views():

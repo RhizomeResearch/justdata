@@ -14,6 +14,12 @@ def _normalization_contract(postproc_kwargs: Dict[str, Any]) -> Dict[str, Any]:
     if not postproc_kwargs.get("normalize_image", True):
         return {"kind": "none"}
 
+    normalization_mode = postproc_kwargs.get("normalization_mode", "mean_std")
+    if normalization_mode == "per_image":
+        return {"kind": "per_image", "per_channel": True}
+    if normalization_mode != "mean_std":
+        return {"kind": normalization_mode}
+
     mean, std = postproc_kwargs.get(
         "normalization_params",
         ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
@@ -350,6 +356,132 @@ register_preset(
             "image_size": 224,
             "normalization_params": _IMAGENET_NORM,
         },
+    },
+)
+
+
+def _register_wilds_preset(
+    dataset: str,
+    image_size: int,
+    *,
+    aug_kwargs: Dict[str, Any] | None = None,
+    laug_kwargs: Dict[str, Any] | None = None,
+    postproc_kwargs: Dict[str, Any] | None = None,
+):
+    resolved_aug_kwargs = {
+        "enable": False,
+        "image_size": image_size,
+    }
+    if aug_kwargs is not None:
+        resolved_aug_kwargs.update(aug_kwargs)
+
+    resolved_laug_kwargs = {
+        "enable": False,
+    }
+    if laug_kwargs is not None:
+        resolved_laug_kwargs.update(laug_kwargs)
+
+    resolved_postproc_kwargs = {
+        "image_size": image_size,
+        "val_resize_size": None,
+        "normalization_params": _IMAGENET_NORM,
+    }
+    if postproc_kwargs is not None:
+        resolved_postproc_kwargs.update(postproc_kwargs)
+        if (
+            postproc_kwargs.get("normalization_mode") == "per_image"
+            and "normalization_params" not in postproc_kwargs
+        ):
+            resolved_postproc_kwargs.pop("normalization_params", None)
+
+    register_preset(
+        dataset,
+        {
+            "preproc_kwargs": {},
+            "aug_kwargs": resolved_aug_kwargs,
+            "laug_kwargs": resolved_laug_kwargs,
+            "postproc_kwargs": resolved_postproc_kwargs,
+        },
+    )
+
+
+_register_wilds_preset("wilds:camelyon17", 96)
+_register_wilds_preset("wilds:fmow", 224)
+_register_wilds_preset("wilds:iwildcam", 448)
+_register_wilds_preset(
+    "wilds:rxrx1",
+    256,
+    aug_kwargs={
+        "enable": True,
+        "crop_type": "random_rot90_hflip",
+        "augment_type": "none",
+    },
+    postproc_kwargs={
+        "normalization_mode": "per_image",
+    },
+)
+
+_register_wilds_preset(
+    "wilds:camelyon17_strong",
+    96,
+    aug_kwargs={
+        "enable": True,
+        "crop_type": "random_rot90_hflip",
+        "augment_type": "color_jitter",
+        "cj_kwargs": {
+            "brightness": 0.2,
+            "contrast": 0.2,
+            "saturation": 0.2,
+            "hue": 0.05,
+        },
+    },
+)
+_register_wilds_preset(
+    "wilds:fmow_strong",
+    224,
+    aug_kwargs={
+        "enable": True,
+        "crop_type": "resize_random_hflip",
+        "augment_type": "rand_augment",
+        "ra_kwargs": {
+            "num_layers": 2,
+            "magnitude": 9.0,
+            "cutout_const": 40.0,
+            "translate_const": 101.0,
+        },
+    },
+)
+_register_wilds_preset(
+    "wilds:iwildcam_strong",
+    448,
+    aug_kwargs={
+        "enable": True,
+        "crop_type": "resize_random_hflip",
+        "augment_type": "rand_augment",
+        "ra_kwargs": {
+            "num_layers": 2,
+            "magnitude": 9.0,
+            "cutout_const": 80.0,
+            "translate_const": 203.0,
+        },
+    },
+)
+_register_wilds_preset(
+    "wilds:rxrx1_strong",
+    256,
+    aug_kwargs={
+        "enable": True,
+        "crop_type": "random_rot90_hflip",
+        "augment_type": "none",
+    },
+    laug_kwargs={
+        "enable": True,
+        "mixup_alpha": 0.0,
+        "cutmix_alpha": 0.0,
+        "random_erasing_prob": 0.25,
+    },
+    postproc_kwargs={
+        "normalization_mode": "per_image",
     },
 )
 

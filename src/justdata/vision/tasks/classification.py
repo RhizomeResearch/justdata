@@ -18,8 +18,9 @@ from justdata.vision.stages import (
     apply_eval_views,
     normalize_image_format,
     resize_and_normalize,
+    _normalize_image,
 )
-from justdata.vision.transforms import nhwc_to_nchw, normalize
+from justdata.vision.transforms import nhwc_to_nchw
 
 
 def _is_dense_label_vector(label: tf.Tensor, num_classes: int) -> bool:
@@ -217,6 +218,7 @@ def make_postprocessing(
     train_image_size: int | None = None,
     is_training: bool = False,
     normalize_image: bool = True,
+    normalization_mode: Literal["mean_std", "per_image"] = "mean_std",
     normalization_params: tuple | None = (
         (0.485, 0.456, 0.406),
         (0.229, 0.224, 0.225),
@@ -256,12 +258,11 @@ def make_postprocessing(
             )
             image = sample["image"]
             if normalize_image:
-                if normalization_params is None:
-                    raise ValueError(
-                        "`normalization_params` needs to be provided if "
-                        "`normalize_image` is True"
-                    )
-                image = normalize(image, *normalization_params)
+                image = _normalize_image(
+                    image,
+                    normalization_mode=normalization_mode,
+                    normalization_params=normalization_params,
+                )
             if permute_image:
                 image = nhwc_to_nchw(image)
             sample = sample | {"image": image}
@@ -272,6 +273,7 @@ def make_postprocessing(
                 image_size=effective_image_size,
                 resize_size=val_resize_buffer if not is_training else None,
                 normalize_image=normalize_image,
+                normalization_mode=normalization_mode,
                 normalization_params=normalization_params,
                 permute=permute_image,
             )

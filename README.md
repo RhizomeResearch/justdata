@@ -31,7 +31,7 @@ ______________________________________________________________________
 pip install justdata
 ```
 
-**Requirements:** Python ≥ 3.11, TensorFlow ≥ 2.18.1, TensorFlow Datasets ≥ 4.9.9. Install optional modality extras with `justdata[vision]` for Hugging Face vision datasets or `justdata[acoustic]` for audio dataset/source dependencies.
+**Requirements:** Python ≥ 3.11, TensorFlow ≥ 2.18.1, TensorFlow Datasets ≥ 4.9.9. Install optional modality extras with `justdata[vision]` for Hugging Face vision datasets, `justdata[wilds]` for WILDS image classification datasets, or `justdata[acoustic]` for audio dataset/source dependencies.
 
 ______________________________________________________________________
 
@@ -61,7 +61,7 @@ The strict ordering reflects the execution domain requirements articulated throu
 | `justdata.acoustic.corruptions.create_audio_corruption_datasets(...)` | Constructs acoustic corruption benchmark datasets from a preprocessed, cached base dataset.                    |
 | `justdata.acoustic.dcase2025.make_source_dataset(...)`               | Builds DCASE Task 1 source-domain datasets with split-safety checks.                                           |
 
-Import `justdata.vision` before resolving built-in vision datasets or pipelines. Hugging Face vision datasets are referenced with the `hf:` prefix (e.g., `hf:cifar10`) and are registered by the vision package.
+Import `justdata.vision` before resolving built-in vision datasets or pipelines. Hugging Face vision datasets are referenced with the `hf:` prefix (e.g., `hf:cifar10`), and WILDS image classification datasets are referenced with the `wilds:` prefix (e.g., `wilds:camelyon17`).
 
 ______________________________________________________________________
 
@@ -412,7 +412,7 @@ All extensible components in `justdata` use a decorator-based registry pattern w
 
 `get_pipeline` is the high-level resolver: it infers the task type from the dataset name, merges preset defaults with user-supplied kwargs (via smart merge; see below), and invokes the appropriate pipeline factory.
 
-**Built-in crop strategies:** `random_resized`, `random_pad`.
+**Built-in crop strategies:** `random_resized`, `random_pad`, `random_hflip`, `resize_random_hflip`, `random_rot90_hflip`.
 
 **Built-in augment strategies:** `rand_augment`, `trivial_augment`, `trivial_augment_wide`, `color_jitter`, `none`.
 
@@ -436,6 +436,7 @@ ______________________________________________________________________
 | `imagenet_a2`     | RSB A2: moderate augmentation, BCE loss, 300 epochs       |
 | `imagenet_a3`     | RSB A3: light augmentation, CE loss, 160px training       |
 | `dinov2`          | Asymmetric multi-crop SSL pipeline                        |
+| `wilds:*`         | WILDS benchmark defaults; matching `_strong` presets are opt-in |
 
 `merge_with_presets(dataset, user_kwargs)` implements a **smart merge**: user-supplied kwargs that are identical to the `_default` preset values are treated as "not explicitly overridden," allowing dataset-specific preset values to take precedence. Only kwargs that genuinely differ from the defaults are considered intentional user overrides.
 
@@ -652,6 +653,36 @@ train_ds = load_ds(
     dataset_names_arg=["hf:cifar10"],
     splits_arg={"hf:cifar10": ["train"]},
     ...
+)
+```
+
+### Loading a WILDS Dataset
+
+WILDS image classification datasets use the `wilds:` source prefix. Source
+options such as FMoW temporal split schemes live in the dataset string; when
+using a `splits_arg` dictionary, reuse that exact string as the key.
+Downloads are disabled by default (`download=false`). To download through
+WILDS into `data_dir`, add `download=true` to the dataset string. Use `&`
+between query options, not a second `?`.
+The automatic presets are benchmark-faithful: Camelyon17 96 px, FMoW 224 px,
+iWildCam 448 px, and RxRx1 256 px with per-image channel standardization.
+Use `preset="wilds:fmow_strong"` or another `_strong` name to opt into stronger
+training augmentation.
+
+```python
+wilds_ds = "wilds:fmow?split_scheme=time_after_2016&download=true"
+pipeline = get_pipeline(dataset="wilds:fmow")
+
+train_ds, N = load_ds(
+    dataset_names_arg=[wilds_ds],
+    splits_arg={wilds_ds: ["train"]},
+    dataset_type="train",
+    batch_size=32,
+    seed=42,
+    pipeline=pipeline,
+    num_classes=62,
+    data_dir="data",
+    metadata_mode="numeric_only",
 )
 ```
 

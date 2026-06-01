@@ -279,6 +279,63 @@ class TestImageNetModernTrainingPipeline:
         assert presets["laug_kwargs"]["cutmix_alpha"] == 1.0
 
 
+class TestWILDSClassificationPresets:
+    def test_wilds_base_presets_follow_reference_contracts(self):
+        expected = {
+            "wilds:camelyon17": (96, False, None, "mean_std"),
+            "wilds:fmow": (224, False, None, "mean_std"),
+            "wilds:iwildcam": (448, False, None, "mean_std"),
+            "wilds:rxrx1": (256, True, "random_rot90_hflip", "per_image"),
+        }
+
+        for name, (image_size, aug_enabled, crop_type, norm_mode) in expected.items():
+            presets = get_dataset_presets(name)
+            assert presets["postproc_kwargs"]["image_size"] == image_size
+            assert presets["aug_kwargs"]["enable"] is aug_enabled
+            assert presets["laug_kwargs"]["enable"] is False
+            assert (
+                presets["postproc_kwargs"].get("normalization_mode", "mean_std")
+                == norm_mode
+            )
+            if crop_type is not None:
+                assert presets["aug_kwargs"]["crop_type"] == crop_type
+
+    def test_wilds_strong_presets_are_opt_in(self):
+        camelyon = get_dataset_presets("wilds:camelyon17_strong")
+        assert camelyon["aug_kwargs"]["augment_type"] == "color_jitter"
+        assert camelyon["aug_kwargs"]["crop_type"] == "random_rot90_hflip"
+
+        fmow = get_dataset_presets("wilds:fmow_strong")
+        assert fmow["aug_kwargs"]["crop_type"] == "resize_random_hflip"
+        assert fmow["aug_kwargs"]["ra_kwargs"]["magnitude"] == 9.0
+
+        iwildcam = get_dataset_presets("wilds:iwildcam_strong")
+        assert iwildcam["aug_kwargs"]["image_size"] == 448
+        assert iwildcam["aug_kwargs"]["ra_kwargs"]["translate_const"] == 203.0
+
+        rxrx1 = get_dataset_presets("wilds:rxrx1_strong")
+        assert rxrx1["postproc_kwargs"]["normalization_mode"] == "per_image"
+        assert rxrx1["laug_kwargs"]["random_erasing_prob"] == 0.25
+        assert rxrx1["laug_kwargs"]["mixup_alpha"] == 0.0
+        assert rxrx1["laug_kwargs"]["cutmix_alpha"] == 0.0
+
+    def test_wilds_crop_strategies_preserve_expected_shapes(self, imagenet_image, seed):
+        hflip = get_crop_strategy("random_hflip")
+        first = hflip(imagenet_image, size=224, seed=seed)
+        second = hflip(imagenet_image, size=224, seed=seed)
+        assert first.shape == imagenet_image.shape
+        np.testing.assert_array_equal(first.numpy(), second.numpy())
+
+        resize_hflip = get_crop_strategy("resize_random_hflip")
+        resized = resize_hflip(imagenet_image, size=224, seed=seed)
+        assert resized.shape == (224, 224, 3)
+
+        rot_hflip = get_crop_strategy("random_rot90_hflip")
+        square = imagenet_image[:224, :224]
+        rotated = rot_hflip(square, size=224, seed=seed)
+        assert rotated.shape == (224, 224, 3)
+
+
 class TestImageNetLegacyTrainingPipeline:
     """ResNet legacy: RandomResizedCrop(224) -> HFlip -> ColorJitter(0.4,0.4,0.4,0.1)."""
 

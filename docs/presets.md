@@ -14,7 +14,7 @@ Start with the checkpoint or model family:
 | PaSST | `passt_32k_10s_logmel128`, `dcase2025_task1_passt_32k_1s` and 10 s DCASE padding variants |
 | CED | `ced_tiny_16k_logmel64`, `ced_mini_16k_logmel64`, `ced_small_16k_logmel64`, `ced_base_16k_logmel64`, `dcase2025_task1_ced_16k_1s` |
 | Generic acoustic | `audio_default_16k_waveform`, `audio_default_32k_logmel64`, `audio_default_32k_logmel128` |
-| Vision classification | `cifar`, `cifar100`, `imagenet_resnet`, `imagenet_a1`, `imagenet_a2`, `imagenet_a3`, `dinov2` |
+| Vision classification | `cifar`, `cifar100`, `imagenet_resnet`, `imagenet_a1`, `imagenet_a2`, `imagenet_a3`, `dinov2`, WILDS `wilds:*` presets |
 
 Then choose the dataset duration policy. For DCASE Task 1, 1 s direct-view
 presets preserve the benchmark source duration. The 10 s padding variants adapt
@@ -58,6 +58,20 @@ views, and recipe-specific train augmentation:
 | `imagenet_a2` | Moderate RSB recipe for standard ResNet-50 training. |
 | `imagenet_a3` | Light RSB recipe with 160 px train size and FixRes-style eval. |
 | `dinov2` | SSL multi-crop contract with global and local crops. |
+
+WILDS image-classification presets are benchmark-faithful by default:
+
+| Preset | Contract |
+| :-- | :-- |
+| `wilds:camelyon17` | 96 px, ImageNet normalization, no broad training augmentation or batch mixing. |
+| `wilds:fmow` | 224 px, ImageNet normalization, no broad training augmentation or batch mixing. |
+| `wilds:iwildcam` | 448 px, ImageNet normalization, no broad training augmentation or batch mixing. |
+| `wilds:rxrx1` | 256 px, per-image per-channel standardization, train-only 90-degree rotations and horizontal flips. |
+
+The matching `_strong` presets are opt-in recipes for exploratory training:
+Camelyon17 adds mild color jitter, FMoW and iWildCam add resize/flip plus
+RandAugment, and RxRx1 adds random erasing. Mixup and CutMix stay disabled for
+WILDS unless explicitly overridden.
 
 Use `tests/test_vision_preset_contracts.py` as the source of truth for pinned
 vision preset hashes, static shapes, normalization, and deterministic eval

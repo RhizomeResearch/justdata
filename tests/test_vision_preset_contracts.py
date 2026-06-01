@@ -10,12 +10,20 @@ from justdata.vision.presets import get_dataset_presets, get_resolved_preset
 EXPECTED_HASHES = {
     "cifar10": "27ea941b3a5d2604",
     "cifar100": "b3500b7104e5af73",
+    "dinov2": "c346275bdd4b3906",
     "imagenet": "5366c87112cd2682",
-    "imagenet_resnet": "aba3867d4392cadf",
     "imagenet_a1": "295a30e69b79c069",
     "imagenet_a2": "70f66a6fe3989e0d",
     "imagenet_a3": "0067216f95ff9557",
-    "dinov2": "c346275bdd4b3906",
+    "imagenet_resnet": "aba3867d4392cadf",
+    "wilds:camelyon17": "f1b68d55baea105f",
+    "wilds:camelyon17_strong": "212f1d01e33a9fac",
+    "wilds:fmow": "2da092187b08c556",
+    "wilds:fmow_strong": "d9d7c85bdded7418",
+    "wilds:iwildcam": "5c4ac991be450aea",
+    "wilds:iwildcam_strong": "44898930bce2bc62",
+    "wilds:rxrx1": "38abee4af0d7aca2",
+    "wilds:rxrx1_strong": "3c5a5609bff35f09",
 }
 
 EXPECTED_CONTRACTS = {
@@ -91,6 +99,78 @@ EXPECTED_CONTRACTS = {
         "normalization": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
         "num_classes": 1000,
     },
+    "wilds:camelyon17": {
+        "image_size": 96,
+        "train_image_size": None,
+        "train_crop": "disabled",
+        "padding": 4,
+        "val_resize_size": None,
+        "normalization": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        "num_classes": 2,
+    },
+    "wilds:camelyon17_strong": {
+        "image_size": 96,
+        "train_image_size": None,
+        "train_crop": "random_rot90_hflip",
+        "padding": 4,
+        "val_resize_size": None,
+        "normalization": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        "num_classes": 2,
+    },
+    "wilds:fmow": {
+        "image_size": 224,
+        "train_image_size": None,
+        "train_crop": "disabled",
+        "padding": 4,
+        "val_resize_size": None,
+        "normalization": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        "num_classes": 62,
+    },
+    "wilds:fmow_strong": {
+        "image_size": 224,
+        "train_image_size": None,
+        "train_crop": "resize_random_hflip",
+        "padding": 4,
+        "val_resize_size": None,
+        "normalization": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        "num_classes": 62,
+    },
+    "wilds:iwildcam": {
+        "image_size": 448,
+        "train_image_size": None,
+        "train_crop": "disabled",
+        "padding": 4,
+        "val_resize_size": None,
+        "normalization": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        "num_classes": 182,
+    },
+    "wilds:iwildcam_strong": {
+        "image_size": 448,
+        "train_image_size": None,
+        "train_crop": "resize_random_hflip",
+        "padding": 4,
+        "val_resize_size": None,
+        "normalization": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        "num_classes": 182,
+    },
+    "wilds:rxrx1": {
+        "image_size": 256,
+        "train_image_size": None,
+        "train_crop": "random_rot90_hflip",
+        "padding": 4,
+        "val_resize_size": None,
+        "normalization": "per_image",
+        "num_classes": 1139,
+    },
+    "wilds:rxrx1_strong": {
+        "image_size": 256,
+        "train_image_size": None,
+        "train_crop": "random_rot90_hflip",
+        "padding": 4,
+        "val_resize_size": None,
+        "normalization": "per_image",
+        "num_classes": 1139,
+    },
 }
 
 
@@ -106,17 +186,24 @@ def test_vision_preset_contract_fields_and_hash(name):
     assert postproc["image_size"] == expected["image_size"]
     assert postproc.get("train_image_size") == expected["train_image_size"]
     assert postproc.get("val_resize_size", "auto") == expected["val_resize_size"]
-    assert postproc["normalization_params"] == expected["normalization"]
+    if expected["normalization"] == "per_image":
+        assert postproc["normalization_mode"] == "per_image"
+        assert model_input["normalization"]["kind"] == "per_image"
+        assert model_input["normalization"]["per_channel"] is True
+    else:
+        assert postproc["normalization_params"] == expected["normalization"]
+        assert model_input["normalization"]["mean"] == expected["normalization"][0]
+        assert model_input["normalization"]["std"] == expected["normalization"][1]
     assert model_input["layout"] == "bchw"
     assert model_input["static_shape"] == (
         3,
         expected["image_size"],
         expected["image_size"],
     )
-    assert model_input["normalization"]["mean"] == expected["normalization"][0]
-    assert model_input["normalization"]["std"] == expected["normalization"][1]
 
-    if expected["train_crop"] == "ssl_multi_crop":
+    if expected["train_crop"] == "disabled":
+        assert aug["enable"] is False
+    elif expected["train_crop"] == "ssl_multi_crop":
         assert aug["mode"] == "ssl"
         assert aug["n_global_crops"] == 2
         assert aug["n_local_crops"] == 8

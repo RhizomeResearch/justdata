@@ -18,6 +18,9 @@ dependencies = [
 vision = [
     "datasets[vision]>=4.5.0",
 ]
+wilds = [
+    "wilds>=2.0.0",
+]
 acoustic = [
     "datasets[audio]>=4.5.0",
     "soundfile>=0.12",

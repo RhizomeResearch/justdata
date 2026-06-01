@@ -284,9 +284,7 @@ def _crop_random_hflip(image, size, seed, **kwargs):
 
 
 @register_crop_strategy("resize_random_hflip")
-def _crop_resize_random_hflip(
-    image, size, seed, interpolation="bilinear", **kwargs
-):
+def _crop_resize_random_hflip(image, size, seed, interpolation="bilinear", **kwargs):
     s = tf.random.split(seed, 2)
     resized = resize_to_square(image, size=size, interpolation=interpolation)
     return random_horizontal_flip(resized, seed=s[1])

@@ -1,4 +1,6 @@
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Union
 from urllib.parse import parse_qsl
@@ -250,6 +252,44 @@ def _metadata_to_int64_dict(
     return result
 
 
+def _is_fmow_timestamp_arg(value: Any) -> bool:
+    return getattr(value, "name", None) == "timestamp"
+
+
+@contextmanager
+def _wilds_fmow_datetime_compat(enabled: bool) -> Iterator[None]:
+    if not enabled:
+        yield
+        return
+
+    try:
+        import pandas as pd
+    except ImportError:
+        yield
+        return
+
+    original_to_datetime = pd.to_datetime
+
+    def to_datetime_compat(arg, *args, **kwargs):
+        if kwargs.get("format") is not None or not _is_fmow_timestamp_arg(arg):
+            return original_to_datetime(arg, *args, **kwargs)
+
+        try:
+            return original_to_datetime(arg, *args, **kwargs)
+        except ValueError as e:
+            if "match format" not in str(e):
+                raise
+            compat_kwargs = dict(kwargs)
+            compat_kwargs["format"] = "ISO8601"
+            return original_to_datetime(arg, *args, **compat_kwargs)
+
+    pd.to_datetime = to_datetime_compat
+    try:
+        yield
+    finally:
+        pd.to_datetime = original_to_datetime
+
+
 def _split_to_dataset(
     dataset,
     split: str,
@@ -346,7 +386,8 @@ def load_wilds_vision_splits(
     if spec.unlabeled or uses_unlabeled:
         kwargs["unlabeled"] = True
 
-    dataset = wilds.get_dataset(**kwargs)
+    with _wilds_fmow_datetime_compat(spec.name == "fmow"):
+        dataset = wilds.get_dataset(**kwargs)
     include_label = not (spec.unlabeled or uses_unlabeled)
     return [
         _split_to_dataset(

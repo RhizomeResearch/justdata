@@ -88,6 +88,46 @@ def test_wilds_source_parses_options_and_preserves_metadata(monkeypatch):
     assert sample["metadata"]["wilds"]["from_source_domain"].numpy() == 1
 
 
+def test_wilds_fmow_source_handles_mixed_iso8601_timestamps(monkeypatch):
+    import pandas as pd
+
+    original_to_datetime = pd.to_datetime
+    parsed_formats = []
+
+    def strict_to_datetime(arg, *args, **kwargs):
+        if getattr(arg, "name", None) == "timestamp":
+            parsed_formats.append(kwargs.get("format"))
+            if kwargs.get("format") != "ISO8601":
+                raise ValueError(
+                    'time data "2011-02-07T02:48:56.643Z" does not match format'
+                )
+        return original_to_datetime(arg, *args, **kwargs)
+
+    def get_dataset(**kwargs):
+        timestamps = pd.Series(
+            ["2011-01-01T00:00:00Z", "2011-02-07T02:48:56.643Z"],
+            name="timestamp",
+        )
+        pd.to_datetime(timestamps)
+        return FakeWILDSDataset(**kwargs)
+
+    monkeypatch.setattr(pd, "to_datetime", strict_to_datetime)
+    monkeypatch.setitem(
+        sys.modules,
+        "wilds",
+        types.SimpleNamespace(get_dataset=get_dataset),
+    )
+
+    ds = load_wilds_vision_splits(
+        "wilds:fmow?split_scheme=time_after_2016",
+        ["train"],
+    )[0]
+    sample = next(iter(ds))
+
+    assert parsed_formats == [None, "ISO8601"]
+    assert sample["metadata"]["dataset"].numpy() == b"fmow"
+
+
 def test_wilds_source_loads_unlabeled_splits_separately(monkeypatch):
     calls = _install_fake_wilds(monkeypatch)
 

@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pytest
 
@@ -21,8 +23,9 @@ class FakeHFDataset:
         return self
 
 
-def test_hf_audio_loader_uses_audio_column(monkeypatch):
+def test_hf_audio_loader_uses_audio_column(monkeypatch, tmp_path):
     datasets = pytest.importorskip("datasets")
+    calls = []
     fake = FakeHFDataset(
         [
             {
@@ -34,15 +37,22 @@ def test_hf_audio_loader_uses_audio_column(monkeypatch):
             }
         ]
     )
-    monkeypatch.setattr(datasets, "load_dataset", lambda *args, **kwargs: fake)
+
+    def load_dataset(*args, **kwargs):
+        calls.append((args, kwargs))
+        return fake
+
+    monkeypatch.setattr(datasets, "load_dataset", load_dataset)
 
     ds = load_huggingface_audio_splits(
         "hf_audio:unit/audio",
         ["train"],
+        data_dir=tmp_path,
         audio_column="sound",
     )[0]
     sample = next(iter(ds))
 
+    assert calls[0][1]["cache_dir"] == os.fspath(tmp_path / "hf" / "acoustic")
     assert sample["waveform"].shape == (3, 1)
     assert sample["sample_rate"].numpy() == 8000
     assert sample["label"].numpy() == 3

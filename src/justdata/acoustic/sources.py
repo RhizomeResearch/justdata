@@ -29,7 +29,7 @@ from justdata.acoustic.schema import (
     START_TIME,
     WAVEFORM,
 )
-from justdata.core.sources import register_source_loader
+from justdata.core.sources import register_source_loader, source_cache_dir
 
 
 _LOCAL_REQUIRED_COLUMNS = {
@@ -391,7 +391,7 @@ def load_huggingface_audio_splits(
         ds_hf = datasets.load_dataset(
             hf_name,
             split=split,
-            cache_dir=str(data_dir) if data_dir else None,
+            cache_dir=os.fspath(source_cache_dir(data_dir, "hf", "acoustic")),
         )
 
         if audio_column not in ds_hf.column_names:

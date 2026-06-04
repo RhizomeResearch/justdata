@@ -96,14 +96,18 @@ ds, n = load_ds(
 )
 ```
 
+For remote/downloaded sources, `data_dir` is a cache root. justdata namespaces
+source-owned caches under it, for example `hf/vision/`, `wilds/`, and `zenodo/`.
+If omitted, the root is `~/.cache/justdata`.
+
 Supported WILDS datasets are image classification only: Camelyon17, FMoW,
 iWildCam, and RxRx1. FMoW temporal drift testing uses WILDS split schemes such
 as `?split_scheme=time_after_2016`. Labeled and unlabeled splits must be loaded
 in separate `load_ds` calls.
 
 WILDS downloads are disabled by default (`download=false`). To let WILDS
-download the dataset into `data_dir`, add `download=true` to the dataset string.
-Use `&` between query options:
+download the dataset under `data_dir/wilds`, add `download=true` to the dataset
+string. Use `&` between query options:
 
 ```python
 wilds_ds = "wilds:fmow?split_scheme=time_after_2016&download=true"

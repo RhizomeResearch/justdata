@@ -1,5 +1,6 @@
 import os
 import threading
+from pathlib import Path
 from typing import Optional, Protocol, Union
 
 import tensorflow as tf
@@ -18,6 +19,18 @@ class SourceLoader(Protocol):
 _SOURCE_LOCK = threading.Lock()
 _PREFIX_LOADERS: dict[str, SourceLoader] = {}
 _DEFAULT_LOADER: Optional[SourceLoader] = None
+
+
+def source_cache_dir(
+    data_dir: Union[None, str, os.PathLike],
+    *parts: str,
+) -> Path:
+    root = (
+        Path(data_dir).expanduser()
+        if data_dir is not None
+        else Path.home() / ".cache" / "justdata"
+    )
+    return root.joinpath(*parts)
 
 
 def register_source_loader(prefix: str):
@@ -64,7 +77,7 @@ def load_tfds_splits(
             split=s,
             as_supervised=False,
             shuffle_files=False,
-            data_dir=data_dir,
+            data_dir=os.fspath(source_cache_dir(data_dir, "tfds")),
         )
         for s in splits
     ]

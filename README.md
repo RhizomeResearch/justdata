@@ -656,14 +656,18 @@ train_ds = load_ds(
 )
 ```
 
+For remote/downloaded sources, `data_dir` is a cache root. justdata namespaces
+source-owned caches under it: `tfds/`, `hf/vision/`, `hf/acoustic/`, `wilds/`,
+and `zenodo/`. If omitted, the root is `~/.cache/justdata`.
+
 ### Loading a WILDS Dataset
 
 WILDS image classification datasets use the `wilds:` source prefix. Source
 options such as FMoW temporal split schemes live in the dataset string; when
 using a `splits_arg` dictionary, reuse that exact string as the key.
 Downloads are disabled by default (`download=false`). To download through
-WILDS into `data_dir`, add `download=true` to the dataset string. Use `&`
-between query options, not a second `?`.
+WILDS under `data_dir/wilds`, add `download=true` to the dataset string. Use
+`&` between query options, not a second `?`.
 The automatic presets are benchmark-faithful: Camelyon17 96 px, FMoW 224 px,
 iWildCam 448 px, and RxRx1 256 px with per-image channel standardization.
 Use `preset="wilds:fmow_strong"` or another `_strong` name to opt into stronger

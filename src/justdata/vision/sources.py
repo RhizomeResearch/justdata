@@ -1,16 +1,33 @@
+import hashlib
+import json
 import os
+import shutil
+import tarfile
+import urllib.request
+import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Union
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, quote, urlparse
 
 import numpy as np
 import tensorflow as tf
 from loguru import logger
 
-from justdata.core.sources import register_source_loader
+from justdata.core.sources import register_source_loader, source_cache_dir
 
+_ZENODO_PREFIX = "zenodo:"
+_ZENODO_QUERY_PARAMS = {"file"}
+_IMAGE_EXTENSIONS = {
+    ".bmp",
+    ".gif",
+    ".jpeg",
+    ".jpg",
+    ".png",
+    ".webp",
+}
 _WILDS_PREFIX = "wilds:"
 _SUPPORTED_WILDS_IMAGE_CLASSIFICATION = {
     "camelyon17",
@@ -30,12 +47,26 @@ _WILDS_QUERY_PARAMS = {"download", "split_scheme", "unlabeled", "version"}
 
 
 @dataclass(frozen=True)
+class _ZenodoImageFolderSpec:
+    record_id: str
+    filename: str
+
+
+@dataclass(frozen=True)
 class _WILDSDatasetSpec:
     name: str
     split_scheme: str
     version: str | None
     download: bool
     unlabeled: bool
+
+
+def _strip_prefix(dataset_name: str, prefix: str) -> str:
+    if not dataset_name.startswith(prefix):
+        raise ValueError(
+            f"Expected dataset name to start with {prefix!r}; got {dataset_name!r}."
+        )
+    return dataset_name[len(prefix) :]
 
 
 def _import_datasets():
@@ -47,6 +78,378 @@ def _import_datasets():
             "Install justdata with the vision extra."
         ) from e
     return datasets
+
+
+def _parse_zenodo_spec(dataset_name: str) -> _ZenodoImageFolderSpec:
+    raw = _strip_prefix(dataset_name, _ZENODO_PREFIX)
+    record_id, sep, query = raw.partition("?")
+    if not record_id:
+        raise ValueError("Zenodo dataset name must include a record id.")
+    if "/" in record_id:
+        raise ValueError("Zenodo record id must not contain '/'.")
+
+    values: dict[str, str] = {}
+    for key, value in parse_qsl(query if sep else "", keep_blank_values=True):
+        if key not in _ZENODO_QUERY_PARAMS:
+            allowed = ", ".join(sorted(_ZENODO_QUERY_PARAMS))
+            raise ValueError(
+                f"Unsupported Zenodo option {key!r}. Supported options: {allowed}."
+            )
+        if key in values:
+            raise ValueError(f"Duplicate Zenodo option {key!r}.")
+        values[key] = value
+
+    filename = values.get("file", "")
+    if not filename:
+        raise ValueError("Zenodo source requires ?file=<archive-name>.")
+
+    return _ZenodoImageFolderSpec(record_id=record_id, filename=filename)
+
+
+def _zenodo_record_dir(
+    spec: _ZenodoImageFolderSpec,
+    data_dir: Union[None, str, os.PathLike],
+) -> Path:
+    return source_cache_dir(data_dir, "zenodo", spec.record_id)
+
+
+def _fetch_zenodo_record(record_id: str) -> dict[str, Any]:
+    url = f"https://zenodo.org/api/records/{record_id}"
+    with urllib.request.urlopen(url, timeout=60) as response:
+        return json.load(response)
+
+
+def _select_zenodo_file(record: dict[str, Any], filename: str) -> dict[str, Any]:
+    files = record.get("files")
+    if not isinstance(files, list):
+        raise ValueError("Zenodo record metadata does not contain a files list.")
+
+    for file_info in files:
+        if file_info.get("key") == filename or file_info.get("filename") == filename:
+            return file_info
+
+    available = ", ".join(
+        str(file_info.get("key") or file_info.get("filename"))
+        for file_info in files
+    )
+    raise ValueError(
+        f"Zenodo record does not contain file {filename!r}. "
+        f"Available files: {available}."
+    )
+
+
+def _zenodo_download_url(
+    spec: _ZenodoImageFolderSpec,
+    file_info: dict[str, Any],
+) -> str:
+    links = file_info.get("links") or {}
+    for key in ("content", "download"):
+        value = links.get(key)
+        if value:
+            return str(value)
+
+    value = links.get("self")
+    if value and str(value).rstrip("/").endswith("/content"):
+        return str(value)
+
+    quoted = quote(spec.filename)
+    return f"https://zenodo.org/records/{spec.record_id}/files/{quoted}?download=1"
+
+
+def _checksum_parts(checksum: str | None) -> tuple[str, str] | None:
+    if not checksum:
+        return None
+
+    algorithm, sep, expected = checksum.partition(":")
+    if not sep:
+        algorithm, expected = "md5", algorithm
+    algorithm = algorithm.lower()
+    if algorithm not in hashlib.algorithms_available:
+        raise ValueError(f"Unsupported Zenodo checksum algorithm {algorithm!r}.")
+    return algorithm, expected.lower()
+
+
+def _file_matches_checksum(path: Path, checksum: str | None) -> bool:
+    if not path.exists():
+        return False
+
+    parts = _checksum_parts(checksum)
+    if parts is None:
+        return True
+
+    algorithm, expected = parts
+    digest = hashlib.new(algorithm)
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest().lower() == expected
+
+
+def _copy_file_url(url: str, target: Path) -> None:
+    parsed = urlparse(url)
+    source = Path(urllib.request.url2pathname(parsed.path))
+    shutil.copyfile(source, target)
+
+
+def _download_file(url: str, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f"{target.name}.tmp")
+    if tmp.exists():
+        tmp.unlink()
+
+    try:
+        if urlparse(url).scheme == "file":
+            _copy_file_url(url, tmp)
+        else:
+            urllib.request.urlretrieve(url, tmp)
+        tmp.replace(target)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+def _archive_stem(filename: str) -> str:
+    path = Path(filename)
+    suffixes = path.suffixes
+    if len(suffixes) >= 2 and suffixes[-2:] in (
+        [".tar", ".gz"],
+        [".tar", ".bz2"],
+        [".tar", ".xz"],
+    ):
+        return path.name[: -len("".join(suffixes[-2:]))]
+    return path.stem
+
+
+def _assert_safe_extract_path(destination: Path, member_name: str) -> None:
+    target = (destination / member_name).resolve()
+    root = destination.resolve()
+    if target != root and root not in target.parents:
+        raise ValueError(f"Archive member escapes extraction directory: {member_name}")
+
+
+def _extract_archive(archive_path: Path, extract_dir: Path) -> None:
+    tmp_dir = extract_dir.with_name(f"{extract_dir.name}.tmp")
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        if zipfile.is_zipfile(archive_path):
+            with zipfile.ZipFile(archive_path) as archive:
+                for member in archive.infolist():
+                    _assert_safe_extract_path(tmp_dir, member.filename)
+                archive.extractall(tmp_dir)
+        elif tarfile.is_tarfile(archive_path):
+            with tarfile.open(archive_path) as archive:
+                for member in archive.getmembers():
+                    if member.issym() or member.islnk():
+                        raise ValueError(
+                            f"Archive member uses a link: {member.name}"
+                        )
+                    _assert_safe_extract_path(tmp_dir, member.name)
+                archive.extractall(tmp_dir)
+        else:
+            raise ValueError(
+                f"Zenodo file {archive_path.name!r} is not a supported ZIP/TAR archive."
+            )
+
+        if extract_dir.exists():
+            shutil.rmtree(extract_dir)
+        tmp_dir.replace(extract_dir)
+    except Exception:
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
+        raise
+
+
+def _prepare_zenodo_archive(
+    spec: _ZenodoImageFolderSpec,
+    data_dir: Union[None, str, os.PathLike],
+) -> Path:
+    record = _fetch_zenodo_record(spec.record_id)
+    file_info = _select_zenodo_file(record, spec.filename)
+    checksum = file_info.get("checksum")
+
+    record_dir = _zenodo_record_dir(spec, data_dir)
+    archive_path = record_dir / "files" / spec.filename
+    extract_dir = record_dir / "extracted" / _archive_stem(spec.filename)
+
+    if not _file_matches_checksum(archive_path, checksum):
+        logger.info(
+            f"Downloading Zenodo record {spec.record_id} file {spec.filename}."
+        )
+        _download_file(_zenodo_download_url(spec, file_info), archive_path)
+        if not _file_matches_checksum(archive_path, checksum):
+            raise ValueError(
+                f"Downloaded Zenodo file {spec.filename!r} failed checksum validation."
+            )
+        if extract_dir.exists():
+            shutil.rmtree(extract_dir)
+
+    if not extract_dir.exists():
+        logger.info(f"Extracting Zenodo archive {archive_path}.")
+        _extract_archive(archive_path, extract_dir)
+
+    return extract_dir
+
+
+def _resolve_imagefolder_root(extract_dir: Path, splits: list[str]) -> Path:
+    if all((extract_dir / split).is_dir() for split in splits):
+        return extract_dir
+
+    candidates = [
+        child
+        for child in extract_dir.iterdir()
+        if child.is_dir() and all((child / split).is_dir() for split in splits)
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        names = ", ".join(sorted(candidate.name for candidate in candidates))
+        raise ValueError(
+            f"Multiple ImageFolder roots contain requested splits: {names}."
+        )
+
+    requested = ", ".join(splits)
+    raise ValueError(
+        f"Zenodo archive does not contain requested ImageFolder splits: {requested}."
+    )
+
+
+def _is_image_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in _IMAGE_EXTENSIONS
+
+
+def _split_class_dirs(split_dir: Path) -> list[Path]:
+    return sorted(
+        child
+        for child in split_dir.iterdir()
+        if child.is_dir() and not child.name.startswith(".")
+    )
+
+
+def _imagefolder_class_to_label(root: Path, splits: list[str]) -> dict[str, np.int64]:
+    class_names = sorted(
+        {
+            class_dir.name
+            for split in splits
+            for class_dir in _split_class_dirs(root / split)
+        }
+    )
+    if not class_names:
+        raise ValueError("Zenodo ImageFolder archive does not contain class folders.")
+    return {name: np.int64(index) for index, name in enumerate(class_names)}
+
+
+def _imagefolder_records(
+    root: Path,
+    splits: list[str],
+    *,
+    dataset_name: str,
+    spec: _ZenodoImageFolderSpec,
+    class_to_label: dict[str, np.int64],
+) -> list[dict[str, Any]]:
+    split_dirs = {split: root / split for split in splits}
+    records: list[dict[str, Any]] = []
+    for split in splits:
+        split_records = []
+        split_dir = split_dirs[split]
+        for class_dir in _split_class_dirs(split_dir):
+            label = class_to_label[class_dir.name]
+            for path in sorted(class_dir.rglob("*")):
+                if not _is_image_file(path):
+                    continue
+                relative_path = path.relative_to(root).as_posix()
+                split_records.append(
+                    {
+                        "_path": os.fspath(path),
+                        "label": label,
+                        "metadata": {
+                            "dataset": dataset_name,
+                            "record_id": spec.record_id,
+                            "archive": spec.filename,
+                            "split": split,
+                            "class_name": class_dir.name,
+                            "class_index": label,
+                            "filename": path.name,
+                            "path": os.fspath(path),
+                            "example_id": relative_path,
+                        },
+                    }
+                )
+        if not split_records:
+            raise ValueError(f"Zenodo ImageFolder split {split!r} has no images.")
+        records.extend(split_records)
+
+    return records
+
+
+def _records_to_vision_dataset(records: list[dict[str, Any]]) -> tf.data.Dataset:
+    def gen():
+        yield from records
+
+    ds = tf.data.Dataset.from_generator(
+        gen,
+        output_signature={
+            "_path": tf.TensorSpec(shape=(), dtype=tf.string),
+            "label": tf.TensorSpec(shape=(), dtype=tf.int64),
+            "metadata": {
+                "dataset": tf.TensorSpec(shape=(), dtype=tf.string),
+                "record_id": tf.TensorSpec(shape=(), dtype=tf.string),
+                "archive": tf.TensorSpec(shape=(), dtype=tf.string),
+                "split": tf.TensorSpec(shape=(), dtype=tf.string),
+                "class_name": tf.TensorSpec(shape=(), dtype=tf.string),
+                "class_index": tf.TensorSpec(shape=(), dtype=tf.int64),
+                "filename": tf.TensorSpec(shape=(), dtype=tf.string),
+                "path": tf.TensorSpec(shape=(), dtype=tf.string),
+                "example_id": tf.TensorSpec(shape=(), dtype=tf.string),
+            },
+        },
+    )
+
+    def decode_image(sample):
+        image = tf.io.decode_image(
+            tf.io.read_file(sample["_path"]),
+            channels=3,
+            expand_animations=False,
+        )
+        image.set_shape([None, None, 3])
+        return {
+            "image": image,
+            "label": sample["label"],
+            "metadata": sample["metadata"],
+        }
+
+    ds = ds.map(decode_image, num_parallel_calls=tf.data.AUTOTUNE)
+    try:
+        ds = ds.apply(tf.data.experimental.assert_cardinality(len(records)))
+    except Exception as e:
+        logger.warning(f"Failed to assert cardinality for Zenodo ImageFolder: {e}")
+    return ds
+
+
+@register_source_loader(_ZENODO_PREFIX)
+def load_zenodo_imagefolder_splits(
+    dataset_name: str,
+    splits: list[str],
+    data_dir: Union[None, str, os.PathLike] = None,
+) -> list[tf.data.Dataset]:
+    spec = _parse_zenodo_spec(dataset_name)
+    extract_dir = _prepare_zenodo_archive(spec, data_dir)
+    root = _resolve_imagefolder_root(extract_dir, splits)
+    class_to_label = _imagefolder_class_to_label(root, splits)
+    return [
+        _records_to_vision_dataset(
+            _imagefolder_records(
+                root,
+                [split],
+                dataset_name=dataset_name,
+                spec=spec,
+                class_to_label=class_to_label,
+            )
+        )
+        for split in splits
+    ]
 
 
 @register_source_loader("hf:")
@@ -65,7 +468,7 @@ def load_huggingface_vision_splits(
         ds_hf = datasets.load_dataset(
             hf_name,
             split=split,
-            cache_dir=str(data_dir) if data_dir else None,
+            cache_dir=os.fspath(source_cache_dir(data_dir, "hf", "vision")),
         )
 
         if "image" not in ds_hf.column_names or "label" not in ds_hf.column_names:
@@ -379,8 +782,7 @@ def load_wilds_vision_splits(
         "download": spec.download,
         "split_scheme": spec.split_scheme,
     }
-    if data_dir is not None:
-        kwargs["root_dir"] = str(data_dir)
+    kwargs["root_dir"] = os.fspath(source_cache_dir(data_dir, "wilds"))
     if spec.version is not None:
         kwargs["version"] = spec.version
     if spec.unlabeled or uses_unlabeled:

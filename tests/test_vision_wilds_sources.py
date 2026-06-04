@@ -75,7 +75,7 @@ def test_wilds_source_parses_options_and_preserves_metadata(monkeypatch):
             "dataset": "fmow",
             "download": True,
             "split_scheme": "time_after_2016",
-            "root_dir": "/tmp/wilds-data",
+            "root_dir": "/tmp/wilds-data/wilds",
             "version": "1.1",
         }
     ]

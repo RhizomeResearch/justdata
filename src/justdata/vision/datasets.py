@@ -10,6 +10,7 @@ register_dataset("voc/2007", "object_detection", modality="vision")
 register_dataset("voc/2012", "object_detection", modality="vision")
 register_dataset("nyu_depth_v2_mini", "depth_estimation", modality="vision")
 register_dataset("kitti_road", "segmentation", modality="vision")
+register_dataset("zenodo:", "classification", modality="vision")
 
 register_dataset(
     "wilds:camelyon17",

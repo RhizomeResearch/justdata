@@ -8,6 +8,7 @@ let
     stdenv.cc.cc
     libuv
     zlib
+    ffmpeg
   ];
 in
 {

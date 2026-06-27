@@ -4,6 +4,13 @@
 preprocessing, augmentation, batching, metadata, DCASE helpers, and corruption
 benchmarks.
 
+The `hf_audio:` source uses Hugging Face Datasets and defaults to its
+TorchCodec decoder. The acoustic dependency set pins the compatible Torch 2.10
+and TorchCodec 0.10 pair. TorchCodec also requires FFmpeg shared libraries at
+runtime; the devenv shell supplies them. Set `decode_mode="justdata"` to ask
+Datasets for undecoded path/bytes records and use justdata's TensorFlow WAV
+decoder instead.
+
 The vision counterpart is [docs/vision.md](vision.md). Keep the two documents
 aligned when changing shared loader behavior, preset contracts, metadata modes,
 or corruption dataset APIs.

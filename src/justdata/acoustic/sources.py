@@ -14,7 +14,7 @@ from justdata.acoustic.adapters import (
     standardize_waveform_layout,
     to_float32_waveform,
 )
-from justdata.acoustic.decoding import decode_audio_file
+from justdata.acoustic.decoding import decode_audio_file, decode_wav_bytes
 from justdata.acoustic.schema import (
     CLIP_ID,
     DATASET,
@@ -333,39 +333,66 @@ def _normalize_label(value, dtype: tf.DType):
     return str(value)
 
 
-def _as_waveform_np(audio_value, *, decode_mode: str, fallback_sample_rate: int | None):
+def _extract_hf_audio_value(audio_value, fallback_sample_rate: int | None):
     sample_rate = fallback_sample_rate
     path = None
+    contents = None
+    layout_hint = "auto"
 
     if isinstance(audio_value, dict):
         path = audio_value.get("path")
+        contents = audio_value.get("bytes")
         sample_rate = audio_value.get(
             "sampling_rate", audio_value.get(SAMPLE_RATE, sample_rate)
         )
         array = audio_value.get("array")
-        if decode_mode == "justdata" and path:
+    elif isinstance(audio_value, (str, bytes, os.PathLike)):
+        array = None
+        path = os.fspath(audio_value)
+    else:
+        try:
+            array = audio_value["array"]
+        except (KeyError, TypeError, IndexError):
+            array = audio_value
+        else:
+            layout_hint = "ct"
+            try:
+                sample_rate = audio_value["sampling_rate"]
+            except (KeyError, TypeError, IndexError):
+                pass
+
+    return array, sample_rate, path, contents, layout_hint
+
+
+def _as_waveform_np(audio_value, *, decode_mode: str, fallback_sample_rate: int | None):
+    array, sample_rate, path, contents, layout_hint = _extract_hf_audio_value(
+        audio_value, fallback_sample_rate
+    )
+
+    if decode_mode == "justdata":
+        if contents is not None:
+            waveform, decoded_sample_rate = decode_wav_bytes(contents)
+            sample_rate = int(decoded_sample_rate.numpy())
+            array = waveform.numpy()
+            layout_hint = "tc"
+        elif path:
             waveform, decoded_sample_rate = decode_audio_file(path)
             sample_rate = int(decoded_sample_rate.numpy())
             array = waveform.numpy()
-    else:
-        array = None
-        if isinstance(audio_value, (str, bytes, os.PathLike)):
-            path = os.fspath(audio_value)
+            layout_hint = "tc"
 
     if array is None and path:
         waveform, decoded_sample_rate = decode_audio_file(path)
         sample_rate = int(decoded_sample_rate.numpy())
         array = waveform.numpy()
-
-    if array is None:
-        array = audio_value
+        layout_hint = "tc"
 
     if sample_rate is None:
         raise ValueError("Hugging Face audio records must provide a sampling_rate.")
 
     tensor = tf.convert_to_tensor(array)
     tensor = to_float32_waveform(tensor, input_dtype=tensor.dtype)
-    tensor = standardize_waveform_layout(tensor)
+    tensor = standardize_waveform_layout(tensor, layout_hint=layout_hint)
     return tensor.numpy().astype(np.float32), np.int32(sample_rate), path
 
 
@@ -405,7 +432,9 @@ def load_huggingface_audio_splits(
                 f"{label_column!r}. Found columns: {ds_hf.column_names}."
             )
 
-        if decode_mode == "hf_native" and hf_audio_sampling_rate is not None:
+        if decode_mode == "justdata":
+            ds_hf = ds_hf.cast_column(audio_column, datasets.Audio(decode=False))
+        elif hf_audio_sampling_rate is not None:
             ds_hf = ds_hf.cast_column(
                 audio_column,
                 datasets.Audio(sampling_rate=hf_audio_sampling_rate),

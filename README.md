@@ -31,7 +31,7 @@ ______________________________________________________________________
 pip install justdata
 ```
 
-**Requirements:** Python ≥ 3.11, TensorFlow ≥ 2.18.1, TensorFlow Datasets ≥ 4.9.9. Install optional modality extras with `justdata[vision]` for Hugging Face vision datasets, `justdata[wilds]` for WILDS image classification datasets, or `justdata[acoustic]` for audio dataset/source dependencies.
+**Requirements:** Python 3.11–3.13, TensorFlow ≥ 2.18.1, TensorFlow Datasets ≥ 4.9.9. Install optional modality extras with `justdata[vision]` for Hugging Face vision datasets, `justdata[wilds]` for WILDS image classification datasets, or `justdata[acoustic]` for audio dataset/source dependencies.
 
 ______________________________________________________________________
 

@@ -13,6 +13,22 @@ test:
   script:
     - devenv test
 
+package-support:
+  stage: test
+  parallel:
+    matrix:
+      - PYTHON_VERSION: "3.11"
+        UV_IMAGE: ghcr.io/astral-sh/uv:0.11.16-python3.11-trixie-slim@sha256:253914e65961cdfbb7c600541250ad281ebcd29ed641d8ee82f9c08a2250c6c8
+      - PYTHON_VERSION: "3.12"
+        UV_IMAGE: ghcr.io/astral-sh/uv:0.11.16-python3.12-trixie-slim@sha256:438bad5bb636f6cc60765ed25f294c74dd896e6d14b2093c3467a37b5d03a78a
+      - PYTHON_VERSION: "3.13"
+        UV_IMAGE: ghcr.io/astral-sh/uv:0.11.16-python3.13-trixie-slim@sha256:d57fc364ed714127c162a01b316bfb7b9a3fd09d97c665781a5607acaa35d254
+  image:
+    name: $UV_IMAGE
+  script:
+    - python --version
+    - sh tests/doctor/test_package_support.sh
+
 golden:
   stage: test
   image: nixos/nix@sha256:1a711b619c8a713eff32c3f8d8781b3b4d0130cb91c0a57f67e87abfeeb90b01

@@ -381,6 +381,9 @@ def load_ds(
     shuffle_buffer: int = 10_000,
     cache_dataset: bool = True,
     cache_path: str = "",
+    cache_model_inputs: bool = False,
+    model_input_cache_path: str = "",
+    allow_train_model_input_cache: bool = False,
     drop_remainder: bool = False,
     data_dir: Union[None, str, os.PathLike] = None,
     return_raw_ds: bool = False,
@@ -417,6 +420,15 @@ def load_ds(
         cache_path: The name of a directory on the filesystem to use for caching
             elements in this Dataset.
             If a filename is not provided, the dataset will be cached in memory.
+        cache_model_inputs: Whether to cache samples after deterministic
+            postprocessing, before batching. Use ``model_input_cache_path`` for
+            local SSD caching of resized/model-ready tensors.
+        model_input_cache_path: Filesystem path for ``cache_model_inputs``.
+            If a filename is not provided, model inputs will be cached in memory.
+        allow_train_model_input_cache: Required opt-in for model-input caching
+            with ``dataset_type="train"``. Only use this for deterministic
+            training views, because stochastic augmentations will be materialized
+            into the cache on first fill.
         drop_remainder: Choose to drop or pad batches without the correct size,
         data_dir: Optional path to the TFDS data directory.
         return_raw_ds: If True, returns the dataset immediately after
@@ -446,6 +458,8 @@ def load_ds(
         raise ValueError(
             "metadata_mode must be one of 'full', 'numeric_only', or 'none'."
         )
+    if cache_model_inputs and return_raw_ds:
+        raise ValueError("cache_model_inputs cannot be used with return_raw_ds=True.")
 
     dataset_names: list[str]
     if isinstance(dataset_names_arg, str):
@@ -469,6 +483,19 @@ def load_ds(
         )
 
     is_training = dataset_type == "train"
+    if cache_model_inputs and is_training and not allow_train_model_input_cache:
+        raise ValueError(
+            "cache_model_inputs with dataset_type='train' requires "
+            "allow_train_model_input_cache=True."
+        )
+    if cache_dataset and cache_model_inputs and cache_path and model_input_cache_path:
+        preprocess_cache_path = os.path.abspath(os.fspath(cache_path))
+        model_cache_path = os.path.abspath(os.fspath(model_input_cache_path))
+        if preprocess_cache_path == model_cache_path:
+            raise ValueError(
+                "cache_path and model_input_cache_path must be different when "
+                "both cache stages are enabled."
+            )
 
     ds = fetch_ds(dataset_names, splits, data_dir)
 
@@ -490,6 +517,37 @@ def load_ds(
     def seeded_late_augment(batch):
         seed = rng.make_seeds(1)[:, 0]
         return late_augment_fn(batch, num_classes=num_classes, seed=seed)
+
+    def apply_postprocess(ds):
+        return ds.map(
+            lambda x: postprocess_fn(x, num_classes=num_classes),
+            num_parallel_calls=tf.data.AUTOTUNE,
+            deterministic=deterministic if is_training else None,
+        )
+
+    def apply_metadata(ds):
+        if metadata_mode == "numeric_only" and sidecar_metadata_path is not None:
+            ds = _attach_sidecar_writer(ds, sidecar_metadata_path)
+        if metadata_mode != "full":
+            ds = ds.map(
+                lambda x: _apply_metadata_mode(x, metadata_mode),
+                num_parallel_calls=tf.data.AUTOTUNE,
+                deterministic=deterministic if is_training else None,
+            )
+        return ds
+
+    def apply_model_input_cache(ds):
+        if not cache_model_inputs:
+            return ds
+        return ds.cache(model_input_cache_path)
+
+    def apply_postprocess_metadata_and_cache(ds):
+        ds = apply_postprocess(ds)
+        if cache_model_inputs and sidecar_metadata_path is not None:
+            ds = apply_model_input_cache(ds)
+            return apply_metadata(ds)
+        ds = apply_metadata(ds)
+        return apply_model_input_cache(ds)
 
     ds = ds.map(
         preprocess_fn,
@@ -520,21 +578,13 @@ def load_ds(
             num_parallel_calls=tf.data.AUTOTUNE,
             deterministic=deterministic,
         )
+        if cache_model_inputs:
+            ds = apply_postprocess_metadata_and_cache(ds)
         ds = ds.shuffle(shuffle_buffer, seed=seed)
 
-    ds = ds.map(
-        lambda x: postprocess_fn(x, num_classes=num_classes),
-        num_parallel_calls=tf.data.AUTOTUNE,
-        deterministic=deterministic if is_training else None,
-    )
-    if metadata_mode == "numeric_only" and sidecar_metadata_path is not None:
-        ds = _attach_sidecar_writer(ds, sidecar_metadata_path)
-    if metadata_mode != "full":
-        ds = ds.map(
-            lambda x: _apply_metadata_mode(x, metadata_mode),
-            num_parallel_calls=tf.data.AUTOTUNE,
-            deterministic=deterministic if is_training else None,
-        )
+    if not (is_training and cache_model_inputs):
+        ds = apply_postprocess_metadata_and_cache(ds)
+
     ds = ds.batch(batch_size, drop_remainder=drop_remainder)
 
     # Ensure padding_mask is always present for API consistency

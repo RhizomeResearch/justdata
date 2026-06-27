@@ -1,5 +1,7 @@
 from unittest.mock import patch
 
+import numpy as np
+import pytest
 import tensorflow as tf
 
 from justdata.core.loader import load_ds
@@ -120,3 +122,137 @@ def test_create_minic_datasets(synthetic_classification_ds):
             assert "corruption_domain" in batch["metadata"]
             assert batch["image"].shape == (4, 3, 32, 32)
             assert batch["image"].dtype == tf.float32
+
+
+def _identity(sample, *args, **kwargs):
+    return sample
+
+
+def _counting_postprocess(counter):
+    def postprocess(sample, num_classes=None):
+        del num_classes
+
+        def bump(value):
+            counter["calls"] += 1
+            return value
+
+        value = tf.py_function(bump, [sample["x"]], Tout=sample["x"].dtype)
+        value.set_shape(sample["x"].shape)
+        return sample | {"x": value * 2}
+
+    return postprocess
+
+
+def _range_dataset(size):
+    return tf.data.Dataset.from_tensor_slices(
+        {"x": np.arange(size, dtype=np.int64)}
+    ).apply(tf.data.experimental.assert_cardinality(size))
+
+
+def test_validation_model_input_cache_reuses_postprocessed_samples(tmp_path):
+    counter = {"calls": 0}
+    with patch("justdata.core.loader.fetch_ds", return_value=_range_dataset(4)):
+        ds, _n = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="validation",
+            dataset_type="validation",
+            batch_size=2,
+            seed=0,
+            preprocess_fn=_identity,
+            augment_fn=_identity,
+            late_augment_fn=_identity,
+            postprocess_fn=_counting_postprocess(counter),
+            cache_dataset=False,
+            cache_model_inputs=True,
+            model_input_cache_path=str(tmp_path / "model-inputs"),
+        )
+
+    first = [batch["x"].numpy().tolist() for batch in ds]
+    second = [batch["x"].numpy().tolist() for batch in ds]
+
+    assert first == second == [[0, 2], [4, 6]]
+    assert counter["calls"] == 4
+
+
+def test_train_model_input_cache_reuses_postprocess_and_reshuffles(tmp_path):
+    counter = {"calls": 0}
+    with patch("justdata.core.loader.fetch_ds", return_value=_range_dataset(20)):
+        ds, _n = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="train",
+            dataset_type="train",
+            batch_size=20,
+            seed=7,
+            preprocess_fn=_identity,
+            augment_fn=_identity,
+            late_augment_fn=_identity,
+            postprocess_fn=_counting_postprocess(counter),
+            shuffle_buffer=20,
+            cache_dataset=False,
+            cache_model_inputs=True,
+            model_input_cache_path=str(tmp_path / "train-model-inputs"),
+            allow_train_model_input_cache=True,
+        )
+
+    first = next(iter(ds))["x"].numpy()
+    second = next(iter(ds))["x"].numpy()
+
+    assert counter["calls"] == 20
+    assert sorted(first.tolist()) == list(range(0, 40, 2))
+    assert sorted(second.tolist()) == list(range(0, 40, 2))
+    assert not np.array_equal(first, second)
+
+
+def test_train_model_input_cache_requires_explicit_opt_in(tmp_path):
+    with pytest.raises(ValueError, match="allow_train_model_input_cache"):
+        load_ds(
+            dataset_names_arg="mock",
+            splits_arg="train",
+            dataset_type="train",
+            batch_size=2,
+            seed=0,
+            preprocess_fn=_identity,
+            augment_fn=_identity,
+            late_augment_fn=_identity,
+            postprocess_fn=_identity,
+            cache_dataset=False,
+            cache_model_inputs=True,
+            model_input_cache_path=str(tmp_path / "train-model-inputs"),
+        )
+
+
+def test_model_input_cache_rejects_return_raw_ds():
+    with pytest.raises(ValueError, match="return_raw_ds"):
+        load_ds(
+            dataset_names_arg="mock",
+            splits_arg="validation",
+            dataset_type="validation",
+            batch_size=2,
+            seed=0,
+            preprocess_fn=_identity,
+            augment_fn=_identity,
+            late_augment_fn=_identity,
+            postprocess_fn=_identity,
+            cache_model_inputs=True,
+            return_raw_ds=True,
+        )
+
+
+def test_model_input_cache_rejects_preprocess_cache_path_collision(tmp_path):
+    cache_path = str(tmp_path / "same-cache")
+    with pytest.raises(ValueError, match="must be different"):
+        load_ds(
+            dataset_names_arg="mock",
+            splits_arg="validation",
+            dataset_type="validation",
+            batch_size=2,
+            seed=0,
+            preprocess_fn=_identity,
+            augment_fn=_identity,
+            late_augment_fn=_identity,
+            postprocess_fn=_identity,
+            cache_dataset=True,
+            cache_path=cache_path,
+            cache_model_inputs=True,
+            model_input_cache_path=cache_path,
+        )

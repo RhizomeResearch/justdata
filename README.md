@@ -49,7 +49,7 @@ These are assembled by `justdata.core.load_ds` into the following execution grap
 fetch_ds -> adapter -> preprocess -> cache -> augment -> shuffle -> postprocess -> batch -> late_augment -> pad -> prefetch
 ```
 
-The strict ordering reflects the execution domain requirements articulated throughout this document: format normalization occurs before caching; spatial and photometric distortions precede tensor conversion and normalization; and batch-level operations (Mixup, CutMix, random erasing) occur after batching on the GPU.
+The strict ordering reflects the execution domain requirements articulated throughout this document: format normalization occurs before the default cache; spatial and photometric distortions precede tensor conversion and normalization; and batch-level operations (Mixup, CutMix, random erasing) occur after batching on the GPU. An optional model-input cache can be inserted after deterministic postprocessing and before batching; for training it must be explicitly opted in and is placed before shuffle so epoch order is not frozen.
 
 ### Core Public API
 
@@ -78,6 +78,12 @@ Per-sample spatial and photometric augmentations are applied after the cache, en
 ### Stage 3: Postprocessing (every sample)
 
 Resize, channel-wise normalization to zero mean and unit standard deviation, and optional HWC -> CHW transposition. This stage runs unconditionally for both training and evaluation.
+
+Set `cache_model_inputs=True` with `model_input_cache_path` to cache these
+resized, normalized tensors on local SSD. For `dataset_type="train"`, also set
+`allow_train_model_input_cache=True` and use it only when the training view is
+deterministic; stochastic crops or photometric augmentation will be materialized
+into the cache on first fill.
 
 ### Stage 4: Late Augmentation (per-batch, training only)
 
@@ -660,6 +666,11 @@ For remote/downloaded sources, `data_dir` is a cache root. justdata namespaces
 source-owned caches under it: `tfds/`, `hf/vision/`, `hf/acoustic/`, `wilds/`,
 and `zenodo/`. If omitted, the root is `~/.cache/justdata`.
 
+Loader caches are separate from source-owned caches. `cache_dataset/cache_path`
+caches decoded, preprocessed samples before augmentation. `cache_model_inputs`
+and `model_input_cache_path` cache resized, normalized model inputs before
+batching. Use different paths for the two cache stages.
+
 ### Loading a WILDS Dataset
 
 WILDS image classification datasets use the `wilds:` source prefix. Source
@@ -674,6 +685,7 @@ Use `preset="wilds:fmow_strong"` or another `_strong` name to opt into stronger
 training augmentation.
 
 ```python
+local_ssd = "/local_ssd/justdata"
 wilds_ds = "wilds:fmow?split_scheme=time_after_2016&download=true"
 pipeline = get_pipeline(dataset="wilds:fmow")
 
@@ -685,10 +697,20 @@ train_ds, N = load_ds(
     seed=42,
     pipeline=pipeline,
     num_classes=62,
-    data_dir="data",
+    data_dir=f"{local_ssd}/sources",
+    cache_dataset=True,
+    cache_path=f"{local_ssd}/decoded/fmow-train",
+    cache_model_inputs=True,
+    model_input_cache_path=f"{local_ssd}/model-inputs/fmow-train-224",
+    allow_train_model_input_cache=True,
     metadata_mode="numeric_only",
 )
 ```
+
+The base `wilds:fmow` preset has no stochastic per-sample training
+augmentation, so train model-input caching is safe when explicitly opted in. Do
+not use train model-input caching with `wilds:fmow_strong` unless freezing the
+first pass of stochastic augmentation is intentional.
 
 ### Applying a Named Preset
 

@@ -46,6 +46,12 @@ The loader executes them as:
 fetch_ds -> adapter -> preprocess -> cache -> augment -> shuffle -> postprocess -> batch -> late_augment -> pad -> prefetch
 ```
 
+`cache_dataset/cache_path` controls the pre-augment cache. For ViT fine-tuning
+on large datasets, `cache_model_inputs/model_input_cache_path` can additionally
+cache resized and normalized model inputs after postprocess. Training use
+requires `allow_train_model_input_cache=True`; use it only for deterministic
+training views because stochastic augmentation is cached on first fill.
+
 For vision classification the stages are:
 
 | Stage | Vision responsibility |
@@ -80,6 +86,7 @@ pipelines. WILDS datasets use the same `load_ds` syntax as TFDS and Hugging
 Face sources:
 
 ```python
+local_ssd = "/local_ssd/justdata"
 wilds_ds = "wilds:fmow?split_scheme=time_after_2016"
 pipeline = get_pipeline(dataset="wilds:fmow")
 
@@ -91,7 +98,12 @@ ds, n = load_ds(
     seed=0,
     pipeline=pipeline,
     num_classes=62,
-    data_dir="data",
+    data_dir=f"{local_ssd}/sources",
+    cache_dataset=True,
+    cache_path=f"{local_ssd}/decoded/fmow-train",
+    cache_model_inputs=True,
+    model_input_cache_path=f"{local_ssd}/model-inputs/fmow-train-224",
+    allow_train_model_input_cache=True,
     metadata_mode="numeric_only",
 )
 ```
@@ -99,6 +111,11 @@ ds, n = load_ds(
 For remote/downloaded sources, `data_dir` is a cache root. justdata namespaces
 source-owned caches under it, for example `hf/vision/`, `wilds/`, and `zenodo/`.
 If omitted, the root is `~/.cache/justdata`.
+
+The base `wilds:fmow` preset is deterministic during training, so the explicit
+train model-input cache above is suitable for local SSD benchmarking. Use
+`cache_dataset/cache_path` alone for stochastic presets such as
+`wilds:fmow_strong`, unless freezing the first sampled augmentations is desired.
 
 Supported WILDS datasets are image classification only: Camelyon17, FMoW,
 iWildCam, and RxRx1. FMoW temporal drift testing uses WILDS split schemes such

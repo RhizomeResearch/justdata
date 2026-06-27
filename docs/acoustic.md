@@ -50,6 +50,11 @@ The loader executes them as:
 fetch_ds -> adapter -> preprocess -> cache -> augment -> shuffle -> postprocess -> batch -> late_augment -> pad -> prefetch
 ```
 
+`cache_dataset/cache_path` controls the pre-augment cache. `cache_model_inputs`
+can additionally cache deterministic postprocess outputs before batching; train
+use requires `allow_train_model_input_cache=True` because stochastic training
+views are materialized on first fill.
+
 For acoustic data the stages are:
 
 | Stage | Acoustic responsibility |

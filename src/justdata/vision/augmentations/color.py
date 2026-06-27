@@ -3,7 +3,7 @@ from typing import Optional
 import tensorflow as tf
 
 from justdata.vision.augmentations.registry import register_augment_strategy
-from justdata.vision.utils import gaussian_filter2d
+from justdata.vision.utils import _brightness, _color, _contrast, gaussian_filter2d
 
 
 @tf.function
@@ -24,33 +24,84 @@ def color_jitter(
     operations are *not* mutually exclusive.
 
     Args:
-      image (tf.Tensor): Of shape [height, width, 3] and type uint8.
+      image (tf.Tensor): Of shape [height, width, 3] in the image domain
+        ([0, 255]), either uint8 or float from resize operations.
       seed: Random seed tensor.
-      brightness (float, optional): Magnitude for brightness jitter. Defaults to
-        0.
-      contrast (float, optional): Magnitude for contrast jitter. Defaults to 0.
-      saturation (float, optional): Magnitude for saturation jitter. Defaults to
-        0.
-      hue (float, optional): Magnitude for hue jitter. Defaults to 0.
+      brightness (float, optional): Factor magnitude for brightness jitter.
+        Defaults to 0.
+      contrast (float, optional): Factor magnitude for contrast jitter. Defaults
+        to 0.
+      saturation (float, optional): Factor magnitude for saturation jitter.
+        Defaults to 0.
+      hue (float, optional): Hue delta magnitude. Defaults to 0.
       p (float, optional): Probability of applying color jitter. Defaults to 1.0.
       p_grayscale (float, optional): Probability to convert the image to
         grayscale. Defaults to 0.
 
     Returns:
-      tf.Tensor: The augmented ``image`` of type uint8.
+      tf.Tensor: The augmented ``image`` with the input dtype preserved.
     """
     seeds = tf.random.split(seed, 6)
+    input_image_type = image.dtype
+
+    def magnitude(value):
+        if value is None:
+            return tf.constant(0.0, dtype=tf.float32)
+        return tf.cast(value, dtype=tf.float32)
+
+    def image_to_uint8(img):
+        if img.dtype == tf.uint8:
+            return img
+        img = tf.clip_by_value(img, 0.0, 255.0)
+        return tf.cast(img, dtype=tf.uint8)
+
+    def restore_dtype(img):
+        return tf.cast(img, dtype=input_image_type)
+
+    def sample_factor(amount, factor_seed):
+        amount = magnitude(amount)
+
+        def jitter_factor():
+            lower = tf.maximum(tf.constant(0.0, dtype=tf.float32), 1.0 - amount)
+            upper = 1.0 + amount
+            return tf.random.stateless_uniform(
+                [], minval=lower, maxval=upper, seed=factor_seed
+            )
+
+        return tf.cond(amount > 0.0, jitter_factor, lambda: tf.constant(1.0))
+
+    def apply_hue(img, amount, hue_seed):
+        amount = magnitude(amount)
+
+        def jitter_hue():
+            delta = tf.random.stateless_uniform(
+                [], minval=-amount, maxval=amount, seed=hue_seed
+            )
+            img_f = tf.cast(img, tf.float32) / 255.0
+            hsv = tf.image.rgb_to_hsv(img_f)
+            hue_channel = tf.math.floormod(hsv[..., 0] + delta, 1.0)
+            hsv = tf.concat([hue_channel[..., tf.newaxis], hsv[..., 1:]], axis=-1)
+            rgb = tf.image.hsv_to_rgb(hsv)
+            rgb = tf.clip_by_value(rgb * 255.0, 0.0, 255.0)
+            return tf.cast(rgb, dtype=tf.uint8)
+
+        return tf.cond(amount > 0.0, jitter_hue, lambda: img)
 
     def apply_color_jitter(img):
-        img = tf.image.stateless_random_brightness(img, brightness, seed=seeds[0])
-        img = tf.image.stateless_random_contrast(
-            img, 1 - contrast, 1 + contrast, seed=seeds[1]
+        should_transform = tf.logical_or(
+            tf.logical_or(magnitude(brightness) > 0.0, magnitude(contrast) > 0.0),
+            tf.logical_or(magnitude(saturation) > 0.0, magnitude(hue) > 0.0),
         )
-        img = tf.image.stateless_random_saturation(
-            img, 1 - saturation, 1 + saturation, seed=seeds[2]
-        )
-        img = tf.image.stateless_random_hue(img, hue, seed=seeds[3])
-        return tf.clip_by_value(img, 0, 255)
+
+        def transform():
+            jittered = image_to_uint8(img)
+            jittered = _brightness(jittered, sample_factor(brightness, seeds[0]))
+            jittered = _contrast(jittered, sample_factor(contrast, seeds[1]))
+            jittered = _color(jittered, sample_factor(saturation, seeds[2]))
+            jittered = apply_hue(jittered, hue, seeds[3])
+            return restore_dtype(jittered)
+
+        return tf.cond(should_transform, transform, lambda: img)
 
     def apply_grayscale(img):
         gray = tf.image.rgb_to_grayscale(img)

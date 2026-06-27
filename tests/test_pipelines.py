@@ -412,6 +412,63 @@ class TestColorJitterIndependence:
         # Should be different from original (with high probability)
         assert result.shape == cifar_image.shape
 
+    def test_zero_magnitudes_are_noops_for_float_images(self, seed):
+        image = tf.reshape(tf.linspace(0.0, 255.0, 4 * 4 * 3), [4, 4, 3])
+
+        result = color_jitter(
+            image,
+            seed=seed,
+            brightness=0.0,
+            contrast=0.0,
+            saturation=0.0,
+            hue=0.0,
+            p=1.0,
+            p_grayscale=0.0,
+        )
+
+        assert result.dtype == image.dtype
+        np.testing.assert_allclose(result.numpy(), image.numpy())
+
+    def test_brightness_matches_uint8_and_float_255_inputs(self):
+        seed = tf.constant([11, 17], dtype=tf.int32)
+        image_uint8 = tf.ones((8, 8, 3), dtype=tf.uint8) * 128
+        image_float = tf.cast(image_uint8, tf.float32)
+
+        kwargs = {
+            "brightness": 0.4,
+            "contrast": 0.0,
+            "saturation": 0.0,
+            "hue": 0.0,
+            "p": 1.0,
+            "p_grayscale": 0.0,
+        }
+        out_uint8 = color_jitter(image_uint8, seed=seed, **kwargs)
+        out_float = color_jitter(image_float, seed=seed, **kwargs)
+
+        assert out_uint8.dtype == tf.uint8
+        assert out_float.dtype == tf.float32
+        np.testing.assert_allclose(
+            out_float.numpy(), tf.cast(out_uint8, tf.float32).numpy()
+        )
+
+    def test_brightness_on_float_255_is_not_pixel_delta_noop(self):
+        seed = tf.constant([11, 17], dtype=tf.int32)
+        image = tf.ones((8, 8, 3), dtype=tf.float32) * 128.0
+
+        result = color_jitter(
+            image,
+            seed=seed,
+            brightness=0.4,
+            contrast=0.0,
+            saturation=0.0,
+            hue=0.0,
+            p=1.0,
+            p_grayscale=0.0,
+        )
+
+        mean_delta = tf.reduce_mean(tf.abs(result - image))
+        assert float(mean_delta) > 1.0
+
     def test_grayscale_independent_of_jitter(self, cifar_image, seed):
         """p_grayscale should work even when p=0 (no jitter)."""
         result = color_jitter(

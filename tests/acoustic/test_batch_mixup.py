@@ -1,8 +1,16 @@
+from unittest.mock import patch
+
 import numpy as np
 import pytest
 import tensorflow as tf
 
 from justdata.acoustic.augment.batch import audio_mixup
+from justdata.acoustic.tasks import make_late_augmentations
+from justdata.core.loader import load_ds
+
+
+def _identity(sample, *args, **kwargs):
+    return sample
 
 
 def test_mixup_single_label_converts_to_soft_one_hot():
@@ -124,3 +132,51 @@ def test_mixup_requires_num_classes_for_single_label():
             prob=1.0,
             label_mode="single_label",
         )
+
+
+def test_load_ds_mixup_does_not_mix_with_final_batch_padding():
+    raw_ds = tf.data.Dataset.from_tensor_slices(
+        {
+            "waveform": tf.constant([[1.0], [2.0], [3.0]], dtype=tf.float32),
+            "label": tf.constant([0, 1, 2], dtype=tf.int64),
+        }
+    ).apply(tf.data.experimental.assert_cardinality(3))
+    late_augment = make_late_augmentations(
+        batch_augmentations={
+            "mixup": {
+                "alpha": 0.8,
+                "prob": 1.0,
+                "label_mode": "single_label",
+            }
+        },
+        input_key="waveform",
+        input_kind="waveform",
+    )
+
+    with patch("justdata.core.loader.fetch_ds", return_value=raw_ds):
+        ds, _n = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="train",
+            dataset_type="train",
+            batch_size=2,
+            seed=11,
+            num_classes=3,
+            preprocess_fn=_identity,
+            augment_fn=_identity,
+            late_augment_fn=late_augment,
+            postprocess_fn=_identity,
+            shuffle_buffer=1,
+            cache_dataset=False,
+            drop_remainder=False,
+            deterministic=True,
+        )
+
+    final_batch = list(ds)[-1]
+
+    np.testing.assert_array_equal(
+        final_batch["waveform"].numpy(), [[3.0], [0.0]]
+    )
+    np.testing.assert_array_equal(
+        final_batch["label"].numpy(), [[0, 0, 1], [0, 0, 0]]
+    )
+    np.testing.assert_array_equal(final_batch["padding_mask"].numpy(), [True, False])

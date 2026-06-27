@@ -587,6 +587,13 @@ def load_ds(
 
     ds = ds.batch(batch_size, drop_remainder=drop_remainder)
 
+    if is_training:
+        ds = ds.map(
+            seeded_late_augment,
+            num_parallel_calls=tf.data.AUTOTUNE,
+            deterministic=deterministic,
+        )
+
     # Ensure padding_mask is always present for API consistency
     if drop_remainder:
         ds = ds.map(
@@ -596,13 +603,6 @@ def load_ds(
         )
     else:
         ds = _pad_dataset(ds, batch_size, metadata_mode=metadata_mode)
-
-    if is_training:
-        ds = ds.map(
-            seeded_late_augment,
-            num_parallel_calls=tf.data.AUTOTUNE,
-            deterministic=deterministic,
-        )
 
     ds = ds.prefetch(tf.data.AUTOTUNE)
 

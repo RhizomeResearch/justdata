@@ -149,6 +149,47 @@ def _range_dataset(size):
     ).apply(tf.data.experimental.assert_cardinality(size))
 
 
+def test_late_augmentation_sees_unpadded_final_batch():
+    batch_size = 4
+
+    def record_batch_size(batch, num_classes=None, seed=None):
+        del num_classes, seed
+        observed_size = tf.shape(batch["x"])[0]
+        return batch | {
+            "late_batch_size": tf.fill([observed_size], observed_size),
+        }
+
+    with patch(
+        "justdata.core.loader.fetch_ds",
+        return_value=_range_dataset(batch_size + 1),
+    ):
+        ds, _n = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="train",
+            dataset_type="train",
+            batch_size=batch_size,
+            seed=0,
+            preprocess_fn=_identity,
+            augment_fn=_identity,
+            late_augment_fn=record_batch_size,
+            postprocess_fn=_identity,
+            shuffle_buffer=1,
+            cache_dataset=False,
+            drop_remainder=False,
+        )
+
+    final_batch = list(ds)[-1]
+
+    np.testing.assert_array_equal(
+        final_batch["late_batch_size"].numpy(),
+        [1, 0, 0, 0],
+    )
+    np.testing.assert_array_equal(
+        final_batch["padding_mask"].numpy(),
+        [True, False, False, False],
+    )
+
+
 def test_validation_model_input_cache_reuses_postprocessed_samples(tmp_path):
     counter = {"calls": 0}
     with patch("justdata.core.loader.fetch_ds", return_value=_range_dataset(4)):

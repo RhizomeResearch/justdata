@@ -297,6 +297,9 @@ def esc50_adapter(sample: dict) -> dict:
 
 @register_adapter("speech_commands")
 def speech_commands_adapter(sample: dict) -> dict:
+    sample = dict(sample)
+    if SAMPLE_RATE not in sample and "sampling_rate" not in sample:
+        sample[SAMPLE_RATE] = 16000
     return adapt_acoustic_sample(sample, dataset="speech_commands")
 
 

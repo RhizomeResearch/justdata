@@ -3,19 +3,19 @@ stages:
 
 test:
   stage: test
-  image: nixos/nix:latest
+  image: nixos/nix@sha256:1a711b619c8a713eff32c3f8d8781b3b4d0130cb91c0a57f67e87abfeeb90b01
   variables:
     # Enable flakes & the nix-command interface required by devenv
     NIX_CONFIG: "accept-flake-config = true\nexperimental-features = nix-command flakes"
   before_script:
     - git config --global --add safe.directory $CI_PROJECT_DIR
-    - nix profile install --accept-flake-config github:cachix/devenv/latest
+    - nix profile install --accept-flake-config github:cachix/devenv/099ac65fcef79e88127bdc06adbd1ea94255274a
   script:
     - devenv test
 
 golden:
   stage: test
-  image: nixos/nix:latest
+  image: nixos/nix@sha256:1a711b619c8a713eff32c3f8d8781b3b4d0130cb91c0a57f67e87abfeeb90b01
   when: manual
   allow_failure: true
   variables:
@@ -23,7 +23,7 @@ golden:
     NIX_CONFIG: "accept-flake-config = true\nexperimental-features = nix-command flakes"
   before_script:
     - git config --global --add safe.directory $CI_PROJECT_DIR
-    - nix profile install --accept-flake-config github:cachix/devenv/latest
+    - nix profile install --accept-flake-config github:cachix/devenv/099ac65fcef79e88127bdc06adbd1ea94255274a
   script:
     - devenv shell uv sync --extra golden
     - devenv shell uv run pytest -o addopts= -m golden

@@ -61,8 +61,14 @@ class ResolvedPreset(Mapping[str, Any]):
 
 
 def register_preset(dataset: str, config: Any, *, modality: str = "core"):
+    key = dataset.lower()
     with _PRESET_LOCK:
-        _PRESETS.setdefault(modality, {})[dataset.lower()] = config
+        presets = _PRESETS.setdefault(modality, {})
+        if key in presets:
+            raise ValueError(
+                f"Preset '{key}' already registered for modality '{modality}'"
+            )
+        presets[key] = copy.deepcopy(config)
 
 
 def _find_preset(dataset: str, *, modality: str = "core") -> tuple[str | None, Any]:
@@ -84,13 +90,13 @@ def _find_preset(dataset: str, *, modality: str = "core") -> tuple[str | None, A
 
 def get_dataset_presets(dataset: str, *, modality: str = "core") -> Dict[str, Any]:
     _name, config = _find_preset(dataset, modality=modality)
-    return config
+    return copy.deepcopy(config)
 
 
 def get_resolved_preset(dataset: str, *, modality: str = "core") -> ResolvedPreset:
     name, config = _find_preset(dataset, modality=modality)
     return ResolvedPreset(
-        name=name or dataset.lower(), modality=modality, config=config
+        name=name or dataset.lower(), modality=modality, config=copy.deepcopy(config)
     )
 
 

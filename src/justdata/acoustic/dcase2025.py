@@ -431,13 +431,6 @@ def assert_stats_allowed(split: str, *, allow_override: bool = False) -> None:
 
 
 def _register_presets() -> None:
-    from justdata.acoustic.compat.efficientat import (
-        dcase2025_task1_efficientat_32k_1s,
-    )
-
-    base = dcase2025_task1_efficientat_32k_1s().to_dict()
-    register_preset("dcase2025_task1_efficientat_32k_1s", base)
-
     native = {
         "name": "dcase2025_task1_native_44k_1s",
         "input_duration": 1.0,

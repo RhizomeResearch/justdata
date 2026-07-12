@@ -1,3 +1,14 @@
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+from uuid import uuid4
+
+import pytest
+
+from justdata.core.presets import (
+    get_dataset_presets as get_core_dataset_presets,
+    get_resolved_preset as get_core_resolved_preset,
+    register_preset as register_core_preset,
+)
 from justdata.vision.presets import (
     get_dataset_presets,
     merge_with_presets,
@@ -40,6 +51,60 @@ class TestPresetRegistration:
         assert (
             cifar["postproc_kwargs"]["normalization_params"]
             != cifar100["postproc_kwargs"]["normalization_params"]
+        )
+
+
+class TestPresetRegistryIsolation:
+    def test_registration_and_lookup_values_are_snapshots(self):
+        name = f"unit_preset_{uuid4().hex}"
+        config = {"nested": {"values": [1, 2]}}
+        register_core_preset(name, config, modality="unit")
+        original_hash = get_core_resolved_preset(name, modality="unit").hash()
+
+        config["nested"]["values"].append(3)
+        fetched = get_core_dataset_presets(name, modality="unit")
+        fetched["nested"]["values"].append(4)
+        resolved = get_core_resolved_preset(name, modality="unit")
+        resolved.config["nested"]["values"].append(5)
+
+        fresh = get_core_resolved_preset(name, modality="unit")
+        assert fresh.config == {"nested": {"values": [1, 2]}}
+        assert fresh.hash() == original_hash
+
+    def test_duplicate_normalized_key_is_rejected_per_modality(self):
+        name = f"unit_preset_{uuid4().hex}"
+        register_core_preset(name.upper(), {"value": 1}, modality="unit")
+
+        with pytest.raises(
+            ValueError,
+            match=rf"Preset '{name}' already registered for modality 'unit'",
+        ):
+            register_core_preset(name, {"value": 2}, modality="unit")
+
+        register_core_preset(name, {"value": 3}, modality="other")
+        assert get_core_dataset_presets(name, modality="other") == {"value": 3}
+
+    def test_concurrent_duplicate_registration_has_one_winner(self):
+        name = f"unit_preset_{uuid4().hex}"
+        workers = 8
+        barrier = Barrier(workers)
+
+        def register_once(index):
+            barrier.wait()
+            try:
+                register_core_preset(name, {"winner": index}, modality="threaded")
+            except ValueError as exc:
+                return str(exc)
+            return None
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            results = list(executor.map(register_once, range(workers)))
+
+        errors = [result for result in results if result is not None]
+        assert len(errors) == workers - 1
+        assert all(name in error and "threaded" in error for error in errors)
+        assert get_core_dataset_presets(name, modality="threaded")["winner"] in range(
+            workers
         )
 
 

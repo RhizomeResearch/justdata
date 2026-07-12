@@ -63,6 +63,13 @@ stats = compute_feature_stats(
 )
 ```
 
+`source_domain` and `target_domain` are evaluated on raw manifest records before
+waveform decoding. For additional raw-record selection, pass
+`source_filter_fn`; it may use only manifest fields. The generic `filter_fn`
+keeps its separate behavior and runs later, after adaptation, preprocessing,
+and preprocessing-cache lookup, so it may inspect canonical or preprocessed
+fields.
+
 In executable scripts, destructure `make_source_dataset(...)` as
 `source_ds, n = make_source_dataset(...)`. If the selected preset writes model
 features under `features`, pass a pipeline with `output_key="inputs"` or change

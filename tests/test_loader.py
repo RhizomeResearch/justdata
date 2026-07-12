@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import tensorflow as tf
 
-from justdata.core.loader import load_ds
+from justdata.core.loader import fetch_ds, load_ds
 from justdata.core.registry import get_pipeline_for_dataset
 from justdata.vision.minic import create_minic_datasets
 
@@ -126,6 +126,76 @@ def test_create_minic_datasets(synthetic_classification_ds):
 
 def _identity(sample, *args, **kwargs):
     return sample
+
+
+def test_source_filter_runs_before_adapter_and_regular_filter(monkeypatch):
+    counters = {"adapter": 0, "preprocess": 0}
+    raw_ds = tf.data.Dataset.from_tensor_slices(
+        {
+            "x": np.arange(4, dtype=np.int64),
+            "keep": [False, True, True, False],
+        }
+    )
+
+    def source_loader(dataset_name, splits, data_dir):
+        del dataset_name, splits, data_dir
+        return [raw_ds]
+
+    def adapter(sample):
+        def bump(value):
+            counters["adapter"] += 1
+            return value
+
+        value = tf.py_function(bump, [sample["x"]], Tout=tf.int64)
+        value.set_shape([])
+        return {"x": value + 10}
+
+    def preprocess(sample):
+        def bump(value):
+            counters["preprocess"] += 1
+            return value
+
+        value = tf.py_function(bump, [sample["x"]], Tout=tf.int64)
+        value.set_shape([])
+        return {"x": value * 2}
+
+    monkeypatch.setattr(
+        "justdata.core.loader.get_source_loader", lambda _name: source_loader
+    )
+    monkeypatch.setattr("justdata.core.loader.get_adapter", lambda _name: adapter)
+
+    ds, _tools = load_ds(
+        dataset_names_arg="mock",
+        splits_arg="validation",
+        dataset_type="validation",
+        batch_size=2,
+        seed=0,
+        preprocess_fn=preprocess,
+        augment_fn=_identity,
+        late_augment_fn=_identity,
+        postprocess_fn=_identity,
+        cache_dataset=True,
+        return_raw_ds=True,
+        source_filter_fn=lambda sample: sample["keep"],
+        filter_fn=lambda sample: tf.equal(sample["x"], 22),
+    )
+
+    assert _iterate_x_twice(ds) == [[22], [22]]
+    assert counters == {"adapter": 2, "preprocess": 2}
+
+
+def test_fetch_ds_source_filter_is_optional(monkeypatch):
+    raw_ds = tf.data.Dataset.from_tensor_slices({"x": [1, 2]})
+
+    monkeypatch.setattr(
+        "justdata.core.loader.get_source_loader",
+        lambda _name: lambda _dataset, _splits, _data_dir: [raw_ds],
+    )
+    monkeypatch.setattr("justdata.core.loader.get_adapter", lambda _name: _identity)
+
+    ds = fetch_ds(["mock"], ["validation"])
+
+    assert [int(sample["x"].numpy()) for sample in ds] == [1, 2]
 
 
 def _counting_postprocess(counter):

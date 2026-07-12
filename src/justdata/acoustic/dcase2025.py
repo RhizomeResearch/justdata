@@ -708,14 +708,15 @@ def _make_dataset(
         assert_stats_allowed(split, allow_override=allow_override)
 
     filter_fn = load_kwargs.pop("filter_fn", None)
+    source_filter_fn = load_kwargs.pop("source_filter_fn", None)
     if domain:
         domain_filter = metadata_filter_predicate(**domain)
-        if filter_fn is None:
-            filter_fn = domain_filter
+        if source_filter_fn is None:
+            source_filter_fn = domain_filter
         else:
-            previous_filter = filter_fn
-            filter_fn = lambda sample: tf.logical_and(
-                previous_filter(sample),
+            previous_source_filter = source_filter_fn
+            source_filter_fn = lambda sample: tf.logical_and(
+                previous_source_filter(sample),
                 domain_filter(sample),
             )
 
@@ -732,6 +733,7 @@ def _make_dataset(
         pipeline=pipeline,
         deterministic=load_kwargs.pop("deterministic", True),
         cache_dataset=load_kwargs.pop("cache_dataset", False),
+        source_filter_fn=source_filter_fn,
         filter_fn=filter_fn,
         **load_kwargs,
     )

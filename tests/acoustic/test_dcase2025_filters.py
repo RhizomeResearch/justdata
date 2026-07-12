@@ -1,6 +1,10 @@
 import tensorflow as tf
 
-from justdata.acoustic.filters import filter_by_metadata, groupby_metadata
+from justdata.acoustic.filters import (
+    filter_by_metadata,
+    groupby_metadata,
+    metadata_filter_predicate,
+)
 
 
 def _dataset():
@@ -36,6 +40,12 @@ def test_filter_device_type():
 
 def test_filter_known_device():
     assert _values(filter_by_metadata(_dataset(), is_known_device=True)) == [1, 2, 3, 4]
+
+
+def test_metadata_filter_missing_raw_field_is_false():
+    predicate = metadata_filter_predicate(device="A")
+
+    assert not bool(predicate({"filename": tf.constant("clip.wav")}).numpy())
 
 
 def test_groupby_device_counts():

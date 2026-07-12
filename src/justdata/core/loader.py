@@ -28,6 +28,8 @@ def fetch_ds(
     dataset_names: list[str],
     splits_info: Union[list[str], Dict[str, list[str]]],
     data_dir: Union[None, str, os.PathLike] = None,
+    *,
+    source_filter_fn=None,
 ) -> Optional[tf.data.Dataset]:
     """
     Loads and concatenates multiple TensorFlow Datasets and their splits.
@@ -59,6 +61,9 @@ def fetch_ds(
         data_dir: Optional path to the directory where datasets are stored or
                   will be downloaded. If None, defaults to
                   `tfds.builder.DEFAULT_DATA_DIR`.
+        source_filter_fn: Optional predicate applied to raw source records after
+                          split concatenation and before adapter mapping. It may
+                          reference only fields exposed by the source loader.
 
     Returns:
         A `tf.data.Dataset` instance representing the concatenation of all
@@ -129,6 +134,8 @@ def fetch_ds(
         concatenated_splits = _concatenate_tf_datasets(loaded_splits)
 
         if concatenated_splits:
+            if source_filter_fn is not None:
+                concatenated_splits = concatenated_splits.filter(source_filter_fn)
             adapter = get_adapter(dataset_name)
             concatenated_splits = concatenated_splits.map(
                 adapter, num_parallel_calls=tf.data.AUTOTUNE
@@ -171,6 +178,8 @@ def load_ds(
     metadata_mode: Literal["full", "numeric_only", "none"] | None = None,
     sidecar_metadata_path: str | None = None,
     filter_fn=None,
+    *,
+    source_filter_fn=None,
 ):
     """
     Loads, preprocesses, and batches HuggingFace or TensorFlow Datasets.
@@ -226,6 +235,9 @@ def load_ds(
                                ``metadata_mode="numeric_only"``.
         filter_fn: Optional predicate applied after preprocessing and caching,
                    before augmentation, postprocessing, and batching.
+        source_filter_fn: Optional predicate applied to raw source records before
+                          adapter mapping. Unlike ``filter_fn``, it may reference
+                          only fields exposed by the source loader.
 
     Returns:
         A batched `tf.data.Dataset` converted to NumPy arrays.
@@ -282,7 +294,15 @@ def load_ds(
                 "both cache stages are enabled."
             )
 
-    ds = fetch_ds(dataset_names, splits, data_dir)
+    if source_filter_fn is None:
+        ds = fetch_ds(dataset_names, splits, data_dir)
+    else:
+        ds = fetch_ds(
+            dataset_names,
+            splits,
+            data_dir,
+            source_filter_fn=source_filter_fn,
+        )
 
     if ds is None:
         raise ValueError(

@@ -49,7 +49,7 @@ These are assembled by `justdata.core.load_ds` into the following execution grap
 fetch_ds -> adapter -> preprocess -> cache -> augment -> shuffle -> postprocess -> batch -> late_augment -> pad -> prefetch
 ```
 
-The strict ordering reflects the execution domain requirements articulated throughout this document: format normalization occurs before the default cache; spatial and photometric distortions precede tensor conversion and normalization; and batch-level operations (Mixup, CutMix, random erasing) occur after batching on the GPU. An optional model-input cache can be inserted after deterministic postprocessing and before batching; for training it must be explicitly opted in and is placed before shuffle so epoch order is not frozen.
+The strict ordering reflects the execution domain requirements articulated throughout this document: format normalization occurs before the optional preprocessing cache; spatial and photometric distortions precede tensor conversion and normalization; and batch-level operations (Mixup, CutMix, random erasing) occur after batching on the GPU. An optional model-input cache can be inserted after deterministic postprocessing and before batching; for training it must be explicitly opted in and is placed before shuffle so epoch order is not frozen.
 
 ### Core Public API
 
@@ -57,8 +57,8 @@ The strict ordering reflects the execution domain requirements articulated throu
 | :------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------- |
 | `justdata.core.fetch_ds(dataset_names, splits_info, data_dir)`        | Raw dataset loading through registered source loaders. Returns a `tf.data.Dataset` in canonical schema.        |
 | `justdata.core.load_ds(...)`                                         | Full pipeline for training or evaluation. Handles caching, augmentation, shuffling, batching, and prefetching. |
-| `justdata.vision.minic.create_minic_datasets(...)`                   | Constructs Mini-C corruption benchmark datasets from a preprocessed, cached base dataset.                      |
-| `justdata.acoustic.corruptions.create_audio_corruption_datasets(...)` | Constructs acoustic corruption benchmark datasets from a preprocessed, cached base dataset.                    |
+| `justdata.vision.minic.create_minic_datasets(...)`                   | Constructs Mini-C corruption benchmark datasets from a shared preprocessed base dataset.                       |
+| `justdata.acoustic.corruptions.create_audio_corruption_datasets(...)` | Constructs acoustic corruption benchmark datasets from a shared preprocessed base dataset.                     |
 | `justdata.acoustic.dcase2025.make_source_dataset(...)`               | Builds DCASE Task 1 source-domain datasets with split-safety checks.                                           |
 
 Import `justdata.vision` before resolving built-in vision datasets or pipelines. Hugging Face vision datasets are referenced with the `hf:` prefix (e.g., `hf:cifar10`), and WILDS image classification datasets are referenced with the `wilds:` prefix (e.g., `wilds:camelyon17`).
@@ -69,11 +69,11 @@ ______________________________________________________________________
 
 ### Stage 1: Preprocessing (before cache)
 
-Format normalization is performed before the dataset is cached to disk. Operations include rank fixing (2D -> 3D), CHW -> HWC transposition, grayscale -> RGB expansion, and RGBA -> RGB projection. The output shape is forced to `[None, None, 3]`.
+Format normalization is performed before the optional decoded-dataset cache. Operations include rank fixing (2D -> 3D), CHW -> HWC transposition, grayscale -> RGB expansion, and RGBA -> RGB projection. The output shape is forced to `[None, None, 3]`.
 
 ### Stage 2: Augmentation (per-sample, training only)
 
-Per-sample spatial and photometric augmentations are applied after the cache, ensuring that each training epoch receives independently sampled augmentations. All augmentation functions use `tf.random.split` for stateless randomization, enabling full reproducibility.
+Per-sample spatial and photometric augmentations are applied after the optional cache stage, ensuring that each training epoch receives independently sampled augmentations. All augmentation functions use `tf.random.split` for stateless randomization, enabling full reproducibility.
 
 ### Stage 3: Postprocessing (every sample)
 
@@ -494,6 +494,7 @@ train_ds, N = load_ds(
     seed=42,
     pipeline=pipeline,
     num_classes=10,
+    cache_dataset=False,
 )
 ```
 
@@ -510,6 +511,7 @@ val_ds, N = load_ds(
     seed=0,
     pipeline=pipeline,
     num_classes=10,
+    cache_dataset=False,
 )
 ```
 
@@ -537,6 +539,7 @@ ds, n = load_ds(
     seed=0,
     pipeline=pipeline,
     num_classes=10,
+    cache_dataset=False,
     metadata_mode="numeric_only",
     as_numpy=True,
 )
@@ -572,7 +575,7 @@ ______________________________________________________________________
 
 ## Mini-C Corruption Benchmark
 
-`create_minic_datasets` constructs Mini-C benchmark evaluation datasets by forking from a preprocessed, cached base dataset and applying severity-parameterized corruptions in place of standard augmentation. This avoids re-reading raw data for each corruption type.
+`create_minic_datasets` constructs Mini-C benchmark evaluation datasets by forking from a preprocessed base dataset and applying severity-parameterized corruptions in place of standard augmentation. Pass `cache_dataset=True` with an explicit disk path when avoiding source re-reads across corruptions is worth the storage cost; otherwise the base remains streaming.
 
 **Corruption categories and implementations:**
 
@@ -656,6 +659,8 @@ train_ds, N = load_ds(
     seed=42,
     pipeline=pipeline,
     num_classes=10,
+    # CIFAR-10 is small enough for an intentional memory cache.
+    cache_dataset=True,
 )
 ```
 
@@ -665,6 +670,7 @@ train_ds, N = load_ds(
 train_ds = load_ds(
     dataset_names_arg=["hf:cifar10"],
     splits_arg={"hf:cifar10": ["train"]},
+    cache_dataset=False,
     ...
 )
 ```
@@ -674,9 +680,14 @@ source-owned caches under it: `tfds/`, `hf/vision/`, `hf/acoustic/`, `wilds/`,
 and `zenodo/`. If omitted, the root is `~/.cache/justdata`.
 
 Loader caches are separate from source-owned caches. `cache_dataset/cache_path`
-caches decoded, preprocessed samples before augmentation. `cache_model_inputs`
-and `model_input_cache_path` cache resized, normalized model inputs before
-batching. Use different paths for the two cache stages.
+caches decoded, preprocessed samples before augmentation. Loader caching is off
+by default, so datasets remain streaming when `cache_dataset` is omitted. Set
+`cache_dataset=True` with an empty `cache_path` to opt into memory caching, or
+provide a nonempty path to cache on the filesystem. Large datasets should use
+an explicit disk path or remain uncached. `cache_model_inputs` and
+`model_input_cache_path` cache resized, normalized model inputs before batching.
+Use different paths for the two cache stages. This default changes performance,
+not output values.
 
 ### Loading a WILDS Dataset
 
@@ -738,6 +749,7 @@ train_ds, N = load_ds(
     seed=42,
     pipeline=pipeline,
     num_classes=10,
+    cache_dataset=False,
 )
 ```
 

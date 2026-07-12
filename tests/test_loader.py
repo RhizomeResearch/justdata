@@ -149,6 +149,95 @@ def _range_dataset(size):
     ).apply(tf.data.experimental.assert_cardinality(size))
 
 
+def _counted_dataset(size, counter):
+    def generate():
+        for value in range(size):
+            counter["source"] += 1
+            yield {"x": np.int64(value)}
+
+    return tf.data.Dataset.from_generator(
+        generate,
+        output_signature={"x": tf.TensorSpec([], tf.int64)},
+    )
+
+
+def _counting_preprocess(counter):
+    def preprocess(sample):
+        def bump(value):
+            counter["preprocess"] += 1
+            return value
+
+        value = tf.py_function(bump, [sample["x"]], Tout=sample["x"].dtype)
+        value.set_shape(sample["x"].shape)
+        return sample | {"x": value * 2}
+
+    return preprocess
+
+
+def _load_counted_raw_dataset(counter, **kwargs):
+    with patch(
+        "justdata.core.loader.fetch_ds",
+        return_value=_counted_dataset(3, counter),
+    ) as fetch:
+        ds, _tools = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="validation",
+            dataset_type="validation",
+            batch_size=2,
+            seed=0,
+            preprocess_fn=_counting_preprocess(counter),
+            augment_fn=_identity,
+            late_augment_fn=_identity,
+            postprocess_fn=_identity,
+            return_raw_ds=True,
+            **kwargs,
+        )
+    return ds, fetch
+
+
+def _iterate_x_twice(ds):
+    return [[sample["x"].numpy().item() for sample in ds] for _ in range(2)]
+
+
+def test_loader_cache_is_disabled_by_default():
+    counter = {"source": 0, "preprocess": 0}
+    ds, _fetch = _load_counted_raw_dataset(counter)
+
+    assert _iterate_x_twice(ds) == [[0, 2, 4], [0, 2, 4]]
+    assert counter == {"source": 6, "preprocess": 6}
+
+
+def test_loader_memory_cache_requires_explicit_opt_in():
+    counter = {"source": 0, "preprocess": 0}
+    ds, _fetch = _load_counted_raw_dataset(
+        counter,
+        cache_dataset=True,
+        cache_path="",
+    )
+
+    assert _iterate_x_twice(ds) == [[0, 2, 4], [0, 2, 4]]
+    assert counter == {"source": 3, "preprocess": 3}
+
+
+def test_loader_disk_cache_is_separate_from_source_cache(tmp_path):
+    counter = {"source": 0, "preprocess": 0}
+    source_cache_root = tmp_path / "sources"
+    decoded_cache_path = tmp_path / "decoded" / "validation"
+    decoded_cache_path.parent.mkdir()
+    ds, fetch = _load_counted_raw_dataset(
+        counter,
+        data_dir=source_cache_root,
+        cache_dataset=True,
+        cache_path=str(decoded_cache_path),
+    )
+
+    assert _iterate_x_twice(ds) == [[0, 2, 4], [0, 2, 4]]
+    assert counter == {"source": 3, "preprocess": 3}
+    fetch.assert_called_once_with(["mock"], ["validation"], source_cache_root)
+    assert list(decoded_cache_path.parent.glob("validation*"))
+    assert not source_cache_root.exists()
+
+
 def test_late_augmentation_sees_unpadded_final_batch():
     batch_size = 4
 

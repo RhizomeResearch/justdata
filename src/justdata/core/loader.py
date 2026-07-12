@@ -158,7 +158,7 @@ def load_ds(
     late_augment_fn=None,
     postprocess_fn=None,
     shuffle_buffer: int = 10_000,
-    cache_dataset: bool = True,
+    cache_dataset: bool = False,
     cache_path: str = "",
     cache_model_inputs: bool = False,
     model_input_cache_path: str = "",
@@ -195,10 +195,11 @@ def load_ds(
         late_augment_fn: Late augmentation function (fallback if `pipeline` is None).
         postprocess_fn: Postprocessing function (fallback if `pipeline` is None).
         shuffle_buffer: Size of the shuffle buffer.
-        cache_dataset: Whether to cache the dataset after preprocessing.
-        cache_path: The name of a directory on the filesystem to use for caching
-            elements in this Dataset.
-            If a filename is not provided, the dataset will be cached in memory.
+        cache_dataset: Whether to cache the dataset after preprocessing. Disabled
+            by default so omitted caching remains streaming-friendly.
+        cache_path: Filesystem path for the preprocessing cache. When
+            ``cache_dataset=True``, an empty path uses memory and a nonempty path
+            uses the filesystem.
         cache_model_inputs: Whether to cache samples after deterministic
             postprocessing, before batching. Use ``model_input_cache_path`` for
             local SSD caching of resized/model-ready tensors.
@@ -304,8 +305,8 @@ def load_ds(
         deterministic=deterministic if is_training else None,
     )
 
-    # For big datasets or datasets with big images, caching can put your RAM on
-    # fire and destroy your computer
+    # An empty path caches in memory; a nonempty path caches on the filesystem.
+    # Large datasets should use an explicit disk path or remain uncached.
     if cache_dataset:
         ds = ds.cache(cache_path)
     else:

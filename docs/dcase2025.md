@@ -24,6 +24,7 @@ ds, n = load_ds(
     seed=0,
     pipeline=pipeline,
     num_classes=10,
+    cache_dataset=False,
     metadata_mode="numeric_only",
     as_numpy=True,
 )
@@ -80,6 +81,7 @@ ds, n = load_ds(
     batch_size=64,
     seed=0,
     pipeline=pipeline,
+    cache_dataset=False,
     metadata_mode="numeric_only",
     sidecar_metadata_path="dcase_metadata.jsonl",
 )

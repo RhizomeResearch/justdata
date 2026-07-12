@@ -50,11 +50,16 @@ The loader executes them as:
 fetch_ds -> adapter -> preprocess -> cache -> augment -> shuffle -> postprocess -> batch -> late_augment -> pad -> prefetch
 ```
 
-`cache_dataset/cache_path` controls the pre-augment cache. For ViT fine-tuning
-on large datasets, `cache_model_inputs/model_input_cache_path` can additionally
-cache resized and normalized model inputs after postprocess. Training use
-requires `allow_train_model_input_cache=True`; use it only for deterministic
-training views because stochastic augmentation is cached on first fill.
+`cache_dataset/cache_path` controls the pre-augment cache. It is disabled by
+default: set `cache_dataset=True` with an empty path for an intentional memory
+cache, or provide a nonempty filesystem path. Large datasets should use an
+explicit disk path or remain uncached. This choice affects performance, not
+output values, and is separate from source-owned download caches under
+`data_dir`. For ViT fine-tuning on large datasets,
+`cache_model_inputs/model_input_cache_path` can additionally cache resized and
+normalized model inputs after postprocess. Training use requires
+`allow_train_model_input_cache=True`; use it only for deterministic training
+views because stochastic augmentation is cached on first fill.
 
 For vision classification the stages are:
 

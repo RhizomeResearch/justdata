@@ -13,6 +13,8 @@ ds, n = load_ds(
     seed=0,
     pipeline=pipeline,
     num_classes=10,
+    # CIFAR-10 is small enough for an intentional memory cache.
+    cache_dataset=True,
     metadata_mode="numeric_only",
     as_numpy=True,
 )

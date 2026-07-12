@@ -57,10 +57,15 @@ The loader executes them as:
 fetch_ds -> adapter -> preprocess -> cache -> augment -> shuffle -> postprocess -> batch -> late_augment -> pad -> prefetch
 ```
 
-`cache_dataset/cache_path` controls the pre-augment cache. `cache_model_inputs`
-can additionally cache deterministic postprocess outputs before batching; train
-use requires `allow_train_model_input_cache=True` because stochastic training
-views are materialized on first fill.
+`cache_dataset/cache_path` controls the pre-augment cache. It is disabled by
+default: set `cache_dataset=True` with an empty path for an intentional memory
+cache, or provide a nonempty filesystem path. Large datasets should use an
+explicit disk path or remain uncached. This choice affects performance, not
+output values, and is separate from source-owned download caches under
+`data_dir`. `cache_model_inputs` can additionally cache deterministic
+postprocess outputs before batching; train use requires
+`allow_train_model_input_cache=True` because stochastic training views are
+materialized on first fill.
 
 For acoustic data the stages are:
 
@@ -144,6 +149,7 @@ ds, n = load_ds(
     seed=0,
     pipeline=pipeline,
     num_classes=10,
+    cache_dataset=False,
     metadata_mode="numeric_only",
     as_numpy=True,
 )

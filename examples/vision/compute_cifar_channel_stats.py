@@ -14,6 +14,7 @@ ds, n = load_ds(
     seed=0,
     pipeline=pipeline,
     num_classes=10,
+    cache_dataset=False,
     metadata_mode="numeric_only",
 )
 

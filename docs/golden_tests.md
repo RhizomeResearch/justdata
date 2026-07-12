@@ -1,70 +1,81 @@
-# Golden Tests
+# Golden tests
 
-Golden tests are optional compatibility tests against external reference
-packages, feature extractors, fixtures, or converted checkpoints. They exist to
-catch frontend drift that ordinary shape and smoke tests cannot see.
+Golden tests compare `justdata` with pinned external reference implementations.
+They certify numerical compatibility that ordinary shape and smoke tests cannot
+establish.
 
-## Default CI
+## Certification levels
 
-Default CI runs non-golden tests:
+- **Declared**: the intended external contract is documented, but no checked-in
+  oracle proves it.
+- **Frontend Golden**: a passing checked-in fixture proves waveform-to-feature
+  compatibility for the named preset.
+- **Logits Golden**: a passing checked-in fixture also proves converted
+  checkpoint logits. This requires reviewed checkpoint and derived-output
+  redistribution terms.
+
+A preset must not advertise a level higher than its passing checked-in test.
+Frontend certification does not imply checkpoint or logits compatibility.
+
+## Fixture policy
+
+Golden fixtures must satisfy all of these rules:
+
+- The oracle is produced by a pinned external implementation, never by
+  `justdata`.
+- Inputs are deterministic synthetic waveforms from
+  `tests/acoustic/golden/corpus.npz`; no copyrighted source audio is stored.
+- Each compressed fixture is at most 2 MiB, and the complete acoustic golden
+  directory should remain below 5 MiB.
+- Metadata records schema version, source repository and 40-character revision,
+  source path, license, dependency versions, tensor layout, hashes, tolerances,
+  and a numerical-tolerance rationale.
+- Metadata contains no generation timestamp. Regenerating the waveform recipe
+  must produce byte-identical arrays and metadata.
+- A frontend or preset-hash semantic change requires external regeneration and
+  recertification. Updating an oracle solely from changed `justdata` output is
+  forbidden.
+
+Each family README contains its regeneration command. First regenerate the
+shared corpus when the waveform recipe intentionally changes:
 
 ```bash
-uv run pytest -m "not golden"
+python tests/acoustic/golden/generate_corpus.py
 ```
 
-Golden tests are marked with `@pytest.mark.golden` or module-level
-`pytestmark = pytest.mark.golden` and are excluded by default.
+## Acoustic certification index
 
-## Optional golden job
+| Family | Frontend status | Logits status | External authority |
+|---|---|---|---|
+| AST | Frontend Golden | Declared | YuanGongND/ast + Torchaudio Kaldi fbank |
+| EfficientAT / DyMN | Frontend Golden | Declared | fschmid56/EfficientAT `AugmentMelSTFT` |
+| PaSST | Frontend Golden | Declared | kkoutini/PaSST `AugmentMelSTFT`, evaluation without Patchout |
+| CED Hugging Face | Frontend Golden | Declared | `mispeech/ced-base` `CedFeatureExtractor` |
+| CED ONNX/Kaldi helper | Declared | Declared | Deferred because its non-centered frontend disagrees with the Hugging Face extractor |
+| PANNs Cnn14 16/32 kHz | Frontend Golden | Declared | qiuqiangkong/audioset_tagging_cnn + TorchLibrosa |
 
-Run golden tests only when reference assets are available:
+Logits remain Declared because this repository does not redistribute checkpoints
+or checkpoint-derived output fixtures. The golden tests never download weights.
+
+## Running the suites
+
+Default development and CI remain independent of the golden stack:
+
+```bash
+uv run pytest
+```
+
+Install and run the optional reference suite with:
 
 ```bash
 uv sync --extra golden
-uv run pytest -m golden
+uv run pytest -o addopts= -m golden --junitxml=golden.xml
+python tests/acoustic/golden/check_report.py golden.xml --expected 23
 ```
 
-The `golden` extra is intentionally separate from the default dependency set so
-normal development and CI do not download heavyweight reference stacks.
-
-## What belongs in a golden test
-
-Use golden tests for:
-
-- Same image -> same normalized tensor against torchvision, timm, or another
-  reference preprocessing path for a named vision preset.
-- Same image tensor -> same checkpoint logits after checkpoint conversion.
-- Same waveform -> same frontend tensor against EfficientAT, PaSST, CED, or PANNs references.
-- Same frontend tensor -> same checkpoint logits after conversion.
-- Reference fixtures that prove windowing, mel filters, log compression, layout, and normalization.
-
-Do not use golden tests for basic shape, dtype, metadata, registry, or padding
-behavior. Those belong in ordinary non-golden tests.
-
-## Vision coverage
+The report guard requires exactly 23 tests and zero skips. The GitLab golden job
+is manual because of dependency cost, but it is not allowed to fail.
 
 Vision has non-external preset contract tests in
-`tests/test_vision_preset_contracts.py`. These pin hashable presets, static
-model input contracts, normalization, and deterministic validation
-postprocessing. Add optional `golden` vision tests only when an external
-reference implementation or checkpoint fixture is available.
-
-Suggested vision golden tests:
-
-- `cifar10` and `cifar100` preprocessing against a reference normalized tensor.
-- ImageNet default and RSB A1/A2/A3 eval transforms against torchvision/timm.
-- DINOv2 multi-crop shape and normalization parity against the target reference recipe.
-
-## Acoustic coverage
-
-Acoustic optional golden tests live under `tests/acoustic/test_golden_*`. AST
-fixtures can be generated under `tests/acoustic/golden/ast/` with the
-Python 3.12-compatible Torch/Torchaudio stack in the `golden` extra.
-EfficientAT, PaSST, CED, and PANNs tests remain placeholders for frontend or
-converted checkpoint references.
-
-## Compatibility contract
-
-When a golden fixture changes, update the relevant preset contract and document
-the new preset hash. A changed hash is expected when frontend semantics change;
-an unchanged hash with changed golden output indicates a bug.
+`tests/test_vision_preset_contracts.py`; no vision preset currently claims a
+golden certification level.

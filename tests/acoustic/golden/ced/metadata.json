@@ -1,0 +1,34 @@
+{
+  "certification": "frontend_golden",
+  "dependencies": {
+    "torch": "2.10.0+cu128",
+    "torchaudio": "2.10.0+cu128"
+  },
+  "family": "ced",
+  "fixture": {
+    "features_layout": "frequency,time",
+    "features_sha256": "a4bcced32ce302d9977d97752f3d5117f7324fb0269b8d9051cf4d5ff59fd19d",
+    "file": "ced_16k_1s.npz",
+    "waveform": "../corpus.npz:waveform_16000"
+  },
+  "logits": {
+    "certification": "declared",
+    "reason": "No checkpoint-derived output is redistributed"
+  },
+  "onnx_kaldi": {
+    "certification": "declared",
+    "reason": "The upstream helper uses center=False and differs from the authoritative Hugging Face extractor"
+  },
+  "schema_version": 1,
+  "source": {
+    "license": "Apache-2.0",
+    "path": "feature_extraction_ced.py:CedFeatureExtractor",
+    "repository": "https://huggingface.co/mispeech/ced-base",
+    "revision": "db3e14a8db4c21b56b165261c39649741a900e7f"
+  },
+  "tolerance": {
+    "atol": 0.25,
+    "rationale": "dB-scale drift in near-floor FFT bins across TensorFlow and Torch",
+    "rtol": 0.005
+  }
+}

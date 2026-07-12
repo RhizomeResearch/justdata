@@ -33,7 +33,7 @@ golden:
   stage: test
   image: nixos/nix@sha256:1a711b619c8a713eff32c3f8d8781b3b4d0130cb91c0a57f67e87abfeeb90b01
   when: manual
-  allow_failure: true
+  allow_failure: false
   variables:
     # Enable flakes & the nix-command interface required by devenv
     NIX_CONFIG: "accept-flake-config = true\nexperimental-features = nix-command flakes"
@@ -42,4 +42,5 @@ golden:
     - nix profile install --accept-flake-config github:cachix/devenv/099ac65fcef79e88127bdc06adbd1ea94255274a
   script:
     - devenv shell uv sync --extra golden
-    - devenv shell uv run pytest -o addopts= -m golden
+    - devenv shell uv run pytest -o addopts= -m golden --junitxml=golden.xml
+    - devenv shell python tests/acoustic/golden/check_report.py golden.xml --expected 23

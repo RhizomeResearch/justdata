@@ -1,0 +1,24 @@
+{
+  "license": "CC0-1.0 (deterministic synthetic signal; no source audio)",
+  "recipe": {
+    "amplitudes": [
+      0.35,
+      0.15
+    ],
+    "dtype": "float32",
+    "duration_seconds": 1,
+    "frequencies_hz": [
+      440.0,
+      1370.0
+    ],
+    "sample_rates": [
+      16000,
+      32000
+    ]
+  },
+  "schema_version": 1,
+  "sha256": {
+    "waveform_16000": "4ca5d7dd2d876e1043113f0f980536f0987b316a81d4c7aed8569dffeacbbec9",
+    "waveform_32000": "86abd3f584cc6f41f6d44238f672c8a733f97e49a3dd4f020ef6e93266fa4615"
+  }
+}

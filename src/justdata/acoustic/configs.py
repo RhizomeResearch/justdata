@@ -230,6 +230,7 @@ class MelConfig(_SerializableConfig):
         "torchaudio",
         "kaldi_compatible",
         "torchaudio_or_kaldi_compatible",
+        "efficientat_kaldi",
     ] = "tf"
 
     def validate(self) -> MelConfig:
@@ -249,6 +250,7 @@ class MelConfig(_SerializableConfig):
                 "torchaudio",
                 "kaldi_compatible",
                 "torchaudio_or_kaldi_compatible",
+                "efficientat_kaldi",
             },
         )
         return self
@@ -347,6 +349,7 @@ class FrontendConfig(_SerializableConfig):
         "stft_magnitude",
         "mel_power",
         "logmel",
+        "efficientat_logmel",
         "kaldi_fbank",
         "mfcc",
         "pcen_mel",
@@ -378,6 +381,7 @@ class FrontendConfig(_SerializableConfig):
                 "stft_magnitude",
                 "mel_power",
                 "logmel",
+                "efficientat_logmel",
                 "kaldi_fbank",
                 "mfcc",
                 "pcen_mel",

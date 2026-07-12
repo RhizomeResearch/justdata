@@ -37,9 +37,9 @@ class AcousticPipelineContract:
 ACOUSTIC_PIPELINE_CONTRACTS = (
     AcousticPipelineContract("waveform", "acoustic/classification", "audio_default_16k_waveform", 16000, "waveform", (16000,), ()),
     AcousticPipelineContract("logmel", "acoustic/classification", "audio_default_32k_logmel64", 32000, "features", (101, 64), ()),
-    AcousticPipelineContract("passt", "acoustic/classification", "dcase2025_task1_passt_32k_1s", 32000, "features", (1, 128, 101), (), (1, 124, 61)),
+    AcousticPipelineContract("passt", "acoustic/classification", "dcase2025_task1_passt_32k_1s", 32000, "features", (1, 128, 100), (), (1, 124, 60)),
     AcousticPipelineContract("ast", "acoustic/ast_classification", "ast_speechcommands_16k_1s_fbank128", 16000, "features", (128, 128), (35,)),
-    AcousticPipelineContract("dcase-efficientat", "acoustic/classification", "dcase2025_task1_efficientat_32k_1s", 32000, "features", (1, 128, 101), ()),
+    AcousticPipelineContract("dcase-efficientat", "acoustic/classification", "dcase2025_task1_efficientat_32k_1s", 32000, "features", (1, 128, 100), ()),
 )
 
 

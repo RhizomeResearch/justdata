@@ -1,0 +1,50 @@
+{
+  "certification": "frontend_golden",
+  "dependencies": {
+    "torch": "2.10.0+cu128",
+    "torchlibrosa": "0.1.0"
+  },
+  "family": "panns",
+  "fixtures": {
+    "panns_16k_10s_zero_pad.npz": {
+      "features_layout": "time,frequency",
+      "features_sha256": "eeec4965e0e7ebbae787659739e3150e1cbd116914bf34fa2baff0913c076845",
+      "waveform": "../corpus.npz:waveform_16000",
+      "zero_padded_duration_seconds": 10
+    },
+    "panns_16k_1s.npz": {
+      "features_layout": "time,frequency",
+      "features_sha256": "51da889392e70145ffce67417083961742b19a5d2189385f8c6f0755dfa5a616",
+      "waveform": "../corpus.npz:waveform_16000",
+      "zero_padded_duration_seconds": 1
+    },
+    "panns_32k_10s_zero_pad.npz": {
+      "features_layout": "time,frequency",
+      "features_sha256": "91153d607f8905be037cf4fcd34bebf5f6b27c99cd52c87f0edc16819bc4bd21",
+      "waveform": "../corpus.npz:waveform_32000",
+      "zero_padded_duration_seconds": 10
+    },
+    "panns_32k_1s.npz": {
+      "features_layout": "time,frequency",
+      "features_sha256": "3d5e099eebe5b8179d613c18ad2df44571debf622e42112ac41d972632ea8d45",
+      "waveform": "../corpus.npz:waveform_32000",
+      "zero_padded_duration_seconds": 1
+    }
+  },
+  "logits": {
+    "certification": "declared",
+    "reason": "No checkpoint-derived output is redistributed"
+  },
+  "schema_version": 1,
+  "source": {
+    "license": "MIT",
+    "path": "pytorch/models.py:Cnn14 Spectrogram/LogmelFilterBank",
+    "repository": "https://github.com/qiuqiangkong/audioset_tagging_cnn",
+    "revision": "d2f4b8c18eab44737fcc0de1248ae21eb43f6aa4"
+  },
+  "tolerance": {
+    "atol": 0.06,
+    "rationale": "dB-scale FFT kernel drift across TensorFlow and TorchLibrosa",
+    "rtol": 0.001
+  }
+}

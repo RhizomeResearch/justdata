@@ -23,30 +23,39 @@ def ensure_waveform_tc(audio: tf.Tensor) -> tf.Tensor:
 def _window_fn(
     config: STFTConfig,
 ) -> Callable[[tf.Tensor, tf.dtypes.DType], tf.Tensor] | None:
-    if config.window == "rectangular":
-        return lambda frame_length, dtype: tf.ones([frame_length], dtype=dtype)
+    def _base_window(dtype: tf.dtypes.DType) -> tf.Tensor:
+        if config.window == "rectangular":
+            return tf.ones([config.win_length], dtype=dtype)
+        if config.window == "hann":
+            return tf.signal.hann_window(
+                config.win_length,
+                periodic=config.window_periodic,
+                dtype=dtype,
+            )
+        if config.window == "hamming":
+            return tf.signal.hamming_window(
+                config.win_length,
+                periodic=config.window_periodic,
+                dtype=dtype,
+            )
+        if config.window == "povey":
+            return tf.pow(
+                tf.signal.hann_window(
+                    config.win_length,
+                    periodic=config.window_periodic,
+                    dtype=dtype,
+                ),
+                0.85,
+            )
+        raise ValueError(f"Unknown STFT window: {config.window!r}")
 
-    def _hann(frame_length: tf.Tensor, dtype: tf.dtypes.DType) -> tf.Tensor:
-        return tf.signal.hann_window(
-            frame_length,
-            periodic=config.window_periodic,
-            dtype=dtype,
-        )
+    def _window(frame_length: tf.Tensor, dtype: tf.dtypes.DType) -> tf.Tensor:
+        window = _base_window(dtype)
+        pad = frame_length - config.win_length
+        left = pad // 2
+        return tf.pad(window, [[left, pad - left]])
 
-    if config.window == "hann":
-        return _hann
-
-    if config.window == "hamming":
-        return lambda frame_length, dtype: tf.signal.hamming_window(
-            frame_length,
-            periodic=config.window_periodic,
-            dtype=dtype,
-        )
-
-    if config.window == "povey":
-        return lambda frame_length, dtype: tf.pow(_hann(frame_length, dtype), 0.85)
-
-    raise ValueError(f"Unknown STFT window: {config.window!r}")
+    return _window
 
 
 def reflect_or_constant_pad(audio: tf.Tensor, pad: int, pad_mode: str) -> tf.Tensor:
@@ -74,17 +83,28 @@ def _full_spectrum_from_onesided(spectrum: tf.Tensor, n_fft: int) -> tf.Tensor:
     return tf.concat([spectrum, tf.reverse(reflected, axis=[1])], axis=1)
 
 
-def stft_power_spectrogram(audio: tf.Tensor, config: STFTConfig | dict) -> tf.Tensor:
+def stft_power_spectrogram(
+    audio: tf.Tensor,
+    config: STFTConfig | dict,
+    *,
+    preemphasis: float = 0.0,
+    frame_length: int | None = None,
+) -> tf.Tensor:
     config = STFTConfig.from_dict(config)
     audio = ensure_waveform_tc(audio)
+
+    if preemphasis:
+        audio = audio[1:] - tf.cast(preemphasis, audio.dtype) * audio[:-1]
 
     if config.center:
         audio = reflect_or_constant_pad(audio, config.n_fft // 2, config.pad_mode)
 
+    frame_length = config.win_length if frame_length is None else frame_length
+
     channels_first = tf.transpose(audio, [1, 0])
     frames = tf.signal.stft(
         signals=channels_first,
-        frame_length=config.win_length,
+        frame_length=frame_length,
         frame_step=config.hop_length,
         fft_length=config.n_fft,
         window_fn=_window_fn(config),

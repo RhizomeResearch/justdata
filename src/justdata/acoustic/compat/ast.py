@@ -276,11 +276,11 @@ def ast_add_noise_and_roll(
 def _metadata_for_recipe(recipe_name: str) -> dict[str, Any]:
     recipe = AST_RECIPE_CONFIGS[recipe_name]
     return {
-        "preset_version": 1,
+        "preset_version": 2,
         "model_family": "ast",
         "recipe": recipe_name,
         "frontend_contract": "ast-kaldi-fbank-v1",
-        "compatibility_status": "reference_frontend_declared_golden_pending",
+        "compatibility_status": "frontend_golden",
         "reference_repo": "YuanGongND/ast",
         "reference_commit": AST_REFERENCE_COMMIT,
         "ast": {

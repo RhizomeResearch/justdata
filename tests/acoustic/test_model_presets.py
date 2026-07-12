@@ -24,26 +24,26 @@ EXPECTED_HASHES = {
     "audioset_32k_10s_logmel128": "311f9c6e0359c382",
     "audioset_32k_10s_logmel64": "314867d1ea97bd98",
     "audioset_16k_10s_logmel64": "6059a52472ca9f8a",
-    "efficientat_32k_10s_logmel128": "aeddd33e73d978f3",
-    "dymn_32k_10s_logmel128": "dfd3ccd0c5b170df",
-    "dcase2025_task1_efficientat_32k_1s": "bfceba1dab08df4b",
-    "dcase2025_task1_dymn_32k_1s": "de75f196a56ca4e3",
-    "dcase2025_task1_efficientat_32k_1s_zero_pad_to_10s": "6e8524b54b68ab81",
-    "dcase2025_task1_efficientat_32k_1s_repeat_to_10s": "8912f36e4387b933",
-    "passt_32k_10s_logmel128": "9a448c55fbf418ca",
-    "dcase2025_task1_passt_32k_1s": "8bde9d5035463a7b",
-    "dcase2025_task1_passt_32k_1s_zero_pad_to_10s": "0fe864be59ceb999",
-    "dcase2025_task1_passt_32k_1s_repeat_to_10s": "0830dfb12b7b9477",
-    "ced_tiny_16k_logmel64": "9775450f5f24486f",
-    "ced_mini_16k_logmel64": "b8739cc1aed6526e",
-    "ced_small_16k_logmel64": "dcdb52ab2b21fc40",
-    "ced_base_16k_logmel64": "6422c438897b7eea",
-    "dcase2025_task1_ced_16k_1s": "139c16c9629fef50",
-    "panns_cnn14_32k_10s_logmel64": "c98250d06de4965b",
-    "panns_cnn14_16k_10s_logmel64": "ec3411b8dfbe97b6",
-    "ast_audioset_16k_10s_fbank128": "ba89920c62c4eebd",
-    "ast_esc50_16k_5s_fbank128": "4bba2ece4b2b2bcc",
-    "ast_speechcommands_16k_1s_fbank128": "b62c85e524041c0a",
+    "efficientat_32k_10s_logmel128": "399f8161d8bb5936",
+    "dymn_32k_10s_logmel128": "70bc6a224672a7fa",
+    "dcase2025_task1_efficientat_32k_1s": "cf83407bd742f0b7",
+    "dcase2025_task1_dymn_32k_1s": "9325444075a854a3",
+    "dcase2025_task1_efficientat_32k_1s_zero_pad_to_10s": "ae7f5f75cfa3696e",
+    "dcase2025_task1_efficientat_32k_1s_repeat_to_10s": "aa942a90a1ea3a05",
+    "passt_32k_10s_logmel128": "eb08a69e03151c55",
+    "dcase2025_task1_passt_32k_1s": "0407bd7621aa317d",
+    "dcase2025_task1_passt_32k_1s_zero_pad_to_10s": "97c31dd0bf56ec3e",
+    "dcase2025_task1_passt_32k_1s_repeat_to_10s": "a64def0f1ef35804",
+    "ced_tiny_16k_logmel64": "0acadb6fee016e45",
+    "ced_mini_16k_logmel64": "46bd8555981e360e",
+    "ced_small_16k_logmel64": "614366169b87a8ce",
+    "ced_base_16k_logmel64": "a8ff171e53b635e3",
+    "dcase2025_task1_ced_16k_1s": "720dc02dfcb8d488",
+    "panns_cnn14_32k_10s_logmel64": "97ed26846a8414d0",
+    "panns_cnn14_16k_10s_logmel64": "fb15456c0ed7f41e",
+    "ast_audioset_16k_10s_fbank128": "06eda668ab21fe52",
+    "ast_esc50_16k_5s_fbank128": "9cb6fdc96448c9b8",
+    "ast_speechcommands_16k_1s_fbank128": "3a7ba9da20303687",
 }
 
 EXPECTED_SHAPES = {
@@ -53,21 +53,21 @@ EXPECTED_SHAPES = {
     "audioset_32k_10s_logmel128": (1001, 128),
     "audioset_32k_10s_logmel64": (1001, 64),
     "audioset_16k_10s_logmel64": (1001, 64),
-    "efficientat_32k_10s_logmel128": (1, 128, 1001),
-    "dymn_32k_10s_logmel128": (1, 128, 1001),
-    "dcase2025_task1_efficientat_32k_1s": (1, 128, 101),
-    "dcase2025_task1_dymn_32k_1s": (1, 128, 101),
-    "dcase2025_task1_efficientat_32k_1s_zero_pad_to_10s": (1, 128, 1001),
-    "dcase2025_task1_efficientat_32k_1s_repeat_to_10s": (1, 128, 1001),
-    "passt_32k_10s_logmel128": (1, 128, 1001),
-    "dcase2025_task1_passt_32k_1s": (1, 128, 101),
-    "dcase2025_task1_passt_32k_1s_zero_pad_to_10s": (1, 128, 1001),
-    "dcase2025_task1_passt_32k_1s_repeat_to_10s": (1, 128, 1001),
-    "ced_tiny_16k_logmel64": (998, 64),
-    "ced_mini_16k_logmel64": (998, 64),
-    "ced_small_16k_logmel64": (998, 64),
-    "ced_base_16k_logmel64": (998, 64),
-    "dcase2025_task1_ced_16k_1s": (98, 64),
+    "efficientat_32k_10s_logmel128": (1, 128, 1000),
+    "dymn_32k_10s_logmel128": (1, 128, 1000),
+    "dcase2025_task1_efficientat_32k_1s": (1, 128, 100),
+    "dcase2025_task1_dymn_32k_1s": (1, 128, 100),
+    "dcase2025_task1_efficientat_32k_1s_zero_pad_to_10s": (1, 128, 1000),
+    "dcase2025_task1_efficientat_32k_1s_repeat_to_10s": (1, 128, 1000),
+    "passt_32k_10s_logmel128": (1, 128, 1000),
+    "dcase2025_task1_passt_32k_1s": (1, 128, 100),
+    "dcase2025_task1_passt_32k_1s_zero_pad_to_10s": (1, 128, 1000),
+    "dcase2025_task1_passt_32k_1s_repeat_to_10s": (1, 128, 1000),
+    "ced_tiny_16k_logmel64": (1001, 64),
+    "ced_mini_16k_logmel64": (1001, 64),
+    "ced_small_16k_logmel64": (1001, 64),
+    "ced_base_16k_logmel64": (1001, 64),
+    "dcase2025_task1_ced_16k_1s": (101, 64),
     "panns_cnn14_32k_10s_logmel64": (1001, 64),
     "panns_cnn14_16k_10s_logmel64": (1001, 64),
     "ast_audioset_16k_10s_fbank128": (1024, 128),
@@ -133,6 +133,22 @@ def test_layout_and_label_transform_match_contract(name):
         assert preset.layout == "bt"
 
 
+def test_golden_family_presets_report_frontend_golden_status():
+    golden_prefixes = (
+        "ast_",
+        "efficientat_",
+        "dymn_",
+        "dcase2025_task1_efficientat_",
+        "dcase2025_task1_dymn_",
+        "passt_",
+        "dcase2025_task1_passt_",
+        "ced_",
+        "dcase2025_task1_ced_",
+        "panns_",
+    )
+    for name in EXPECTED_HASHES:
+        if name.startswith(golden_prefixes):
+            assert _preset(name).metadata["compatibility_status"] == "frontend_golden"
 def test_efficientat_preset_fields():
     preset = _preset("efficientat_32k_10s_logmel128")
 
@@ -146,10 +162,10 @@ def test_efficientat_preset_fields():
     assert preset.frontend.mel.n_mels == 128
     assert preset.frontend.mel.f_max == 15000.0
     assert preset.frontend.mel.mel_scale == "htk"
-    assert preset.frontend.mel.filterbank_impl == "kaldi_compatible"
+    assert preset.frontend.mel.filterbank_impl == "efficientat_kaldi"
     assert preset.frontend.norm.kind == "affine"
-    assert preset.frontend.norm.mean == (-4.5,)
-    assert preset.frontend.norm.std == (5.0,)
+    assert preset.frontend.norm.scale == 0.2
+    assert preset.frontend.norm.bias == 0.9
 
 
 def test_dymn_preset_aliases_efficientat_frontend():
@@ -166,8 +182,9 @@ def test_passt_preset_win_length_800_not_1024():
     assert preset.frontend.stft.n_fft == 1024
     assert preset.frontend.stft.win_length == 800
     assert preset.frontend.stft.hop_length == 320
-    assert preset.frontend.mel.mel_scale == "slaney"
-    assert preset.frontend.mel.mel_norm == "slaney"
+    assert preset.frontend.mel.mel_scale == "htk"
+    assert preset.frontend.mel.mel_norm == "none"
+    assert preset.frontend.mel.filterbank_impl == "efficientat_kaldi"
     assert preset.metadata["patch_grid"]["input_tdim"] == 998
 
 
@@ -197,8 +214,8 @@ def test_passt_assembled_pipeline_applies_patchout_after_frontend():
     first = late_augment(batch, seed=[13, 5])
     second = late_augment(batch, seed=[13, 5])
 
-    assert batch[FEATURES].shape == (1, 1, 128, 101)
-    assert first[FEATURES].shape == (1, 1, 124, 61)
+    assert batch[FEATURES].shape == (1, 1, 128, 100)
+    assert first[FEATURES].shape == (1, 1, 124, 60)
     np.testing.assert_array_equal(first[FEATURES], second[FEATURES])
 
     preprocess, augment, late_augment, postprocess = pipeline.build(is_training=False)
@@ -221,7 +238,7 @@ def test_ced_preset_uses_16k_64mel():
     ):
         preset = _preset(name)
         assert preset.target_sample_rate == 16000
-        assert preset.frontend.name == "kaldi_fbank"
+        assert preset.frontend.name == "logmel"
         assert preset.frontend.mel.n_mels == 64
         assert preset.layout == "btf"
 

@@ -11,3 +11,7 @@ The generated `.npz` files are intentionally small and contain:
   `(x - mean) / (std * 2)` normalization, with shape `[time, 128]`
 
 These fixtures are optional and used only by `pytest -m golden`.
+
+The oracle follows the BSD-3-Clause AST repository at revision
+`4e64dfe4a7833a11b14d3d7c11d72dcbcecc1556`. The fixtures certify frontend
+features only; checkpoint logits remain Declared.

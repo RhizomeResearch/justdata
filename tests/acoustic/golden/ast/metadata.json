@@ -1,4 +1,11 @@
 {
+  "certification": "frontend_golden",
+  "family": "ast",
+  "layout": "time,frequency",
+  "logits": {
+    "certification": "declared",
+    "reason": "No checkpoint-derived output is redistributed"
+  },
   "recipes": {
     "ast_audioset_eval.npz": {
       "mean": -4.2677393,
@@ -18,6 +25,18 @@
       "std": 5.5654526,
       "target_length": 128
     }
+  },
+  "schema_version": 1,
+  "source": {
+    "license": "BSD-3-Clause",
+    "path": "src/dataloader.py:torchaudio.compliance.kaldi.fbank",
+    "repository": "https://github.com/YuanGongND/ast",
+    "revision": "4e64dfe4a7833a11b14d3d7c11d72dcbcecc1556"
+  },
+  "tolerance": {
+    "atol": 0.0005,
+    "rationale": "TensorFlow and Torch Kaldi fbank kernel drift",
+    "rtol": 0.0005
   },
   "torch": "2.10.0+cu128",
   "torchaudio": "2.10.0+cu128"

@@ -32,6 +32,7 @@ acoustic = [
 ]
 golden = [
     "torchaudio==2.10.0",
+    "torchlibrosa==0.1.0",
 ]
 dev = [
     "datasets[audio]>=4.5.0",

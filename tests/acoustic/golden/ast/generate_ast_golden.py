@@ -69,9 +69,28 @@ def _reference_features(
 
 def main() -> None:
     metadata = {
+        "schema_version": 1,
+        "family": "ast",
+        "certification": "frontend_golden",
+        "source": {
+            "repository": "https://github.com/YuanGongND/ast",
+            "revision": "4e64dfe4a7833a11b14d3d7c11d72dcbcecc1556",
+            "path": "src/dataloader.py:torchaudio.compliance.kaldi.fbank",
+            "license": "BSD-3-Clause",
+        },
         "torch": torch.__version__,
         "torchaudio": torchaudio.__version__,
         "recipes": RECIPES,
+        "layout": "time,frequency",
+        "tolerance": {
+            "rtol": 0.0005,
+            "atol": 0.0005,
+            "rationale": "TensorFlow and Torch Kaldi fbank kernel drift",
+        },
+        "logits": {
+            "certification": "declared",
+            "reason": "No checkpoint-derived output is redistributed",
+        },
     }
     for filename, recipe in RECIPES.items():
         source = _synthetic_waveform(recipe["samples"])

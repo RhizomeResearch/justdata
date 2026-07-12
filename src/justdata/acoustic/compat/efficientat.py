@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import tensorflow as tf
+
 from justdata.acoustic.configs import (
     AudioPreprocessConfig,
     AudioPreset,
@@ -11,6 +13,11 @@ from justdata.acoustic.configs import (
     STFTConfig,
     SegmentStrategyConfig,
 )
+from justdata.acoustic.frontends.log import compress_log
+from justdata.acoustic.frontends.mel import mel_weight_matrix
+from justdata.acoustic.frontends.stft import stft_power_spectrogram
+from justdata.acoustic.normalization import apply_feature_normalization
+from justdata.acoustic.registry import register_audio_frontend
 
 
 DCASE_CLASSES = (
@@ -29,13 +36,14 @@ DCASE_CLASSES = (
 
 def efficientat_frontend() -> FrontendConfig:
     return FrontendConfig(
-        name="logmel",
+        name="efficientat_logmel",
         stft=STFTConfig(
             sample_rate=32000,
             n_fft=1024,
             win_length=800,
             hop_length=320,
             window="hann",
+            window_periodic=False,
             center=True,
             power=2.0,
             normalized=False,
@@ -46,11 +54,29 @@ def efficientat_frontend() -> FrontendConfig:
             f_max=15000.0,
             mel_scale="htk",
             mel_norm="none",
-            filterbank_impl="kaldi_compatible",
+            filterbank_impl="efficientat_kaldi",
         ),
         log=LogCompressionConfig(kind="log", log_offset=1e-5),
-        norm=FeatureNormConfig(kind="affine", mean=(-4.5,), std=(5.0,), axes=()),
+        norm=FeatureNormConfig(kind="affine", scale=0.2, bias=0.9),
     )
+
+
+@register_audio_frontend("efficientat_logmel")
+def efficientat_logmel(
+    audio: tf.Tensor, config: FrontendConfig | dict
+) -> tf.Tensor:
+    config = FrontendConfig.from_dict(config)
+    if config.stft is None or config.mel is None:
+        raise ValueError("EfficientAT frontend requires STFT and mel configs")
+    spectrogram = stft_power_spectrogram(
+        audio,
+        config.stft,
+        preemphasis=0.97,
+        frame_length=config.stft.n_fft,
+    )
+    mel = tf.einsum("tfc,fm->tmc", spectrogram, mel_weight_matrix(config))
+    features = compress_log(mel, config.log)
+    return apply_feature_normalization(features, config.norm)
 
 
 def _preprocess() -> AudioPreprocessConfig:
@@ -63,10 +89,10 @@ def _preprocess() -> AudioPreprocessConfig:
 
 def _metadata(model_family: str, *, source_duration: float | None = None) -> dict:
     metadata = {
-        "preset_version": 1,
+        "preset_version": 2,
         "model_family": model_family,
         "frontend_contract": "efficientat-logmel-v1",
-        "compatibility_status": "frontend_declared_golden_pending",
+        "compatibility_status": "frontend_golden",
     }
     if source_duration is not None:
         metadata["source_duration"] = source_duration
@@ -102,6 +128,7 @@ def _preset(
         segment=segment,
         frontend=efficientat_frontend(),
         layout="bcft",
+        static_shape=(1, 128, round(input_duration * 100)),
         label_transform=label_transform,
         metadata=metadata or _metadata(model_family),
     )
@@ -214,4 +241,5 @@ __all__ = [
     "dymn_32k_10s_logmel128",
     "efficientat_32k_10s_logmel128",
     "efficientat_frontend",
+    "efficientat_logmel",
 ]

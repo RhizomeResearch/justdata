@@ -1,0 +1,31 @@
+{
+  "certification": "frontend_golden",
+  "dependencies": {
+    "torch": "2.10.0+cu128",
+    "torchaudio": "2.10.0+cu128"
+  },
+  "family": "passt",
+  "fixture": {
+    "features_layout": "frequency,time",
+    "features_sha256": "ebe823aa03bbe1d936a1fc63024709c14cfd35f4cd506cfe005d6e38873b647d",
+    "file": "passt_32k_1s.npz",
+    "patchout": false,
+    "waveform": "../corpus.npz:waveform_32000"
+  },
+  "logits": {
+    "certification": "declared",
+    "reason": "No licensed compact checkpoint-derived oracle is redistributed"
+  },
+  "schema_version": 1,
+  "source": {
+    "license": "Apache-2.0",
+    "path": "models/preprocess.py:AugmentMelSTFT",
+    "repository": "https://github.com/kkoutini/PaSST",
+    "revision": "2a5c818afcc2a215b2a1aaf1ed8be71f89d43201"
+  },
+  "tolerance": {
+    "atol": 0.003,
+    "rationale": "TensorFlow and Torch FFT kernel drift",
+    "rtol": 0.003
+  }
+}

@@ -39,7 +39,7 @@ def panns_frontend(
             mel_norm="slaney",
             filterbank_impl="librosa",
         ),
-        log=LogCompressionConfig(kind="log"),
+        log=LogCompressionConfig(kind="db"),
     )
 
 
@@ -69,11 +69,11 @@ def _preset(
         layout="btf",
         label_transform=LabelTransformConfig(mode="multi_hot", num_classes=527),
         metadata={
-            "preset_version": 1,
+            "preset_version": 2,
             "model_family": "panns",
             "model_name": "cnn14",
             "frontend_contract": "panns-cnn14-logmel-v1",
-            "compatibility_status": "reference_frontend_declared_golden_pending",
+            "compatibility_status": "frontend_golden",
         },
     )
 

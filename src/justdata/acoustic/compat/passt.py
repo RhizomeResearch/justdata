@@ -4,6 +4,7 @@ from justdata.acoustic.compat.efficientat import DCASE_CLASSES
 from justdata.acoustic.configs import (
     AudioPreprocessConfig,
     AudioPreset,
+    FeatureNormConfig,
     FrontendConfig,
     LabelTransformConfig,
     LogCompressionConfig,
@@ -29,12 +30,13 @@ PATCHOUT = {
 
 def passt_frontend() -> FrontendConfig:
     return FrontendConfig(
-        name="logmel",
+        name="efficientat_logmel",
         stft=STFTConfig(
             sample_rate=32000,
             n_fft=1024,
             win_length=800,
             hop_length=320,
+            window_periodic=False,
             center=True,
             power=2.0,
         ),
@@ -42,11 +44,12 @@ def passt_frontend() -> FrontendConfig:
             n_mels=128,
             f_min=0.0,
             f_max=15000.0,
-            mel_scale="slaney",
-            mel_norm="slaney",
-            filterbank_impl="torchaudio_or_kaldi_compatible",
+            mel_scale="htk",
+            mel_norm="none",
+            filterbank_impl="efficientat_kaldi",
         ),
-        log=LogCompressionConfig(kind="log"),
+        log=LogCompressionConfig(kind="log", log_offset=1e-5),
+        norm=FeatureNormConfig(kind="affine", scale=0.2, bias=0.9),
     )
 
 
@@ -60,10 +63,10 @@ def _preprocess() -> AudioPreprocessConfig:
 
 def _metadata(*, source_duration: float | None = None) -> dict:
     metadata = {
-        "preset_version": 1,
+        "preset_version": 2,
         "model_family": "passt",
         "frontend_contract": "passt-logmel-v1",
-        "compatibility_status": "frontend_declared_golden_pending",
+        "compatibility_status": "frontend_golden",
         "patch_grid": PATCH_GRID,
     }
     if source_duration is not None:
@@ -100,6 +103,7 @@ def _preset(
         segment=segment,
         frontend=passt_frontend(),
         layout="bcft",
+        static_shape=(1, 128, round(input_duration * 100)),
         label_transform=label_transform,
         train_augment=train_augment or {},
         metadata=metadata or _metadata(),

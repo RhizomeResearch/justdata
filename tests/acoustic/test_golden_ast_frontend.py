@@ -35,9 +35,6 @@ def test_ast_eval_frontend_matches_torchaudio_ast_fixture(
     std,
 ):
     fixture_path = GOLDEN_DIR / fixture_name
-    if not fixture_path.exists():
-        pytest.skip(f"AST golden fixture is not checked in: {fixture_path}")
-
     fixture = np.load(fixture_path)
     waveform = tf.constant(fixture["waveform"], dtype=tf.float32)
     expected = fixture["features"]
@@ -63,9 +60,6 @@ def test_ast_eval_frontend_matches_torchaudio_ast_fixture(
 )
 def test_ast_eval_pipeline_matches_torchaudio_ast_fixture(preset, fixture_name):
     fixture_path = GOLDEN_DIR / fixture_name
-    if not fixture_path.exists():
-        pytest.skip(f"AST golden fixture is not checked in: {fixture_path}")
-
     fixture = np.load(fixture_path)
     pipeline = get_pipeline(
         dataset="audioset",

@@ -15,14 +15,14 @@ from justdata.acoustic.configs import (
 
 def ced_frontend() -> FrontendConfig:
     return FrontendConfig(
-        name="kaldi_fbank",
+        name="logmel",
         stft=STFTConfig(
             sample_rate=16000,
-            n_fft=400,
-            win_length=400,
+            n_fft=512,
+            win_length=512,
             hop_length=160,
-            window="povey",
-            center=False,
+            window="hann",
+            center=True,
             power=2.0,
         ),
         mel=MelConfig(
@@ -31,9 +31,9 @@ def ced_frontend() -> FrontendConfig:
             f_max=8000.0,
             mel_scale="htk",
             mel_norm="none",
-            filterbank_impl="kaldi_compatible",
+            filterbank_impl="torchaudio",
         ),
-        log=LogCompressionConfig(kind="log"),
+        log=LogCompressionConfig(kind="db", top_db=120.0),
     )
 
 
@@ -47,11 +47,11 @@ def _preprocess() -> AudioPreprocessConfig:
 
 def _metadata(model_size: str, *, source_duration: float | None = None) -> dict:
     metadata = {
-        "preset_version": 1,
+        "preset_version": 2,
         "model_family": "ced",
         "model_size": model_size,
-        "frontend_contract": "ced-kaldi-fbank-v1",
-        "compatibility_status": "frontend_declared_golden_pending",
+        "frontend_contract": "ced-hf-melspectrogram-v2",
+        "compatibility_status": "frontend_golden",
     }
     if source_duration is not None:
         metadata["source_duration"] = source_duration

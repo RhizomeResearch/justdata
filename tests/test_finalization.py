@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 import tensorflow as tf
 
-from justdata.acoustic.metadata import MetadataSidecar
 from justdata.core.finalization import finalize_dataset
+from justdata.core.metadata import MetadataSidecar
 
 
 def _dataset() -> tf.data.Dataset:
@@ -129,3 +129,51 @@ def test_finalize_dataset_model_input_cache_reuses_postprocessing(tmp_path):
     list(ds)
     list(ds)
     assert calls.call_count == 3
+
+
+def test_sidecar_joins_survive_shuffle_model_cache_and_reiteration(tmp_path):
+    sidecar_path = tmp_path / "metadata.jsonl"
+    ds, _n = finalize_dataset(
+        _dataset(),
+        postprocess_fn=_identity,
+        num_classes=None,
+        batch_size=2,
+        metadata_mode="numeric_only",
+        sidecar_metadata_path=str(sidecar_path),
+        cache_model_inputs=True,
+        model_input_cache_path=str(tmp_path / "model-inputs"),
+        is_training=True,
+        shuffle_buffer=3,
+        shuffle_seed=7,
+        deterministic=True,
+        prefetch=False,
+    )
+
+    first_ids = [
+        int(example_id)
+        for batch in ds
+        for example_id, keep in zip(
+            batch["metadata"]["example_id"].numpy(),
+            batch["padding_mask"].numpy(),
+        )
+        if keep
+    ]
+    first_contents = sidecar_path.read_bytes()
+    second_ids = [
+        int(example_id)
+        for batch in ds
+        for example_id, keep in zip(
+            batch["metadata"]["example_id"].numpy(),
+            batch["padding_mask"].numpy(),
+        )
+        if keep
+    ]
+    sidecar = MetadataSidecar.read_jsonl(str(sidecar_path))
+
+    assert sorted(first_ids) == sorted(second_ids) == [11, 12, 13]
+    assert sidecar_path.read_bytes() == first_contents
+    assert sidecar.records == {
+        11: {"source": "a"},
+        12: {"source": "b"},
+        13: {"source": "c"},
+    }

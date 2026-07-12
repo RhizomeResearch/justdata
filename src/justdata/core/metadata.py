@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
@@ -85,7 +86,17 @@ def _identity_structure(value):
     return tf.identity(value)
 
 
-def _stable_int64_hash(value: Any) -> int:
+def json_value(value: Any) -> Any:
+    value = python_value(value)
+    if isinstance(value, Mapping):
+        return {str(key): json_value(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_value(child) for child in value]
+    return value
+
+
+def stable_int64_hash(value: Any) -> int:
+    """Return a process-stable non-negative int64 hash for metadata ids."""
     value = python_value(value)
     if value is None:
         value = ""
@@ -102,18 +113,64 @@ def _assign_nested(target: dict, path: tuple[str, ...], value: Any) -> None:
 
 def _sidecar_example_id(values_by_path: dict[tuple[str, ...], Any]) -> int:
     by_name = {path[-1]: value for path, value in values_by_path.items()}
-    if {"dataset", "split", "clip_id"}.issubset(by_name):
-        return _stable_int64_hash(
-            f"{python_value(by_name['dataset'])}::"
-            f"{python_value(by_name['split'])}::"
-            f"{python_value(by_name['clip_id'])}"
+    composite_values = [
+        python_value(by_name.get(key)) for key in ("dataset", "split", "clip_id")
+    ]
+    if all(value is not None for value in composite_values):
+        return stable_int64_hash(
+            f"{composite_values[0]}::{composite_values[1]}::{composite_values[2]}"
         )
 
-    example_id = by_name.get("example_id")
-    value = python_value(example_id)
-    if isinstance(value, int):
+    value = python_value(by_name.get("example_id"))
+    if isinstance(value, int) and not isinstance(value, bool):
         return value
-    return _stable_int64_hash(value)
+    if isinstance(value, str):
+        return stable_int64_hash(value)
+    raise ValueError(
+        "Sidecar metadata requires either non-null 'dataset', 'split', and "
+        "'clip_id' fields or an integer/string 'example_id'."
+    )
+
+
+class MetadataSidecar:
+    def __init__(self) -> None:
+        self.records: dict[int, dict] = {}
+
+    def add(self, example_id: int, metadata: dict) -> None:
+        example_id = int(example_id)
+        metadata = json_value(metadata)
+        existing = self.records.get(example_id)
+        if existing is not None and existing != metadata:
+            raise ValueError(f"Conflicting metadata for sidecar ID {example_id}.")
+        self.records[example_id] = metadata
+
+    def write_jsonl(self, path: str) -> None:
+        output = Path(path)
+        if output.parent != Path("."):
+            output.parent.mkdir(parents=True, exist_ok=True)
+        with output.open("w", encoding="utf-8") as handle:
+            for example_id in sorted(self.records):
+                handle.write(
+                    json.dumps(
+                        {
+                            "example_id": example_id,
+                            "metadata": self.records[example_id],
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n"
+                )
+
+    @classmethod
+    def read_jsonl(cls, path: str) -> "MetadataSidecar":
+        sidecar = cls()
+        with Path(path).open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                sidecar.add(record["example_id"], record.get("metadata", {}))
+        return sidecar
 
 
 def attach_sidecar_writer(ds: tf.data.Dataset, path: str) -> tf.data.Dataset:
@@ -122,6 +179,7 @@ def attach_sidecar_writer(ds: tf.data.Dataset, path: str) -> tf.data.Dataset:
         output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("", encoding="utf-8")
     lock = threading.Lock()
+    serialized_by_id: dict[int, str] = {}
 
     def add_writer(sample):
         metadata = sample.get("metadata")
@@ -154,13 +212,23 @@ def attach_sidecar_writer(ds: tf.data.Dataset, path: str) -> tf.data.Dataset:
                     values_by_path[leaf_path],
                 )
 
+            example_id = _sidecar_example_id(values_by_path)
             record = {
-                "example_id": _sidecar_example_id(values_by_path),
+                "example_id": example_id,
                 "metadata": string_metadata,
             }
+            serialized = json.dumps(record, sort_keys=True)
             with lock:
+                existing = serialized_by_id.get(example_id)
+                if existing is not None:
+                    if existing == serialized:
+                        return 0
+                    raise ValueError(
+                        f"Conflicting metadata for sidecar ID {example_id}."
+                    )
                 with output.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps(record, sort_keys=True) + "\n")
+                    handle.write(serialized + "\n")
+                serialized_by_id[example_id] = serialized
             return 0
 
         marker = tf.py_function(write_record, all_values, Tout=tf.int64)
@@ -174,6 +242,9 @@ __all__ = [
     "apply_metadata_mode",
     "attach_sidecar_writer",
     "get_metadata_value",
+    "json_value",
+    "MetadataSidecar",
     "numeric_metadata",
     "python_value",
+    "stable_int64_hash",
 ]

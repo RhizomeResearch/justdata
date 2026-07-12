@@ -1,46 +1,14 @@
 from __future__ import annotations
 
-import hashlib
-import json
-from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 import tensorflow as tf
 
-
-_INT64_MASK = (1 << 63) - 1
-
-
-def _python_value(value: Any) -> Any:
-    if isinstance(value, tf.Tensor):
-        value = value.numpy()
-    if isinstance(value, bytes):
-        return value.decode("utf-8")
-    if hasattr(value, "tolist"):
-        return _python_value(value.tolist())
-    if isinstance(value, (list, tuple)):
-        return [_python_value(child) for child in value]
-    if hasattr(value, "item"):
-        return value.item()
-    return value
-
-
-def _json_value(value: Any) -> Any:
-    value = _python_value(value)
-    if isinstance(value, Mapping):
-        return {str(k): _json_value(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_value(v) for v in value]
-    return value
-
-
-def stable_int64_hash(value: Any) -> int:
-    """Return a process-stable non-negative int64 hash for metadata ids."""
-    value = _python_value(value)
-    if value is None:
-        value = ""
-    digest = hashlib.sha256(str(value).encode("utf-8")).digest()
-    return int.from_bytes(digest[:8], "big", signed=False) & _INT64_MASK
+from justdata.core.metadata import (
+    MetadataSidecar,
+    python_value as _python_value,
+    stable_int64_hash,
+)
 
 
 class MetadataEncoder:
@@ -175,42 +143,6 @@ class MetadataEncoder:
         if isinstance(_python_value(value), int):
             return int(_python_value(value))
         return stable_int64_hash(value)
-
-
-class MetadataSidecar:
-    def __init__(self) -> None:
-        self.records: dict[int, dict] = {}
-
-    def add(self, example_id: int, metadata: dict) -> None:
-        self.records[int(example_id)] = _json_value(metadata)
-
-    def write_jsonl(self, path: str) -> None:
-        output = Path(path)
-        if output.parent != Path("."):
-            output.parent.mkdir(parents=True, exist_ok=True)
-        with output.open("w", encoding="utf-8") as handle:
-            for example_id in sorted(self.records):
-                handle.write(
-                    json.dumps(
-                        {
-                            "example_id": example_id,
-                            "metadata": self.records[example_id],
-                        },
-                        sort_keys=True,
-                    )
-                    + "\n"
-                )
-
-    @classmethod
-    def read_jsonl(cls, path: str) -> "MetadataSidecar":
-        sidecar = cls()
-        with Path(path).open("r", encoding="utf-8") as handle:
-            for line in handle:
-                if not line.strip():
-                    continue
-                record = json.loads(line)
-                sidecar.add(record["example_id"], record.get("metadata", {}))
-        return sidecar
 
 
 __all__ = [

@@ -3,9 +3,14 @@ from justdata.acoustic.metadata import (
     MetadataSidecar,
     stable_int64_hash,
 )
+from justdata.core.metadata import MetadataSidecar as CoreMetadataSidecar
+from justdata.core.metadata import stable_int64_hash as core_stable_int64_hash
 
 
 def test_metadata_encoder_stable_hash():
+    assert stable_int64_hash is core_stable_int64_hash
+    assert stable_int64_hash("example-a") == 5862446126654077062
+    assert stable_int64_hash("dataset::train::clip-a") == 1147561614405543418
     assert stable_int64_hash("dataset::train::clip-a") == stable_int64_hash(
         "dataset::train::clip-a"
     )
@@ -60,6 +65,7 @@ def test_metadata_encoder_vocab_roundtrip():
 
 
 def test_sidecar_writes_strings_by_example_id(tmp_path):
+    assert MetadataSidecar is CoreMetadataSidecar
     path = tmp_path / "metadata.jsonl"
     sidecar = MetadataSidecar()
     sidecar.add(7, {"clip_id": "clip-a", "nested": {"city": "Paris"}})

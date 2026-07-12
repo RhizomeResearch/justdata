@@ -204,6 +204,11 @@ stable.
 Use `metadata_mode="numeric_only"` with `as_numpy=True` for JAX-friendly arrays.
 If string metadata is needed for later joins, pass
 `sidecar_metadata_path="metadata.jsonl"` and keep batches numeric.
+Sidecar records require either an integer/string `example_id` or the composite
+`dataset`, `split`, and `clip_id` fields. Repeated dataset iterations do not add
+duplicate records; a reused ID with different string metadata raises an error.
+The file is populated as samples are consumed, so partial dataset consumption
+can produce a partial sidecar.
 
 ## 9. Golden compatibility tests
 

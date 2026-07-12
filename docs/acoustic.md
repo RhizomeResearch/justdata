@@ -238,6 +238,11 @@ When string metadata is needed for later joins, pass
 `sidecar_metadata_path="metadata.jsonl"` with `metadata_mode="numeric_only"`.
 The loader writes string leaves keyed by stable example id while batches remain
 NumPy/JAX friendly.
+Sidecar identity must come from an integer/string `example_id` or the composite
+`dataset`, `split`, and `clip_id` fields. Repeated dataset iterations do not add
+duplicate records; a reused ID with different string metadata raises an error.
+The file is populated as samples are consumed, so partial dataset consumption
+can produce a partial sidecar.
 
 ## 8. Golden compatibility tests
 

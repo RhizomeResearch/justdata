@@ -6,7 +6,12 @@ from justdata.core.filters import (
 )
 from justdata.core.finalization import finalize_dataset
 from justdata.core.loader import fetch_ds, load_ds
-from justdata.core.metadata import apply_metadata_mode, numeric_metadata
+from justdata.core.metadata import (
+    MetadataSidecar,
+    apply_metadata_mode,
+    numeric_metadata,
+    stable_int64_hash,
+)
 from justdata.core.presets import (
     ResolvedPreset,
     get_resolved_preset,
@@ -36,6 +41,7 @@ from justdata.core.stats import compute_feature_stats, make_stats_iterator
 __all__ = [
     "DataPipeline",
     "DatasetInfo",
+    "MetadataSidecar",
     "ResolvedPreset",
     "apply_metadata_mode",
     "compute_feature_stats",
@@ -64,4 +70,5 @@ __all__ = [
     "register_pipeline",
     "register_preset",
     "register_source_loader",
+    "stable_int64_hash",
 ]

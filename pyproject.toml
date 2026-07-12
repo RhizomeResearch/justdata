@@ -1,6 +1,6 @@
 [project]
 name = "justdata"
-version = "0.1.0"
+version = "1.0.0"
 description = "A TensorFlow-native data pipeline library with a modality-neutral core and first-class computer vision and acoustic recipes"
 readme = "README.md"
 authors = [

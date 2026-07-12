@@ -171,7 +171,7 @@ $$v' = v \cdot s, \quad s \sim \mathcal{U}\{-1, +1\}$$
 
 This sign randomization is sampled independently per operation per sample, using a stateless seed derived from the layer's random state.
 
-**Geometric fill.** When pixels are shifted outside the image boundary by `Rotate`, `ShearX`, `ShearY`, `TranslateX`, or `TranslateY`, the vacated regions are filled with a constant value (default: 128). The interpolation mode defaults to nearest-neighbor for exact integer arithmetic; this may be overridden to bilinear to match the `torchvision` ImageNet presets.
+**Geometric fill.** When pixels are shifted outside the image boundary by `Rotate`, `ShearX`, `ShearY`, `TranslateX`, or `TranslateY`, the vacated regions are filled with a constant value (default: 128). Geometric operations use the implementation's fixed nearest-neighbor interpolation for images.
 
 For segmentation pipelines, these geometric operations reuse the same sampled
 parameters for the image and segmentation map. The image uses bilinear
@@ -303,7 +303,7 @@ Wide bounds summary:
 
 ### 6. Non-RA Operations
 
-The following operations exist in `NAME_TO_FUNC` and can be invoked via direct calls to `rand_augment` but are **excluded from the default 14-op RA pool** and therefore not reachable through any of the three automatic augmentation strategies:
+The following internal primitives exist in the implementation but are **excluded from the fixed 14-op RA pool** and cannot be selected through RandAugment, TrivialAugment, or TrivialAugmentWide. The public `exclude_ops` parameter can remove operations from the pool; it cannot add these primitives.
 
 | Operation | Notes |
 | :--- | :--- |
@@ -540,6 +540,7 @@ ds, n = load_ds(
     pipeline=pipeline,
     num_classes=10,
     cache_dataset=False,
+    data_dir="/path/to/dcase",
     metadata_mode="numeric_only",
     as_numpy=True,
 )
@@ -561,7 +562,11 @@ ______________________________________________________________________
 
 ## Dataset Adapters
 
-Adapters map raw dataset schemas to the canonical schema expected by all pipeline stages (`image`, `label`, and optionally `mask`, `depth`). The identity adapter is applied by default when no specific adapter is registered for a dataset.
+Core adapters normalize raw records into the modality-specific schema expected by a selected pipeline. `justdata.core` itself is schema-neutral, and the identity adapter is applied when no dataset-specific adapter is registered.
+
+### Vision adapter
+
+Vision pipelines expect `image`, optional `label`, and task-specific fields such as `mask`.
 
 ```python
 from justdata.core.adapters import register_adapter
@@ -569,6 +574,24 @@ from justdata.core.adapters import register_adapter
 @register_adapter("my_dataset")
 def my_adapter(sample):
     return {"image": sample["img"], "label": sample["class_id"]}
+```
+
+### Acoustic adapter
+
+Acoustic pipelines expect `waveform`, `sample_rate`, and an optional `label`.
+
+```python
+from justdata.core.adapters import register_adapter
+
+@register_adapter("my_audio_dataset")
+def my_audio_adapter(sample):
+    result = {
+        "waveform": sample["audio"],
+        "sample_rate": sample["sampling_rate"],
+    }
+    if "target" in sample:
+        result["label"] = sample["target"]
+    return result
 ```
 
 ______________________________________________________________________
@@ -779,8 +802,11 @@ This project uses [devenv](https://devenv.sh/) (Nix-based) with `uv` for Python 
 
 ```bash
 devenv shell        # enter the development environment
+direnv allow        # approve automatic devenv activation once
 uv sync             # install/update dependencies
 uv run pytest       # run all tests
+uv run ruff check . # run lint checks
+uv run ruff format --check .  # check formatting
 uv run pytest tests/path/to/test_file.py::test_name  # run a single test
 ```
 

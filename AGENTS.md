@@ -1,163 +1,144 @@
 # AGENTS.md
 
-Project-specific guidance for Codex when working in this repository.
+Repository-specific guidance for agents working on `justdata`. This file applies
+to the entire repository. Add a nested `AGENTS.md` only when a subtree needs
+rules that do not apply elsewhere.
 
-## Development Environment
+## Start Here
 
-This project uses [devenv](https://devenv.sh/) with `uv` for Python dependency management. A `.envrc` file enables automatic environment activation via `direnv`.
+- Read the relevant implementation and tests before changing behavior.
+- Use `README.md` for the public API and the files under `docs/` for modality
+  contracts. Treat code and tests as the source of truth when documentation has
+  drifted.
+- Keep changes within the requested scope. Preserve current behavior unless the
+  task explicitly changes a contract.
+
+## Repository Map
+
+`justdata` is a TensorFlow-native data pipeline library using a `src/` layout:
+
+- `src/justdata/core/`: modality-neutral loading, registries, presets, metadata,
+  batching, padding, caching, and seeded execution.
+- `src/justdata/vision/`: vision schemas, transforms, augmentations,
+  corruptions, sources, presets, and task pipelines.
+- `src/justdata/acoustic/`: acoustic schemas, decoding, resampling, frontends,
+  augmentations, corruptions, DCASE helpers, presets, and task pipelines.
+- `src/justdata/audio/`: compatibility alias for `justdata.acoustic`; preserve
+  its module identity and public behavior.
+- `tests/`: core and vision tests; `tests/acoustic/` contains acoustic and
+  optional golden-compatibility tests.
+- `examples/vision/` and `examples/acoustic/`: runnable, modality-specific
+  examples.
+
+Documentation routes:
+
+- `docs/vision.md`: vision stages, schemas, presets, metadata, and parity.
+- `docs/acoustic.md`: acoustic schema, stages, frontends, metadata, and parity.
+- `docs/dcase2025.md`: DCASE Task 1 sources, targets, and split safety.
+- `docs/presets.md`: preset selection, serialization, and hash contracts.
+- `docs/golden_tests.md`: optional external-reference compatibility workflow.
+
+## Environment And Commands
+
+The development environment pins Python 3.12 through devenv; the published
+package supports Python 3.11-3.13. The tracked `.envrc` activates devenv after a
+one-time approval.
 
 ```bash
-devenv shell        # enter the dev environment
-uv sync             # install/update dependencies
-uv lock             # update uv.lock after dependency changes
-uv run pytest       # run all tests
-uv run pytest tests/path/to/test_file.py::test_name  # run a single test
-devenv test         # run tests as CI does (same as uv run pytest)
+direnv allow                         # approve automatic activation once
+devenv shell                         # enter the environment manually
+uv sync                              # install/update development dependencies
+uv run pytest                        # default suite (excludes golden tests)
+uv run pytest tests/path.py::test    # focused test
+uv run ruff check .                  # lint
+uv run ruff format --check .         # formatting check
+devenv test                          # CI-equivalent default pytest entry point
 ```
 
-The project targets Python 3.12 (see `.python-version`). `LD_LIBRARY_PATH` is configured by devenv for native libraries. No linter or formatter is configured.
+Run commands from the repository root. If the shell is not already activated,
+use `devenv shell -- <command>`.
 
-## Architecture
+## Architectural Invariants
 
-`justdata` is a TensorFlow-native data pipeline library split by modality:
+### Imports And Registration
 
-- `justdata.core`: modality-neutral loading, adapters, source loaders, presets, dataset metadata, pipeline resolution, batching, padding, caching, and seeded execution.
-- `justdata.vision`: computer vision schemas, transforms, stages, augmentations, corruptions, encodings, task pipelines, presets, Mini-C helpers, and Hugging Face vision source loading.
-- `justdata.acoustic`: audio schemas, decoding, resampling, channel handling, segmentation, frontends, augmentations, corruptions, DCASE helpers, stats, presets, metadata/JAX helpers, and task pipelines.
+- Import `justdata.vision` before resolving built-in vision datasets or
+  pipelines; the import performs required registrations.
+- Use explicit namespaces. Do not restore removed flat modules such as
+  `justdata.loader`, `justdata.registry`, `justdata.presets`, `justdata.tasks`,
+  `justdata.augmentations`, or `justdata.transforms`.
+- Generic APIs belong under `justdata.core.*`; modality-specific APIs belong
+  under `justdata.vision.*` or `justdata.acoustic.*`.
+- Hugging Face vision sources use the `hf:` prefix and must expose `image` and
+  `label` columns.
+- Registry mutation must remain thread-safe and duplicate registration must
+  fail with a descriptive error.
 
-Top-level `justdata` intentionally does not re-export old flat-module APIs. Use explicit namespace imports.
+### Pipeline Contract
 
-## Import Rules
-
-Import `justdata.vision` before resolving built-in vision datasets or pipelines. The import registers vision datasets, presets, source loaders, augmentation strategies, corruptions, and pipelines.
-
-```python
-import justdata.vision
-from justdata.core import get_pipeline, load_ds
-
-pipeline = get_pipeline(dataset="cifar10")
-ds, n = load_ds(..., pipeline=pipeline)
-```
-
-Do not reintroduce compatibility wrappers for removed paths such as:
-
-- `justdata.loader`
-- `justdata.registry`
-- `justdata.presets`
-- `justdata.tasks`
-- `justdata.augmentations`
-- `justdata.transforms`
-
-Vision-specific imports belong under `justdata.vision.*`; generic imports belong under `justdata.core.*`.
-
-## Data Flow
-
-Core execution order:
+Core execution order is:
 
 ```text
 fetch_ds -> adapter -> preprocess -> cache -> augment -> shuffle -> postprocess -> batch -> late_augment -> pad -> prefetch
 ```
 
-The four pipeline callables are:
+The pipeline tuple is `(preprocess_fn, augment_fn, late_augment_fn,
+postprocess_fn)`: preprocess normalizes before caching, augment is per-sample and
+training-only, postprocess is deterministic before batching, and late augment is
+batch-level and training-only.
 
-```python
-(preprocess_fn, augment_fn, late_augment_fn, postprocess_fn)
-```
+- Keep `justdata.core` schema-neutral. It must not import `justdata.vision` or
+  assume modality keys such as `image`, `mask`, `label`, `bboxes`, `waveform`,
+  or `features`.
+- Preserve the canonical acoustic schema: `waveform`, `sample_rate`, and
+  optional `label`, `features`, `duration`, and `metadata`.
+- Preserve deterministic evaluation views and stateless seeded stochastic
+  transforms.
 
-- `preprocess`: format/schema normalization before caching.
-- `augment`: per-sample augmentation after cache, training only.
-- `postprocess`: deterministic sample processing before batching.
-- `late_augment`: batch-level augmentation after batching, training only.
+### Presets, Dependencies, And Compatibility
 
-Keep core code schema-neutral. `justdata.core` must not assume keys such as `image`, `mask`, `label`, `bboxes`, `global_crops`, or `local_crops`, and must not import `justdata.vision`.
+- Presets are modality-scoped, serializable, and hashable. Contract changes
+  require corresponding preset-hash and parity test updates.
+- Keep the base dependency set modality-neutral. Put vision-only dependencies
+  in the `vision` extra, audio source dependencies in `acoustic`, WILDS support
+  in `wilds`, and external-reference dependencies in `golden`.
+- Change dependencies in `pyproject.toml`, then regenerate `uv.lock` with
+  `uv lock`; do not hand-edit the lockfile.
+- Maintain vision/acoustic parity for metadata propagation, evaluation views,
+  seeded transforms, corruption datasets, numeric JAX metadata, `padding_mask`,
+  and `as_numpy`.
+- Do not claim checkpoint or logits compatibility from frontend golden tests;
+  follow the certification levels in `docs/golden_tests.md`.
+- Treat remote dataset metadata and archives as untrusted. Do not weaken source
+  URL validation, checksums, download limits, extraction budgets, path/link
+  checks, or atomic cache updates.
 
-## Registries
+## Change And Verification Rules
 
-Core registries:
+- Bug fixes must include a regression test that fails without the fix.
+- New or changed public behavior requires tests and updates to the relevant
+  README, modality document, or runnable example.
+- Prefer focused tests while iterating. Before handoff, run the smallest set
+  that fully covers the changed contract and report any checks not run.
+- For Python changes, run `uv run ruff check .` and
+  `uv run ruff format --check .`.
+- For shared loader, registry, preset, metadata, batching, or padding changes,
+  run `uv run pytest tests/test_cross_modal_parity.py` in addition to focused
+  tests.
+- For broad or cross-cutting changes, run the full `uv run pytest` suite.
+- For dependency, environment, or CI changes, run `uv lock`, the relevant
+  `tests/doctor/` checks, and the full default suite.
+- Golden tests are opt-in. Run the workflow in `docs/golden_tests.md` only when
+  changing certified golden behavior, fixtures, or golden dependencies.
+- Documentation-only changes do not require the Python suite unless they alter
+  documented commands or executable contracts; verify links, paths, and
+  examples against the repository instead.
 
-| Registry | Decorator/API | Lookup |
-|---|---|---|
-| Dataset metadata | `register_dataset(name, task_type, modality=...)` | `get_dataset_info(name)`, `get_task_for_dataset(name)` |
-| Pipelines | `@register_pipeline("modality/task")` | `get_pipeline(...)` |
-| Presets | `register_preset(dataset, config, modality=...)` | `get_dataset_presets(dataset, modality=...)` |
-| Adapters | `@register_adapter(dataset_name)` | `get_adapter(dataset_name)` |
-| Source loaders | `@register_source_loader(prefix)` | `get_source_loader(dataset_name)` |
+Useful focused suites:
 
-Vision registries:
-
-| Registry | Decorator/API | Lookup |
-|---|---|---|
-| Crop strategies | `@register_crop_strategy(name)` | `get_crop_strategy(name)` |
-| Augment strategies | `@register_augment_strategy(name)` | `get_augment_strategy(name)` |
-| Corruptions | `@register_corruption(name)` | `apply_minic_corruption(...)` |
-
-Acoustic registries:
-
-| Registry | Decorator/API | Lookup |
-|---|---|---|
-| Decoders/resamplers/channels/segments/frontends | `@register_audio_*(name)` | `get_audio_*`, `list_audio_*`, `has_audio_*` |
-| Waveform/spectrogram/batch augmentations | `@register_audio_*_augment(name)` | `get_audio_*_augment(...)` |
-| Corruptions | `@register_audio_corruption(name)` | `apply_audio_corruption(...)` |
-
-Registries use locks and should raise descriptive errors on duplicate registration.
-
-## Presets And Dependencies
-
-Presets are modality-scoped in `justdata.core.presets`. Vision convenience wrappers live in `justdata.vision.presets` and register under `modality="vision"`. Acoustic wrappers live in `justdata.acoustic.presets` and register typed `AudioPreset` contracts under `modality="acoustic"`.
-
-The base dependency set should stay as modality-neutral as practical. Vision-only dependencies, such as `datasets[vision]`, belong in the `vision` optional extra and dev dependencies. Audio source dependencies, such as `datasets[audio]`, `soundfile`, `soxr`, and `librosa`, belong in the `acoustic` optional extra and dev dependencies. Golden compatibility dependencies belong in the `golden` optional extra.
-
-## Vision Package
-
-Current vision behavior should remain functionally equivalent unless a task explicitly asks to change behavior.
-
-Important locations:
-
-- `justdata.vision.pipelines`: registers `vision/classification` and `vision/segmentation`.
-- `justdata.vision.sources`: registers the `hf:` Hugging Face vision source loader.
-- `justdata.vision.minic`: owns `create_minic_datasets`.
-- `justdata.vision.tasks`: task-specific pipeline factories.
-- `justdata.vision.augmentations`, `justdata.vision.corruptions`, `justdata.vision.transforms`, `justdata.vision.stages`: image-specific implementation details.
-
-Hugging Face vision datasets are referenced with the `hf:` prefix and must expose `image` and `label` columns.
-
-## Acoustic Package
-
-Current acoustic behavior should remain functionally equivalent unless a task explicitly asks to change behavior.
-
-Important locations:
-
-- `justdata.acoustic.pipelines`: registers `acoustic/default`, `acoustic/classification`, and `acoustic/identity`.
-- `justdata.acoustic.presets`: owns hashable acoustic preset registration and model-family contracts.
-- `justdata.acoustic.frontends`: owns waveform, STFT, mel, log-mel, Kaldi fbank, MFCC, and PCEN frontend implementations.
-- `justdata.acoustic.dcase2025`: owns DCASE Task 1 parsing, split safety, source/target builders, and metrics helpers.
-- `justdata.acoustic.corruptions`: owns audio corruption registration and corruption dataset helpers.
-- `justdata.acoustic.metadata` and `justdata.acoustic.jax`: own numeric metadata and NumPy/JAX-friendly output helpers.
-
-Preserve the canonical acoustic schema (`waveform`, `sample_rate`, optional `label`, `features`, `duration`, and `metadata`). Keep `justdata.core` schema-neutral.
-
-## Cross-Modal Parity
-
-Vision and acoustic must keep parity for hashable presets, metadata propagation, deterministic eval views, stateless stochastic transforms, corruption datasets, numeric metadata for JAX, golden preprocessing tests, `padding_mask`, and `as_numpy`.
-
-When changing shared loader behavior, run `tests/test_cross_modal_parity.py`. When changing a modality-specific implementation, update the corresponding parity docs if the contract changes.
-
-## Tests
-
-Run tests with:
-
-```bash
-uv run pytest
-```
-
-Targeted tests:
-
-- `tests/test_modalities.py`: core/vision import boundary and acoustic registration.
-- `tests/test_cross_modal_parity.py`: final parity checks across vision and acoustic.
+- `tests/test_modalities.py`: core/vision boundary and acoustic registration.
 - `tests/test_registry.py`: modality-aware dataset and pipeline resolution.
-- `tests/test_loader.py`: core loader plus vision Mini-C integration.
+- `tests/test_loader.py`: shared loader and vision Mini-C integration.
 - `tests/test_pipelines.py`: vision recipes and augmentation behavior.
-- `tests/acoustic`: acoustic tests, automatically marked `acoustic`.
-- `tests/acoustic/test_golden_*`: optional golden compatibility tests, marked `golden`.
-
-When changing dependencies, run `uv lock` and then `uv run pytest`.
+- `tests/test_cross_modal_parity.py`: shared vision/acoustic contracts.
+- `tests/acoustic/`: acoustic implementation and contract tests.

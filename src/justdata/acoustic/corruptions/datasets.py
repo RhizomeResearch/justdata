@@ -121,7 +121,7 @@ def create_audio_corruption_datasets(
                 deterministic=True,
             )
         else:
-            ds_c = _pad_dataset(ds_c, batch_size, metadata_mode=metadata_mode)
+            ds_c = _pad_dataset(ds_c, batch_size)
 
         datasets_out.append(ds_c.prefetch(tf.data.AUTOTUNE))
 

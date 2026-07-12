@@ -60,6 +60,19 @@ def _acoustic_dataset(num_examples=3):
     ).apply(tf.data.experimental.assert_cardinality(num_examples))
 
 
+def _string_label_dataset():
+    return tf.data.Dataset.from_tensor_slices(
+        {
+            "x": np.arange(3, dtype=np.int32),
+            "label": np.asarray(["alpha", "beta", "gamma"]),
+            "metadata": {
+                "source": np.asarray(["a", "b", "c"]),
+                "quality": np.arange(3, dtype=np.float32),
+            },
+        }
+    ).apply(tf.data.experimental.assert_cardinality(3))
+
+
 def _load_with_mocked_fetch(raw_ds, **kwargs):
     with patch("justdata.core.loader.fetch_ds", return_value=raw_ds):
         return load_ds(
@@ -228,6 +241,21 @@ def test_both_modalities_support_as_numpy():
 
         assert isinstance(batch[key], np.ndarray)
         assert isinstance(batch["padding_mask"], np.ndarray)
+
+
+def test_as_numpy_preserves_top_level_string_labels_with_numeric_metadata():
+    iterator, _n = _load_with_mocked_fetch(
+        _string_label_dataset(),
+        as_numpy=True,
+        metadata_mode="numeric_only",
+    )
+    first, final = list(iterator)
+
+    assert isinstance(first["label"], np.ndarray)
+    np.testing.assert_array_equal(first["label"], [b"alpha", b"beta"])
+    np.testing.assert_array_equal(final["label"], [b"gamma", b""])
+    assert "source" not in final["metadata"]
+    assert np.issubdtype(final["metadata"]["quality"].dtype, np.number)
 
 
 def test_docs_and_examples_cover_both_modalities():

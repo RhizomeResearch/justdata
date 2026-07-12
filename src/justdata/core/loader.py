@@ -147,7 +147,7 @@ def fetch_ds(
     return _concatenate_tf_datasets(datasets_with_splits)
 
 
-def _pad_dataset(ds, batch_size, *, metadata_mode: str = "full"):
+def _pad_dataset(ds, batch_size):
     """
     Applies padding to a batched dataset.
     If the last batch is smaller than batch_size, it pads it with zeros
@@ -179,9 +179,6 @@ def _pad_dataset(ds, batch_size, *, metadata_mode: str = "full"):
                 if child is not None:
                     padded[k] = child
             return padded
-
-        if metadata_mode != "full" and value.dtype == tf.string:
-            return None
 
         pad_shape = tf.concat([[pad_size], tf.shape(value)[1:]], axis=0)
         if value.dtype == tf.string:
@@ -602,7 +599,7 @@ def load_ds(
             deterministic=deterministic if is_training else None,
         )
     else:
-        ds = _pad_dataset(ds, batch_size, metadata_mode=metadata_mode)
+        ds = _pad_dataset(ds, batch_size)
 
     ds = ds.prefetch(tf.data.AUTOTUNE)
 

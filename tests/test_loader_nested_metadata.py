@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 import tensorflow as tf
 
 from justdata.acoustic.metadata import MetadataSidecar
@@ -15,6 +16,7 @@ def _nested_metadata_ds():
     raw = tf.data.Dataset.from_tensor_slices(
         {
             "x": np.array([1, 2, 3], dtype=np.int32),
+            "label": np.array([b"class-a", b"class-b", b"class-c"]),
             "metadata": {
                 "example_id": np.array([101, 102, 103], dtype=np.int64),
                 "clip_id": np.array([b"clip-a", b"clip-b", b"clip-c"]),
@@ -89,3 +91,27 @@ def test_metadata_none_removes_metadata():
     batch = next(iter(ds))
 
     assert "metadata" not in batch
+
+
+@pytest.mark.parametrize("metadata_mode", ["full", "numeric_only", "none"])
+def test_padding_preserves_top_level_strings_across_metadata_modes(metadata_mode):
+    ds, _n = _load(metadata_mode=metadata_mode)
+    first, final = list(ds.take(2))
+
+    np.testing.assert_array_equal(first["label"].numpy(), [b"class-a", b"class-b"])
+    np.testing.assert_array_equal(final["label"].numpy(), [b"class-c", b""])
+    np.testing.assert_array_equal(final["padding_mask"].numpy(), [True, False])
+
+    if metadata_mode == "none":
+        assert "metadata" not in final
+        return
+
+    np.testing.assert_allclose(
+        final["metadata"]["nested"]["score"].numpy(), [0.3, 0.0]
+    )
+    if metadata_mode == "full":
+        np.testing.assert_array_equal(
+            final["metadata"]["nested"]["city"].numpy(), [b"Rome", b""]
+        )
+    else:
+        assert "city" not in final["metadata"]["nested"]

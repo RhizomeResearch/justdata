@@ -61,9 +61,7 @@ def _install_tiny_zenodo_record(monkeypatch, archive_path, checksum):
                     "key": "tiny.zip",
                     "checksum": f"md5:{checksum}",
                     "size": archive_path.stat().st_size,
-                    "links": {
-                        "content": "https://zenodo.org/api/files/unit/tiny.zip"
-                    },
+                    "links": {"content": "https://zenodo.org/api/files/unit/tiny.zip"},
                 }
             ]
         }
@@ -127,15 +125,11 @@ def test_zenodo_download_link_requires_https_zenodo_origin(url):
     spec = vision_sources._ZenodoImageFolderSpec("123", "tiny.zip")
 
     with pytest.raises(ValueError, match="https://zenodo.org origin"):
-        vision_sources._zenodo_download_url(
-            spec, {"links": {"content": url}}
-        )
+        vision_sources._zenodo_download_url(spec, {"links": {"content": url}})
 
 
 @pytest.mark.parametrize("size", [-1, True, "100", 21 * 1024**3])
-def test_zenodo_metadata_is_validated_before_cache_writes(
-    monkeypatch, tmp_path, size
-):
+def test_zenodo_metadata_is_validated_before_cache_writes(monkeypatch, tmp_path, size):
     monkeypatch.setattr(
         vision_sources,
         "_fetch_zenodo_record",
@@ -305,9 +299,7 @@ def test_zip_extraction_rejects_unsafe_paths(tmp_path, member_name):
         (stat.S_IFBLK, "regular file or directory"),
     ],
 )
-def test_zip_extraction_rejects_links_and_special_files(
-    tmp_path, file_type, message
-):
+def test_zip_extraction_rejects_links_and_special_files(tmp_path, file_type, message):
     archive_path = tmp_path / "special.zip"
     member = zipfile.ZipInfo("hostile-member")
     member.create_system = 3
@@ -330,9 +322,7 @@ def test_zip_extraction_rejects_duplicate_paths(tmp_path):
         vision_sources._extract_archive(archive_path, tmp_path / "output")
 
 
-def test_zip_extraction_enforces_expanded_size_and_member_limits(
-    monkeypatch, tmp_path
-):
+def test_zip_extraction_enforces_expanded_size_and_member_limits(monkeypatch, tmp_path):
     archive_path = tmp_path / "budget.zip"
     _write_zip(archive_path, [("one.txt", b"12"), ("two.txt", b"34")])
 
@@ -363,7 +353,9 @@ def test_archive_preflight_checks_available_cache_space(monkeypatch, tmp_path):
 def _write_tar(path, members):
     with tarfile.open(path, "w") as archive:
         for member, payload in members:
-            archive.addfile(member, io.BytesIO(payload) if payload is not None else None)
+            archive.addfile(
+                member, io.BytesIO(payload) if payload is not None else None
+            )
 
 
 @pytest.mark.parametrize(
@@ -376,9 +368,7 @@ def _write_tar(path, members):
         (tarfile.BLKTYPE, "special file"),
     ],
 )
-def test_tar_extraction_rejects_links_and_special_files(
-    tmp_path, member_type, message
-):
+def test_tar_extraction_rejects_links_and_special_files(tmp_path, member_type, message):
     archive_path = tmp_path / "hostile.tar"
     member = tarfile.TarInfo("hostile-member")
     member.type = member_type
@@ -403,9 +393,7 @@ def test_tar_extraction_rejects_unsafe_and_duplicate_paths(tmp_path):
         _write_tar(archive_path, members)
 
         with pytest.raises(ValueError, match=message):
-            vision_sources._extract_archive(
-                archive_path, tmp_path / f"{name}-output"
-            )
+            vision_sources._extract_archive(archive_path, tmp_path / f"{name}-output")
 
 
 def test_tar_extraction_rejects_large_declared_size_without_payload(
@@ -516,13 +504,7 @@ def test_zenodo_imagefolder_source_loads_archive_splits(monkeypatch, tmp_path):
 
     assert (tmp_path / "cache" / "zenodo" / "123" / "files" / "tiny.zip").is_file()
     assert (
-        tmp_path
-        / "cache"
-        / "zenodo"
-        / "123"
-        / "extracted"
-        / "tiny"
-        / "tiny-root"
+        tmp_path / "cache" / "zenodo" / "123" / "extracted" / "tiny" / "tiny-root"
     ).is_dir()
     assert int(tf.data.Dataset.cardinality(train_ds).numpy()) == 3
     assert int(tf.data.Dataset.cardinality(val_ds).numpy()) == 2
@@ -538,9 +520,7 @@ def test_zenodo_imagefolder_source_loads_archive_splits(monkeypatch, tmp_path):
     assert samples[0]["metadata"]["split"] == b"train"
     assert samples[0]["metadata"]["class_name"] == b"class_a"
     assert samples[0]["metadata"]["class_index"] == 0
-    assert samples[0]["metadata"]["example_id"] == (
-        b"train/class_a/train_class_a.png"
-    )
+    assert samples[0]["metadata"]["example_id"] == (b"train/class_a/train_class_a.png")
 
 
 def test_zenodo_imagefolder_labels_are_stable_across_separate_split_loads(
@@ -560,12 +540,10 @@ def test_zenodo_imagefolder_labels_are_stable_across_separate_split_loads(
         ["val"],
         data_dir=data_dir,
     )
-    combined_train_ds, combined_val_ds = (
-        vision_sources.load_zenodo_imagefolder_splits(
-            DATASET,
-            ["train", "val"],
-            data_dir=data_dir,
-        )
+    combined_train_ds, combined_val_ds = vision_sources.load_zenodo_imagefolder_splits(
+        DATASET,
+        ["train", "val"],
+        data_dir=data_dir,
     )
 
     train_samples = list(train_ds.as_numpy_iterator())

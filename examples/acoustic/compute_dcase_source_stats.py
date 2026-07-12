@@ -15,6 +15,7 @@ source_ds, n = make_source_dataset(
     source_domain={"device": "A"},
     preset="dcase2025_task1_efficientat_32k_1s",
     pipeline=pipeline,
+    data_dir="/path/to/dcase",
 )
 
 stats = compute_feature_stats(

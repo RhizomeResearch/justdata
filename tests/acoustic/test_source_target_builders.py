@@ -73,8 +73,11 @@ def test_domain_and_caller_filters_use_independent_hooks(
     monkeypatch, builder, domain_arg, domain
 ):
     calls = {}
-    source_filter_fn = lambda sample: tf.equal(sample["split"], "selected")
-    filter_fn = lambda sample: tf.equal(sample["features"], 1)
+    def source_filter_fn(sample):
+        return tf.equal(sample["split"], "selected")
+
+    def filter_fn(sample):
+        return tf.equal(sample["features"], 1)
 
     def fake_load_ds(dataset, split, dataset_type, batch_size, seed, **kwargs):
         del dataset, split, dataset_type, batch_size, seed

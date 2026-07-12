@@ -75,25 +75,27 @@ def test_time_mask_masks_only_time_axis():
 
 
 def test_mask_same_seed_same_output():
-    transform = lambda x, seed, is_training: frequency_mask(
-        x,
-        seed=seed,
-        max_width=3,
-        fill_value="zero",
-        is_training=is_training,
-    )
+    def transform(x, seed, is_training):
+        return frequency_mask(
+            x,
+            seed=seed,
+            max_width=3,
+            fill_value="zero",
+            is_training=is_training,
+        )
 
     assert_same_seed_same_output(transform, tf.ones([8, 10], dtype=tf.float32))
 
 
 def test_mask_eval_disabled():
-    transform = lambda x, seed, is_training: time_mask(
-        x,
-        seed=seed,
-        max_width=3,
-        fill_value="zero",
-        is_training=is_training,
-    )
+    def transform(x, seed, is_training):
+        return time_mask(
+            x,
+            seed=seed,
+            max_width=3,
+            fill_value="zero",
+            is_training=is_training,
+        )
 
     assert_eval_disables_transform(transform, tf.ones([8, 10], dtype=tf.float32))
 

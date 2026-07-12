@@ -12,6 +12,8 @@ test:
     - nix profile install --accept-flake-config github:cachix/devenv/099ac65fcef79e88127bdc06adbd1ea94255274a
   script:
     - devenv test
+    - devenv shell uv run ruff check .
+    - devenv shell uv run ruff format --check .
 
 package-support:
   stage: test

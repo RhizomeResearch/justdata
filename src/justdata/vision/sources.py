@@ -163,8 +163,7 @@ def _select_zenodo_file(record: dict[str, Any], filename: str) -> dict[str, Any]
             return file_info
 
     available = ", ".join(
-        str(file_info.get("key") or file_info.get("filename"))
-        for file_info in files
+        str(file_info.get("key") or file_info.get("filename")) for file_info in files
     )
     raise ValueError(
         f"Zenodo record does not contain file {filename!r}. "
@@ -211,9 +210,7 @@ def _validate_zenodo_download_url(url: str) -> str:
         or parsed.username is not None
         or parsed.password is not None
     ):
-        raise ValueError(
-            "Zenodo download link must use the https://zenodo.org origin."
-        )
+        raise ValueError("Zenodo download link must use the https://zenodo.org origin.")
     return url
 
 
@@ -288,10 +285,7 @@ def _download_file(
                 url, timeout=_ZENODO_NETWORK_TIMEOUT_SECONDS
             ) as response:
                 while True:
-                    if (
-                        time.monotonic() - started_at
-                        > _ZENODO_DOWNLOAD_TIMEOUT_SECONDS
-                    ):
+                    if time.monotonic() - started_at > _ZENODO_DOWNLOAD_TIMEOUT_SECONDS:
                         raise TimeoutError(
                             "Zenodo download exceeded the transfer time limit."
                         )

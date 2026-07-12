@@ -25,6 +25,7 @@ ds, n = load_ds(
     pipeline=pipeline,
     num_classes=10,
     cache_dataset=False,
+    data_dir="/path/to/dcase",
     metadata_mode="numeric_only",
     as_numpy=True,
 )
@@ -48,11 +49,20 @@ Use `allow_override=True` only when a protocol explicitly permits it.
 ```python
 from justdata.acoustic.dcase2025 import make_source_dataset
 from justdata.acoustic.stats import compute_feature_stats
+from justdata.core.registry import get_pipeline
 
-source_ds = make_source_dataset(
+pipeline = get_pipeline(
+    dataset="dcase2025_task1",
+    preset="dcase2025_task1_efficientat_32k_1s",
+    output_key="inputs",
+)
+
+source_ds, n = make_source_dataset(
     split="dev_train_25",
     source_domain={"device": "A"},
     preset="dcase2025_task1_efficientat_32k_1s",
+    pipeline=pipeline,
+    data_dir="/path/to/dcase",
 )
 
 stats = compute_feature_stats(
@@ -89,6 +99,7 @@ ds, n = load_ds(
     seed=0,
     pipeline=pipeline,
     cache_dataset=False,
+    data_dir="/path/to/dcase",
     metadata_mode="numeric_only",
     sidecar_metadata_path="dcase_metadata.jsonl",
 )

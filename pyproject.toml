@@ -1,14 +1,13 @@
 [project]
 name = "justdata"
 version = "0.1.0"
-description = "A dataloading wrapper around tfds"
+description = "A TensorFlow-native data pipeline library with a modality-neutral core and first-class computer vision and acoustic recipes"
 readme = "README.md"
 authors = [
     { name = "clementpoiret", email = "clement@linux.com" }
 ]
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "importlib-resources>=6.5.2",
     "loguru>=0.7.3",
     "tensorflow>=2.18.1",
     "tensorflow-datasets>=4.9.9",
@@ -41,6 +40,7 @@ dev = [
     "librosa>=0.11",
     "matplotlib>=3.10.8",
     "pytest>=9.0.2",
+    "ruff==0.15.20",
     "soundfile>=0.12",
     "soxr>=0.5",
     "torch==2.10.0",
@@ -59,6 +59,7 @@ dev = [
     "librosa>=0.11",
     "matplotlib>=3.10.8",
     "pytest>=9.0.2",
+    "ruff==0.15.20",
     "soundfile>=0.12",
     "soxr>=0.5",
     "torch==2.10.0",
@@ -72,3 +73,9 @@ markers = [
     "golden: optional tests requiring external reference packages/checkpoints",
     "slow: long-running tests",
 ]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

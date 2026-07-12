@@ -150,6 +150,7 @@ ds, n = load_ds(
     pipeline=pipeline,
     num_classes=10,
     cache_dataset=False,
+    data_dir="/path/to/dcase",
     metadata_mode="numeric_only",
     as_numpy=True,
 )
@@ -222,8 +223,14 @@ unless `allow_override=True` is passed explicitly.
 ```python
 from justdata.acoustic.dcase2025 import make_source_dataset, make_target_dataset
 
-source_ds, source_n = make_source_dataset(split="dev_train_25")
-target_ds, target_n = make_target_dataset(split="dev_test")
+source_ds, source_n = make_source_dataset(
+    split="dev_train_25",
+    data_dir="/path/to/dcase",
+)
+target_ds, target_n = make_target_dataset(
+    split="dev_test",
+    data_dir="/path/to/dcase",
+)
 ```
 
 Use source-domain filters such as `source_domain={"device": "A"}` only on

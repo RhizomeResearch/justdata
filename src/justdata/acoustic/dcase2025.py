@@ -715,10 +715,12 @@ def _make_dataset(
             source_filter_fn = domain_filter
         else:
             previous_source_filter = source_filter_fn
-            source_filter_fn = lambda sample: tf.logical_and(
-                previous_source_filter(sample),
-                domain_filter(sample),
-            )
+
+            def source_filter_fn(sample):
+                return tf.logical_and(
+                    previous_source_filter(sample),
+                    domain_filter(sample),
+                )
 
     pipeline = load_kwargs.pop("pipeline", None)
     if pipeline is None:

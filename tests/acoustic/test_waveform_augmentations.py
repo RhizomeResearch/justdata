@@ -30,29 +30,31 @@ def _waveform(length: int = 2048) -> tf.Tensor:
 
 
 def test_random_gain_same_seed_same_output():
-    transform = lambda x, seed, is_training: random_gain(
-        x,
-        16000,
-        seed=seed,
-        prob=1.0,
-        min_db=-6.0,
-        max_db=6.0,
-        is_training=is_training,
-    )
+    def transform(x, seed, is_training):
+        return random_gain(
+            x,
+            16000,
+            seed=seed,
+            prob=1.0,
+            min_db=-6.0,
+            max_db=6.0,
+            is_training=is_training,
+        )
 
     assert_same_seed_same_output(transform, _waveform())
 
 
 def test_random_gain_different_seed_different_output():
-    transform = lambda x, seed, is_training: random_gain(
-        x,
-        16000,
-        seed=seed,
-        prob=1.0,
-        min_db=-6.0,
-        max_db=6.0,
-        is_training=is_training,
-    )
+    def transform(x, seed, is_training):
+        return random_gain(
+            x,
+            16000,
+            seed=seed,
+            prob=1.0,
+            min_db=-6.0,
+            max_db=6.0,
+            is_training=is_training,
+        )
 
     assert_different_seed_can_change_output(transform, _waveform())
 
@@ -216,15 +218,16 @@ def test_codec_simulation_no_nan():
 
 
 def test_augment_disabled_eval():
-    transform = lambda x, seed, is_training: random_gain(
-        x,
-        16000,
-        seed=seed,
-        prob=1.0,
-        min_db=6.0,
-        max_db=6.0,
-        is_training=is_training,
-    )
+    def transform(x, seed, is_training):
+        return random_gain(
+            x,
+            16000,
+            seed=seed,
+            prob=1.0,
+            min_db=6.0,
+            max_db=6.0,
+            is_training=is_training,
+        )
 
     assert_eval_disables_transform(transform, _waveform())
 

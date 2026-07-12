@@ -328,12 +328,22 @@ def _split_class_dirs(split_dir: Path) -> list[Path]:
     )
 
 
-def _imagefolder_class_to_label(root: Path, splits: list[str]) -> dict[str, np.int64]:
+def _imagefolder_split_dirs(root: Path) -> list[Path]:
+    return sorted(
+        child
+        for child in root.iterdir()
+        if child.is_dir()
+        and not child.name.startswith(".")
+        and _split_class_dirs(child)
+    )
+
+
+def _imagefolder_class_to_label(root: Path) -> dict[str, np.int64]:
     class_names = sorted(
         {
             class_dir.name
-            for split in splits
-            for class_dir in _split_class_dirs(root / split)
+            for split_dir in _imagefolder_split_dirs(root)
+            for class_dir in _split_class_dirs(split_dir)
         }
     )
     if not class_names:
@@ -354,7 +364,19 @@ def _imagefolder_records(
     for split in splits:
         split_records = []
         split_dir = split_dirs[split]
-        for class_dir in _split_class_dirs(split_dir):
+        class_dirs = _split_class_dirs(split_dir)
+        unknown_classes = sorted(
+            class_dir.name
+            for class_dir in class_dirs
+            if class_dir.name not in class_to_label
+        )
+        if unknown_classes:
+            names = ", ".join(unknown_classes)
+            raise ValueError(
+                f"Zenodo ImageFolder split {split!r} contains classes absent from "
+                f"the archive-wide vocabulary: {names}."
+            )
+        for class_dir in class_dirs:
             label = class_to_label[class_dir.name]
             for path in sorted(class_dir.rglob("*")):
                 if not _is_image_file(path):
@@ -437,7 +459,7 @@ def load_zenodo_imagefolder_splits(
     spec = _parse_zenodo_spec(dataset_name)
     extract_dir = _prepare_zenodo_archive(spec, data_dir)
     root = _resolve_imagefolder_root(extract_dir, splits)
-    class_to_label = _imagefolder_class_to_label(root, splits)
+    class_to_label = _imagefolder_class_to_label(root)
     return [
         _records_to_vision_dataset(
             _imagefolder_records(

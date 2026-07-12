@@ -4,6 +4,7 @@ from justdata.core.filters import (
     groupby_metadata,
     metadata_filter_predicate,
 )
+from justdata.core.finalization import finalize_dataset
 from justdata.core.loader import fetch_ds, load_ds
 from justdata.core.metadata import apply_metadata_mode, numeric_metadata
 from justdata.core.presets import (
@@ -39,6 +40,7 @@ __all__ = [
     "apply_metadata_mode",
     "compute_feature_stats",
     "filter_by_metadata",
+    "finalize_dataset",
     "fetch_ds",
     "get_adapter",
     "get_dataset_info",

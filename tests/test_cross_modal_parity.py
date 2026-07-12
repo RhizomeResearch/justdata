@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 import tensorflow as tf
 
 import justdata.acoustic  # noqa: F401
@@ -119,6 +120,53 @@ def test_both_modalities_have_metadata_mode():
         assert "device" not in batch["metadata"]
 
 
+class _IdentityPipeline:
+    def __init__(self, kwargs):
+        self.kwargs = kwargs
+
+    def build(self, is_training):
+        del is_training
+        return _identity, _identity, _identity, _identity
+
+
+@pytest.mark.parametrize(
+    ("metadata_mode", "expected_keys"),
+    [
+        (None, {"quality"}),
+        ("full", {"device", "quality"}),
+        ("none", set()),
+    ],
+)
+def test_acoustic_preset_metadata_mode_reaches_loader(
+    metadata_mode,
+    expected_keys,
+):
+    preset_pipeline = get_pipeline(dataset="speech_commands")
+    assert preset_pipeline.kwargs["metadata_mode"] == "numeric_only"
+    pipeline = _IdentityPipeline(preset_pipeline.kwargs)
+
+    with patch(
+        "justdata.core.loader.fetch_ds",
+        return_value=_acoustic_dataset(),
+    ):
+        ds, _n = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="validation",
+            dataset_type="validation",
+            batch_size=2,
+            seed=0,
+            pipeline=pipeline,
+            cache_dataset=False,
+            metadata_mode=metadata_mode,
+        )
+
+    batch = next(iter(ds))
+    if metadata_mode == "none":
+        assert "metadata" not in batch
+    else:
+        assert set(batch["metadata"]) == expected_keys
+
+
 def test_both_modalities_have_deterministic_eval():
     vision_pipeline = get_pipeline(
         pipeline_name="vision/classification",
@@ -179,8 +227,8 @@ def test_both_modalities_have_registry_list_functions():
 
 def test_both_modalities_have_corruption_dataset_api():
     with patch(
-        "justdata.vision.minic.load_ds",
-        return_value=(_vision_dataset(), {"postprocess_fn": _corruption_postprocess}),
+        "justdata.core.loader.fetch_ds",
+        return_value=_vision_dataset(),
     ):
         vision_ds, vision_n = create_minic_datasets(
             corruption_types="noise",
@@ -190,6 +238,10 @@ def test_both_modalities_have_corruption_dataset_api():
             dataset_type="validation",
             batch_size=2,
             seed=0,
+            preprocess_fn=_identity,
+            augment_fn=_identity,
+            late_augment_fn=_identity,
+            postprocess_fn=_corruption_postprocess,
             cache_dataset=False,
         )
 
@@ -199,8 +251,8 @@ def test_both_modalities_have_corruption_dataset_api():
     assert vision_batch["metadata"]["corruption"].numpy()[0] == b"noise"
 
     with patch(
-        "justdata.acoustic.corruptions.datasets.load_ds",
-        return_value=(_acoustic_dataset(), {"postprocess_fn": _corruption_postprocess}),
+        "justdata.core.loader.fetch_ds",
+        return_value=_acoustic_dataset(),
     ):
         acoustic_ds, acoustic_n = create_audio_corruption_datasets(
             corruption_types="identity",
@@ -210,6 +262,9 @@ def test_both_modalities_have_corruption_dataset_api():
             split="validation",
             batch_size=2,
             seed=0,
+            preprocess_fn=_identity,
+            augment_fn=_identity,
+            late_augment_fn=_identity,
             postprocess_fn=_corruption_postprocess,
             cache_dataset=False,
         )
@@ -218,6 +273,39 @@ def test_both_modalities_have_corruption_dataset_api():
     assert int(acoustic_n.numpy()) == 2
     assert "padding_mask" in acoustic_batch
     assert acoustic_batch["metadata"]["corruption"].numpy()[0] == b"identity"
+
+
+@pytest.mark.parametrize("metadata_mode", ["numeric_only", "none"])
+def test_minic_uses_shared_metadata_and_numpy_finalization(metadata_mode):
+    with patch(
+        "justdata.core.loader.fetch_ds",
+        return_value=_vision_dataset(),
+    ):
+        iterator, n_batches = create_minic_datasets(
+            corruption_types="noise",
+            severity=1,
+            dataset_names_arg="mock_vision",
+            splits_arg="validation",
+            dataset_type="validation",
+            batch_size=2,
+            seed=0,
+            preprocess_fn=_identity,
+            augment_fn=_identity,
+            late_augment_fn=_identity,
+            postprocess_fn=_corruption_postprocess,
+            cache_dataset=False,
+            metadata_mode=metadata_mode,
+            as_numpy=True,
+        )
+
+    final = list(iterator)[-1]
+    assert int(n_batches.numpy()) == 2
+    assert isinstance(final["image"], np.ndarray)
+    np.testing.assert_array_equal(final["padding_mask"], [True, False])
+    if metadata_mode == "none":
+        assert "metadata" not in final
+    else:
+        assert set(final["metadata"]) == {"quality", "severity"}
 
 
 def test_both_modalities_preserve_padding_mask():

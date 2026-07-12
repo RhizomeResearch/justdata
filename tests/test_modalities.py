@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import justdata.acoustic  # noqa: F401
 from justdata.core.presets import get_dataset_presets
 from justdata.core.registry import get_pipeline
 from justdata.vision.presets import get_dataset_presets as get_vision_presets

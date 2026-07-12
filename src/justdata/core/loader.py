@@ -1,14 +1,12 @@
-import hashlib
-import json
 import os
-import threading
-from pathlib import Path
+from functools import partial
 from typing import Any, Dict, Literal, Optional, Union
 
 import tensorflow as tf
 from loguru import logger
 
 from justdata.core.adapters import get_adapter
+from justdata.core.finalization import finalize_dataset
 from justdata.core.sources import get_source_loader
 
 
@@ -147,222 +145,6 @@ def fetch_ds(
     return _concatenate_tf_datasets(datasets_with_splits)
 
 
-def _pad_dataset(ds, batch_size):
-    """
-    Applies padding to a batched dataset.
-    If the last batch is smaller than batch_size, it pads it with zeros
-    and adds a 'padding_mask' key.
-    """
-
-    def _first_tensor(value):
-        if isinstance(value, dict):
-            for child in value.values():
-                found = _first_tensor(child)
-                if found is not None:
-                    return found
-            return None
-        return value
-
-    def _get_batch_dim(batch):
-        """Get current batch size from the first tensor in the batch."""
-        for v in batch.values():
-            tensor = _first_tensor(v)
-            if tensor is not None:
-                return tf.shape(tensor)[0]
-        return tf.constant(0, dtype=tf.int32)
-
-    def _pad_value(value, pad_size):
-        if isinstance(value, dict):
-            padded = {}
-            for k, v in value.items():
-                child = _pad_value(v, pad_size)
-                if child is not None:
-                    padded[k] = child
-            return padded
-
-        pad_shape = tf.concat([[pad_size], tf.shape(value)[1:]], axis=0)
-        if value.dtype == tf.string:
-            fill = tf.fill(pad_shape, tf.constant("", dtype=tf.string))
-        else:
-            fill = tf.zeros(pad_shape, dtype=value.dtype)
-        return tf.concat([value, fill], axis=0)
-
-    def pad_batch(batch):
-        curr_size = _get_batch_dim(batch)
-        pad_size = batch_size - curr_size
-
-        mask = tf.concat(
-            [
-                tf.ones((curr_size,), dtype=tf.bool),
-                tf.zeros((pad_size,), dtype=tf.bool),
-            ],
-            axis=0,
-        )
-
-        padded_batch = {}
-        for k, v in batch.items():
-            child = _pad_value(v, pad_size)
-            if child is not None:
-                padded_batch[k] = child
-
-        padded_batch["padding_mask"] = mask
-        return padded_batch
-
-    return ds.map(
-        lambda b: tf.cond(
-            _get_batch_dim(b) < batch_size,
-            lambda: pad_batch(b),
-            lambda: b | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)},
-        ),
-        num_parallel_calls=tf.data.AUTOTUNE,
-    )
-
-
-def _is_numeric_metadata_value(value: Any) -> bool:
-    return hasattr(value, "dtype") and value.dtype != tf.string
-
-
-def _numeric_metadata(metadata: dict) -> dict:
-    numeric = {}
-    for key, value in metadata.items():
-        if isinstance(value, dict):
-            child = _numeric_metadata(value)
-            if child:
-                numeric[key] = child
-        elif _is_numeric_metadata_value(value):
-            numeric[key] = value
-    return numeric
-
-
-def _apply_metadata_mode(sample: dict, metadata_mode: str) -> dict:
-    if metadata_mode == "full" or "metadata" not in sample:
-        return sample
-
-    result = dict(sample)
-    if metadata_mode == "none":
-        result.pop("metadata", None)
-        return result
-
-    metadata = result.get("metadata")
-    if isinstance(metadata, dict):
-        metadata = _numeric_metadata(metadata)
-        if metadata:
-            result["metadata"] = metadata
-        else:
-            result.pop("metadata", None)
-    return result
-
-
-def _flatten_metadata(metadata: dict, prefix: tuple[str, ...] = ()):
-    leaves = []
-    for key, value in metadata.items():
-        path = prefix + (key,)
-        if isinstance(value, dict):
-            leaves.extend(_flatten_metadata(value, path))
-        else:
-            leaves.append((path, value))
-    return leaves
-
-
-def _identity_structure(value):
-    if isinstance(value, dict):
-        return {k: _identity_structure(v) for k, v in value.items()}
-    return tf.identity(value)
-
-
-def _python_json_value(value: Any) -> Any:
-    if hasattr(value, "numpy"):
-        value = value.numpy()
-    if isinstance(value, bytes):
-        return value.decode("utf-8")
-    if hasattr(value, "tolist"):
-        return _python_json_value(value.tolist())
-    if isinstance(value, (list, tuple)):
-        return [_python_json_value(child) for child in value]
-    if hasattr(value, "item"):
-        return value.item()
-    return value
-
-
-def _stable_int64_hash(value: Any) -> int:
-    value = _python_json_value(value)
-    if value is None:
-        value = ""
-    digest = hashlib.sha256(str(value).encode("utf-8")).digest()
-    return int.from_bytes(digest[:8], "big", signed=False) & ((1 << 63) - 1)
-
-
-def _assign_nested(target: dict, path: tuple[str, ...], value: Any) -> None:
-    current = target
-    for key in path[:-1]:
-        current = current.setdefault(key, {})
-    current[path[-1]] = value
-
-
-def _sidecar_example_id(values_by_path: dict[tuple[str, ...], Any]) -> int:
-    by_name = {path[-1]: value for path, value in values_by_path.items()}
-    if {"dataset", "split", "clip_id"}.issubset(by_name):
-        return _stable_int64_hash(
-            f"{_python_json_value(by_name['dataset'])}::"
-            f"{_python_json_value(by_name['split'])}::"
-            f"{_python_json_value(by_name['clip_id'])}"
-        )
-
-    example_id = by_name.get("example_id")
-    value = _python_json_value(example_id)
-    if isinstance(value, int):
-        return value
-    return _stable_int64_hash(value)
-
-
-def _attach_sidecar_writer(ds, path: str):
-    output = Path(path)
-    if output.parent != Path("."):
-        output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text("", encoding="utf-8")
-    lock = threading.Lock()
-
-    def add_writer(sample):
-        metadata = sample.get("metadata")
-        if not isinstance(metadata, dict):
-            return sample
-
-        leaves = _flatten_metadata(metadata)
-        string_leaves = [
-            (path, value) for path, value in leaves if value.dtype == tf.string
-        ]
-        if not string_leaves:
-            return sample
-
-        all_paths = [path for path, _ in leaves]
-        all_values = [value for _, value in leaves]
-        string_paths = {path for path, _ in string_leaves}
-
-        def write_record(*values):
-            values_by_path = {
-                path: _python_json_value(value)
-                for path, value in zip(all_paths, values)
-            }
-            string_metadata = {}
-            for path in string_paths:
-                _assign_nested(string_metadata, path, values_by_path[path])
-
-            record = {
-                "example_id": _sidecar_example_id(values_by_path),
-                "metadata": string_metadata,
-            }
-            with lock:
-                with output.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps(record, sort_keys=True) + "\n")
-            return 0
-
-        marker = tf.py_function(write_record, all_values, Tout=tf.int64)
-        with tf.control_dependencies([marker]):
-            return _identity_structure(sample)
-
-    return ds.map(add_writer, num_parallel_calls=tf.data.AUTOTUNE)
-
-
 def load_ds(
     dataset_names_arg: Union[str, list[str]],
     splits_arg: Union[str, list[str], Dict[str, list[str]]],
@@ -386,7 +168,7 @@ def load_ds(
     return_raw_ds: bool = False,
     deterministic: bool = False,
     as_numpy: bool = False,
-    metadata_mode: Literal["full", "numeric_only", "none"] = "full",
+    metadata_mode: Literal["full", "numeric_only", "none"] | None = None,
     sidecar_metadata_path: str | None = None,
     filter_fn=None,
 ):
@@ -432,12 +214,13 @@ def load_ds(
                        preprocessing (and caching) but BEFORE standard
                        augmentation, postprocessing, or batching.
                        Returns (ds, tools_dict) where tools_dict contains
-                       ``postprocess_fn`` and ``rng``.
+                       ``finalize_fn``, ``postprocess_fn``, and ``rng``.
         deterministic: If false, sacrifices determinism for performance.
         as_numpy: If True, returns an iterator yielding NumPy arrays.
-        metadata_mode: Controls metadata in output batches. ``full`` keeps all
-                       metadata, ``numeric_only`` drops strings from batches,
-                       and ``none`` removes metadata.
+        metadata_mode: Controls metadata in output batches. When omitted, uses
+                       ``pipeline.kwargs["metadata_mode"]`` if present, then
+                       defaults to ``full``. ``numeric_only`` drops strings
+                       from batches and ``none`` removes metadata.
         sidecar_metadata_path: JSONL path for string metadata when
                                ``metadata_mode="numeric_only"``.
         filter_fn: Optional predicate applied after preprocessing and caching,
@@ -451,12 +234,16 @@ def load_ds(
         TypeError: If `dataset_names_arg` or `splits_arg` have invalid types.
     """
     rng = tf.random.Generator.from_seed(seed)
+    if metadata_mode is None:
+        metadata_mode = (
+            pipeline.kwargs.get("metadata_mode", "full")
+            if pipeline is not None
+            else "full"
+        )
     if metadata_mode not in {"full", "numeric_only", "none"}:
         raise ValueError(
             "metadata_mode must be one of 'full', 'numeric_only', or 'none'."
         )
-    if cache_model_inputs and return_raw_ds:
-        raise ValueError("cache_model_inputs cannot be used with return_raw_ds=True.")
 
     dataset_names: list[str]
     if isinstance(dataset_names_arg, str):
@@ -511,41 +298,6 @@ def load_ds(
         seed = rng.make_seeds(1)[:, 0]
         return augment_fn(sample, seed=seed)
 
-    def seeded_late_augment(batch):
-        seed = rng.make_seeds(1)[:, 0]
-        return late_augment_fn(batch, num_classes=num_classes, seed=seed)
-
-    def apply_postprocess(ds):
-        return ds.map(
-            lambda x: postprocess_fn(x, num_classes=num_classes),
-            num_parallel_calls=tf.data.AUTOTUNE,
-            deterministic=deterministic if is_training else None,
-        )
-
-    def apply_metadata(ds):
-        if metadata_mode == "numeric_only" and sidecar_metadata_path is not None:
-            ds = _attach_sidecar_writer(ds, sidecar_metadata_path)
-        if metadata_mode != "full":
-            ds = ds.map(
-                lambda x: _apply_metadata_mode(x, metadata_mode),
-                num_parallel_calls=tf.data.AUTOTUNE,
-                deterministic=deterministic if is_training else None,
-            )
-        return ds
-
-    def apply_model_input_cache(ds):
-        if not cache_model_inputs:
-            return ds
-        return ds.cache(model_input_cache_path)
-
-    def apply_postprocess_metadata_and_cache(ds):
-        ds = apply_postprocess(ds)
-        if cache_model_inputs and sidecar_metadata_path is not None:
-            ds = apply_model_input_cache(ds)
-            return apply_metadata(ds)
-        ds = apply_metadata(ds)
-        return apply_model_input_cache(ds)
-
     ds = ds.map(
         preprocess_fn,
         num_parallel_calls=tf.data.AUTOTUNE,
@@ -565,9 +317,35 @@ def load_ds(
     if filter_fn is not None:
         ds = ds.filter(filter_fn)
 
+    finalize_fn = partial(
+        finalize_dataset,
+        postprocess_fn=postprocess_fn,
+        num_classes=num_classes,
+        batch_size=batch_size,
+        metadata_mode=metadata_mode,
+        sidecar_metadata_path=sidecar_metadata_path,
+        cache_model_inputs=cache_model_inputs,
+        model_input_cache_path=model_input_cache_path,
+        drop_remainder=drop_remainder,
+        is_training=is_training,
+        late_augment_fn=late_augment_fn,
+        rng=rng,
+        deterministic=deterministic,
+        shuffle_buffer=shuffle_buffer if is_training else None,
+        shuffle_seed=seed,
+        as_numpy=as_numpy,
+    )
+
     if return_raw_ds:
         # Return necessary components to build custom pipelines
-        return (ds, {"postprocess_fn": postprocess_fn, "rng": rng})
+        return (
+            ds,
+            {
+                "finalize_fn": finalize_fn,
+                "postprocess_fn": postprocess_fn,
+                "rng": rng,
+            },
+        )
 
     if is_training:
         ds = ds.map(
@@ -575,35 +353,5 @@ def load_ds(
             num_parallel_calls=tf.data.AUTOTUNE,
             deterministic=deterministic,
         )
-        if cache_model_inputs:
-            ds = apply_postprocess_metadata_and_cache(ds)
-        ds = ds.shuffle(shuffle_buffer, seed=seed)
 
-    if not (is_training and cache_model_inputs):
-        ds = apply_postprocess_metadata_and_cache(ds)
-
-    ds = ds.batch(batch_size, drop_remainder=drop_remainder)
-
-    if is_training:
-        ds = ds.map(
-            seeded_late_augment,
-            num_parallel_calls=tf.data.AUTOTUNE,
-            deterministic=deterministic,
-        )
-
-    # Ensure padding_mask is always present for API consistency
-    if drop_remainder:
-        ds = ds.map(
-            lambda b: b | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)},
-            num_parallel_calls=tf.data.AUTOTUNE,
-            deterministic=deterministic if is_training else None,
-        )
-    else:
-        ds = _pad_dataset(ds, batch_size)
-
-    ds = ds.prefetch(tf.data.AUTOTUNE)
-
-    N = tf.data.Dataset.cardinality(ds)
-    if as_numpy:
-        return ds.as_numpy_iterator(), N
-    return ds, N
+    return finalize_fn(ds)

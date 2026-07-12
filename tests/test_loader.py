@@ -262,11 +262,14 @@ def test_train_model_input_cache_requires_explicit_opt_in(tmp_path):
         )
 
 
-def test_model_input_cache_rejects_return_raw_ds():
-    with pytest.raises(ValueError, match="return_raw_ds"):
-        load_ds(
+def test_raw_dataset_finalizer_supports_model_input_cache():
+    with patch(
+        "justdata.core.loader.fetch_ds",
+        return_value=_range_dataset(3),
+    ):
+        raw_ds, tools = load_ds(
             dataset_names_arg="mock",
-            splits_arg="validation",
+            splits_arg="train",
             dataset_type="validation",
             batch_size=2,
             seed=0,
@@ -277,6 +280,14 @@ def test_model_input_cache_rejects_return_raw_ds():
             cache_model_inputs=True,
             return_raw_ds=True,
         )
+
+    ds, n_batches = tools["finalize_fn"](raw_ds)
+
+    assert int(n_batches.numpy()) == 2
+    np.testing.assert_array_equal(
+        list(ds)[-1]["padding_mask"].numpy(),
+        [True, False],
+    )
 
 
 def test_model_input_cache_rejects_preprocess_cache_path_collision(tmp_path):

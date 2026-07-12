@@ -2,7 +2,7 @@ from typing import Union
 
 import tensorflow as tf
 
-from justdata.core.loader import _pad_dataset, load_ds
+from justdata.core.loader import load_ds
 from justdata.vision.corruptions.registry import (
     _metadata_with_corruption,
     apply_minic_corruption,
@@ -23,11 +23,7 @@ def create_minic_datasets(
 
     ds, tools = load_ds(**load_ds_kwargs)
 
-    postprocess_fn = tools["postprocess_fn"]
-
-    batch_size = load_ds_kwargs.get("batch_size", 32)
-    num_classes = load_ds_kwargs.get("num_classes")
-    drop_remainder = load_ds_kwargs.get("drop_remainder", False)
+    finalize_fn = tools["finalize_fn"]
     seed = load_ds_kwargs.get("seed", 0)
 
     return_list = isinstance(corruption_types, list)
@@ -53,27 +49,10 @@ def create_minic_datasets(
             num_parallel_calls=tf.data.AUTOTUNE,
             deterministic=True,
         )
-        ds_c = ds_c.map(
-            lambda x: postprocess_fn(x, num_classes=num_classes),
-            num_parallel_calls=tf.data.AUTOTUNE,
-        )
-
-        ds_c = ds_c.batch(batch_size, drop_remainder=drop_remainder)
-
-        if drop_remainder:
-            ds_c = ds_c.map(
-                lambda b: b | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)},
-                num_parallel_calls=tf.data.AUTOTUNE,
-            )
-        else:
-            ds_c = _pad_dataset(ds_c, batch_size)
-
-        ds_c = ds_c.prefetch(tf.data.AUTOTUNE)
+        ds_c, n_batches = finalize_fn(ds_c)
         datasets_out.append(ds_c)
 
-    if datasets_out:
-        n_batches = tf.data.Dataset.cardinality(datasets_out[0])
-    else:
+    if not datasets_out:
         n_batches = 0
 
     if return_list:

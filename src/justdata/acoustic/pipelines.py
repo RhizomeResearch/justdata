@@ -35,20 +35,22 @@ def default_pipeline(
     is_training = postproc_kwargs.get("is_training", False)
     aug_kwargs.setdefault("is_training", is_training)
     aug_kwargs.setdefault("augment_eval", augment_eval)
+    laug_kwargs.setdefault("is_training", is_training)
+    laug_kwargs.setdefault("augment_eval", augment_eval)
+    laug_kwargs.setdefault("model_layout", layout)
 
-    if train_augment is not None and is_training:
+    if train_augment is not None and (is_training or augment_eval):
         aug_kwargs.setdefault("train_augment", train_augment)
         laug_kwargs.setdefault("train_augment", train_augment)
     if waveform_augmentations is not None:
         aug_kwargs.setdefault("waveform_augmentations", waveform_augmentations)
     if spectrogram_augmentations is not None:
-        aug_kwargs.setdefault("spectrogram_augmentations", spectrogram_augmentations)
+        laug_kwargs.setdefault("spectrogram_augmentations", spectrogram_augmentations)
     if batch_augmentations is not None:
         laug_kwargs.setdefault("batch_augmentations", batch_augmentations)
     if train_augment is not None and is_training and "batch" in train_augment:
         laug_kwargs.setdefault("batch_augmentations", train_augment["batch"])
     if spectrogram_layout is not None:
-        aug_kwargs.setdefault("spectrogram_layout", spectrogram_layout)
         laug_kwargs.setdefault("spectrogram_layout", spectrogram_layout)
 
     if segment is not None:

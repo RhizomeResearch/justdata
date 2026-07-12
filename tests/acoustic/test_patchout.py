@@ -55,6 +55,21 @@ def test_patchout_disabled_eval():
     np.testing.assert_array_equal(y.numpy(), x.numpy())
 
 
+def test_patchout_eval_is_opt_in():
+    x = _grid()
+
+    y = passt_patchout(
+        x,
+        seed=[4, 0],
+        structured_frequency=3,
+        structured_time=2,
+        is_training=False,
+        augment_eval=True,
+    )
+
+    assert y.shape == (4, 5, 2)
+
+
 def test_patchout_metadata_debug():
     sample = {
         FEATURES: _grid(),

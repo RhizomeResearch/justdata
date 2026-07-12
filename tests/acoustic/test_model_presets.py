@@ -1,6 +1,8 @@
 from dataclasses import replace
 
+import numpy as np
 import pytest
+import tensorflow as tf
 
 import justdata.acoustic  # noqa: F401
 from justdata.acoustic.compat.efficientat import DCASE_CLASSES
@@ -11,6 +13,7 @@ from justdata.acoustic.configs import (
 )
 from justdata.acoustic.postprocessing import expected_audio_static_shape
 from justdata.acoustic.presets import get_dataset_presets, get_resolved_preset
+from justdata.acoustic.schema import FEATURES, SAMPLE_RATE, WAVEFORM
 from justdata.core.registry import get_pipeline
 
 
@@ -177,6 +180,36 @@ def test_passt_patchout_not_enabled_eval():
         "unstructured": 0,
     }
     assert "patchout" not in preset.eval_views
+
+
+def test_passt_assembled_pipeline_applies_patchout_after_frontend():
+    pipeline = get_pipeline(
+        dataset="dcase2025_task1",
+        preset="dcase2025_task1_passt_32k_1s",
+        apply_presets=True,
+    )
+    waveform = tf.sin(tf.linspace(0.0, 400.0, 32000))
+    sample = {WAVEFORM: waveform, SAMPLE_RATE: tf.constant(32000, tf.int32)}
+
+    preprocess, augment, late_augment, postprocess = pipeline.build(is_training=True)
+    processed = postprocess(augment(preprocess(sample), seed=[7, 2]))
+    batch = tf.nest.map_structure(lambda value: value[tf.newaxis, ...], processed)
+    first = late_augment(batch, seed=[13, 5])
+    second = late_augment(batch, seed=[13, 5])
+
+    assert batch[FEATURES].shape == (1, 1, 128, 101)
+    assert first[FEATURES].shape == (1, 1, 124, 61)
+    np.testing.assert_array_equal(first[FEATURES], second[FEATURES])
+
+    preprocess, augment, late_augment, postprocess = pipeline.build(is_training=False)
+    processed = postprocess(augment(preprocess(sample), seed=[7, 2]))
+    eval_batch = tf.nest.map_structure(
+        lambda value: value[tf.newaxis, ...], processed
+    )
+
+    np.testing.assert_array_equal(
+        late_augment(eval_batch, seed=[13, 5])[FEATURES], eval_batch[FEATURES]
+    )
 
 
 def test_ced_preset_uses_16k_64mel():

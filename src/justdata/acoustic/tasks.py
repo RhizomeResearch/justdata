@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 import tensorflow as tf
 
 from justdata.acoustic.registry import (
@@ -75,10 +77,13 @@ def make_augmentations(
     **kwargs,
 ):
     import justdata.acoustic.augment  # noqa: F401
-    from justdata.acoustic.augment import (
-        make_spectrogram_augmentation_stage,
-        make_waveform_augmentation_stage,
-    )
+    from justdata.acoustic.augment import make_waveform_augmentation_stage
+
+    if spectrogram_augmentations is not None:
+        raise ValueError(
+            "spectrogram_augmentations require post-frontend features; "
+            "pass them to make_late_augmentations instead"
+        )
 
     if waveform_augmentations is None and train_augment:
         if "waveform" in train_augment:
@@ -89,19 +94,6 @@ def make_augmentations(
                 key: value
                 for key, value in train_augment.items()
                 if key in known_waveform_augments
-            }
-
-    if spectrogram_augmentations is None and train_augment:
-        if "spectrogram" in train_augment:
-            spectrogram_augmentations = train_augment["spectrogram"]
-        else:
-            known_spectrogram_augments = set(list_audio_spectrogram_augments()) - {
-                "none"
-            }
-            spectrogram_augmentations = {
-                ("passt_patchout" if key == "patchout" else key): value
-                for key, value in train_augment.items()
-                if key in known_spectrogram_augments or key == "patchout"
             }
 
     stages = []
@@ -115,17 +107,6 @@ def make_augmentations(
                 augment_eval=augment_eval,
             )
         )
-    if spectrogram_augmentations:
-        stages.append(
-            make_spectrogram_augmentation_stage(
-                spectrogram_augmentations,
-                is_training=is_training,
-                augment_eval=augment_eval,
-                feature_key=spectrogram_key,
-                layout=spectrogram_layout,
-            )
-        )
-
     if not stages:
         return _identity_sample
 
@@ -144,7 +125,11 @@ def make_augmentations(
 
 def make_late_augmentations(**kwargs):
     import justdata.acoustic.augment  # noqa: F401
-    from justdata.acoustic.augment import make_batch_augmentation_stage
+    from justdata.acoustic.augment import (
+        make_batch_augmentation_stage,
+        make_spectrogram_augmentation_stage,
+        normalize_spectrogram_augment_specs,
+    )
 
     known_batch_augments = {
         "batch_mixstyle",
@@ -162,7 +147,27 @@ def make_late_augmentations(**kwargs):
     input_kind = kwargs.pop("input_kind", None)
     label_mode = kwargs.pop("label_mode", None)
     label_transform = kwargs.pop("label_transform", None)
+    spectrogram_augmentations = kwargs.pop("spectrogram_augmentations", None)
+    spectrogram_key = kwargs.pop("spectrogram_key", FEATURES)
     spectrogram_layout = kwargs.pop("spectrogram_layout", None)
+    model_layout = kwargs.pop("model_layout", None)
+
+    if spectrogram_augmentations is None and train_augment:
+        if "spectrogram" in train_augment:
+            spectrogram_augmentations = train_augment["spectrogram"]
+        else:
+            known_spectrogram_augments = set(list_audio_spectrogram_augments()) - {
+                "none"
+            }
+            spectrogram_augmentations = {
+                ("passt_patchout" if key == "patchout" else key): value
+                for key, value in train_augment.items()
+                if (
+                    key in known_spectrogram_augments
+                    and key not in known_batch_augments
+                )
+                or key == "patchout"
+            }
 
     if batch_augmentations is None and train_augment:
         if "batch" in train_augment:
@@ -179,8 +184,28 @@ def make_late_augmentations(**kwargs):
             key: kwargs.pop(key) for key in tuple(kwargs) if key in known_batch_augments
         }
 
-    if not batch_augmentations:
+    spectrogram_specs = normalize_spectrogram_augment_specs(
+        spectrogram_augmentations
+    )
+    if not spectrogram_specs and not batch_augmentations:
         return _identity_batch
+
+    sample_layouts = {"tf", "tfc", "cft"}
+    batch_to_sample_layout = {"btf": "tf", "btfc": "tfc", "bcft": "cft"}
+    layout_source = spectrogram_layout or model_layout
+    if not spectrogram_specs:
+        sample_spectrogram_layout = None
+    elif layout_source in sample_layouts or layout_source is None:
+        sample_spectrogram_layout = layout_source
+    elif layout_source in batch_to_sample_layout:
+        sample_spectrogram_layout = batch_to_sample_layout[layout_source]
+    else:
+        raise ValueError(
+            "Spectrogram augmentation layout must be one of 'tf', 'tfc', "
+            "'cft', 'btf', 'btfc', or 'bcft'"
+        )
+
+    batch_spectrogram_layout = model_layout or spectrogram_layout
 
     label_config = (
         LabelTransformConfig.from_dict(label_transform)
@@ -188,7 +213,14 @@ def make_late_augmentations(**kwargs):
         else None
     )
     label_transform_dict = label_config.to_dict() if label_config is not None else None
-    stage = make_batch_augmentation_stage(
+    spectrogram_stage = make_spectrogram_augmentation_stage(
+        spectrogram_specs,
+        is_training=is_training,
+        augment_eval=augment_eval,
+        feature_key=spectrogram_key,
+        layout=sample_spectrogram_layout,
+    )
+    batch_stage = make_batch_augmentation_stage(
         batch_augmentations,
         is_training=is_training,
         augment_eval=augment_eval,
@@ -196,14 +228,72 @@ def make_late_augmentations(**kwargs):
         input_kind=input_kind,
         label_mode=label_mode,
         label_transform=label_transform_dict,
-        spectrogram_layout=spectrogram_layout,
+        spectrogram_layout=batch_spectrogram_layout,
     )
+
+    def mapped_output_signature(batch):
+        signature = tf.nest.map_structure(
+            lambda value: tf.TensorSpec(value.shape[1:], value.dtype), batch
+        )
+        feature = batch[spectrogram_key]
+        signature[spectrogram_key] = tf.TensorSpec(
+            [None] * (feature.shape.rank - 1), feature.dtype
+        )
+
+        def patchout_debug_enabled(spec):
+            config = spec.get("config")
+            config_debug = (
+                config.get("debug", False) if isinstance(config, Mapping) else False
+            )
+            return spec["name"] == "passt_patchout" and bool(
+                spec.get("debug", config_debug)
+            )
+
+        patchout_debug = any(map(patchout_debug_enabled, spectrogram_specs))
+        if patchout_debug:
+            metadata_signature = dict(signature.get(METADATA, {}))
+            metadata_signature["patchout"] = {
+                "structured_frequency": tf.TensorSpec([None], tf.int32),
+                "structured_time": tf.TensorSpec([None], tf.int32),
+                "unstructured": tf.TensorSpec([None], tf.int32),
+            }
+            signature[METADATA] = metadata_signature
+        return signature
 
     def late_augmentations(batch, num_classes=None, seed=None, **_kwargs):
         effective_num_classes = num_classes
         if effective_num_classes is None and label_config is not None:
             effective_num_classes = label_config.num_classes
-        return stage(batch, num_classes=effective_num_classes, seed=seed)
+
+        result = batch
+        if spectrogram_specs:
+            if spectrogram_key not in batch:
+                raise ValueError(
+                    f"Spectrogram augmentations require batch key "
+                    f"{spectrogram_key!r}"
+                )
+            base_seed = _seed_tensor(seed)
+            if base_seed is None:
+                base_seed = tf.constant([0, 0], dtype=tf.int32)
+            spectrogram_seed, batch_seed = tf.unstack(tf.random.split(base_seed, 2))
+            row_seeds = tf.random.split(
+                spectrogram_seed, tf.shape(batch[spectrogram_key])[0]
+            )
+            result = tf.map_fn(
+                lambda values: spectrogram_stage(values[0], seed=values[1]),
+                (batch, row_seeds),
+                fn_output_signature=mapped_output_signature(batch),
+            )
+        else:
+            batch_seed = seed
+
+        if batch_augmentations:
+            result = batch_stage(
+                result,
+                num_classes=effective_num_classes,
+                seed=batch_seed,
+            )
+        return result
 
     return late_augmentations
 

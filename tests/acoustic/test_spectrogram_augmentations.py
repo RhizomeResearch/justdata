@@ -20,6 +20,8 @@ from justdata.acoustic.registry import (
     get_audio_spectrogram_augment,
     get_audio_spectrogram_augment_metadata,
 )
+from justdata.acoustic.schema import FEATURES, LABEL, METADATA
+from justdata.acoustic.tasks import make_augmentations, make_late_augmentations
 from justdata.vision.augmentations.registry import get_augment_strategy
 
 
@@ -191,3 +193,114 @@ def test_spectrogram_augments_have_audio_metadata_only():
     assert metadata.requires_labels is False
     with pytest.raises(ValueError):
         get_augment_strategy("frequency_mask")
+
+
+def test_pre_frontend_augmentations_reject_spectrogram_configuration():
+    with pytest.raises(ValueError, match="post-frontend features"):
+        make_augmentations(spectrogram_augmentations={"frequency_mask": {}})
+
+
+@pytest.mark.parametrize("batch_size", [1, 3])
+def test_late_spectrogram_augmentation_maps_real_rows_deterministically(batch_size):
+    features = tf.ones([batch_size, 12, 8], dtype=tf.float32)
+    batch = {
+        FEATURES: features,
+        LABEL: tf.range(batch_size),
+        METADATA: {"example_id": tf.strings.as_string(tf.range(batch_size))},
+    }
+    stage = make_late_augmentations(
+        spectrogram_augmentations={
+            "frequency_mask": {
+                "max_width": 6,
+                "fill_value": "zero",
+            }
+        },
+        model_layout="btf",
+    )
+
+    first = stage(batch, seed=[41, 9])
+    second = stage(batch, seed=[41, 9])
+
+    np.testing.assert_array_equal(first[FEATURES], second[FEATURES])
+    np.testing.assert_array_equal(first[LABEL], batch[LABEL])
+    np.testing.assert_array_equal(
+        first[METADATA]["example_id"], batch[METADATA]["example_id"]
+    )
+    assert np.any(first[FEATURES].numpy() != features.numpy())
+    if batch_size == 3:
+        assert not np.array_equal(first[FEATURES][0], first[FEATURES][1])
+
+
+@pytest.mark.parametrize(
+    ("model_layout", "shape"),
+    [
+        ("btf", (2, 12, 8)),
+        ("btfc", (2, 12, 8, 1)),
+        ("bcft", (2, 1, 8, 12)),
+    ],
+)
+def test_late_spectrogram_augmentation_infers_sample_layout(model_layout, shape):
+    batch = {FEATURES: tf.ones(shape, dtype=tf.float32)}
+    stage = make_late_augmentations(
+        spectrogram_augmentations={
+            "time_mask": {"max_width": 4, "fill_value": "zero"}
+        },
+        model_layout=model_layout,
+    )
+
+    result = stage(batch, seed=[17, 3])
+
+    assert result[FEATURES].shape == shape
+
+
+def test_late_spectrogram_augmentation_rejects_incompatible_layout():
+    with pytest.raises(ValueError, match="Spectrogram augmentation layout"):
+        make_late_augmentations(
+            spectrogram_augmentations={"time_mask": {}},
+            model_layout="bctf",
+        )
+
+
+def test_late_patchout_preserves_metadata_and_records_per_row_debug_data():
+    batch = {
+        FEATURES: tf.ones([3, 1, 8, 12], dtype=tf.float32),
+        METADATA: {"example_id": tf.constant(["a", "b", "c"])},
+    }
+    stage = make_late_augmentations(
+        spectrogram_augmentations={
+            "patchout": {
+                "structured_frequency": 2,
+                "structured_time": 3,
+                "debug": True,
+            }
+        },
+        model_layout="bcft",
+    )
+
+    result = stage(batch)
+
+    assert result[FEATURES].shape == (3, 1, 6, 9)
+    np.testing.assert_array_equal(
+        result[METADATA]["example_id"], batch[METADATA]["example_id"]
+    )
+    assert result[METADATA]["patchout"]["structured_frequency"].shape == (3, 2)
+    assert result[METADATA]["patchout"]["structured_time"].shape == (3, 3)
+
+
+def test_late_spectrogram_augmentation_is_eval_opt_in():
+    batch = {FEATURES: tf.ones([1, 12, 8], dtype=tf.float32)}
+    config = {"frequency_mask": {"max_width": 8, "fill_value": "zero"}}
+    disabled = make_late_augmentations(
+        spectrogram_augmentations=config,
+        model_layout="btf",
+        is_training=False,
+    )
+    enabled = make_late_augmentations(
+        spectrogram_augmentations=config,
+        model_layout="btf",
+        is_training=False,
+        augment_eval=True,
+    )
+
+    np.testing.assert_array_equal(disabled(batch, seed=[29, 4])[FEATURES], batch[FEATURES])
+    assert np.any(enabled(batch, seed=[29, 4])[FEATURES].numpy() != batch[FEATURES].numpy())

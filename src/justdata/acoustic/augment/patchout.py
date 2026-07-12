@@ -117,8 +117,7 @@ def structured_patchout_frequency(
     is_training: bool = True,
     augment_eval: bool = False,
 ) -> tf.Tensor:
-    del augment_eval
-    if not is_training:
+    if not (is_training or augment_eval):
         return tf.convert_to_tensor(x)
     n_freq_patches = _non_negative_count("n_freq_patches", n_freq_patches)
     result, _ = _structured_patchout_frequency_with_indices(
@@ -139,8 +138,7 @@ def structured_patchout_time(
     is_training: bool = True,
     augment_eval: bool = False,
 ) -> tf.Tensor:
-    del augment_eval
-    if not is_training:
+    if not (is_training or augment_eval):
         return tf.convert_to_tensor(x)
     n_time_patches = _non_negative_count("n_time_patches", n_time_patches)
     result, _ = _structured_patchout_time_with_indices(
@@ -161,8 +159,7 @@ def unstructured_patchout(
     is_training: bool = True,
     augment_eval: bool = False,
 ) -> tf.Tensor:
-    del augment_eval
-    if not is_training:
+    if not (is_training or augment_eval):
         return tf.convert_to_tensor(x)
     n_patches = _non_negative_count("n_patches", n_patches)
     if _is_zero_count(n_patches):
@@ -285,8 +282,7 @@ def passt_patchout(
     is_training: bool = True,
     augment_eval: bool = False,
 ) -> tf.Tensor | dict:
-    del augment_eval
-    if not is_training:
+    if not (is_training or augment_eval):
         return dict(x) if isinstance(x, Mapping) else tf.convert_to_tensor(x)
 
     cfg = _resolve_patchout_counts(

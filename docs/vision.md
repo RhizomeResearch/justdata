@@ -4,6 +4,10 @@
 schema normalization, augmentation, batching, metadata, presets, and corruption
 benchmarks.
 
+Current pipeline support covers image classification and segmentation. Object
+detection and depth estimation remain future scope and are not registered
+capabilities.
+
 ## 1. Why justdata owns image transforms
 
 Vision checkpoints and training recipes assume exact preprocessing semantics:

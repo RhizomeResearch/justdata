@@ -34,11 +34,6 @@ def default_classification_pipeline(
     )
 
 
-@register_pipeline("vision/object_detection")
-def default_object_detection_pipeline(**kwargs) -> PipelineFuncs:
-    raise NotImplementedError
-
-
 @register_pipeline("vision/segmentation")
 def default_segmentation_pipeline(
     preproc_kwargs: dict = None,
@@ -65,8 +60,3 @@ def default_segmentation_pipeline(
         make_late_augmentations(**laug_kwargs),
         make_postprocessing(**postproc_kwargs),
     )
-
-
-@register_pipeline("vision/depth_estimation")
-def default_depth_estimation_pipeline(**kwargs) -> PipelineFuncs:
-    raise NotImplementedError

@@ -10,7 +10,23 @@ from justdata.core.registry import (
     get_pipeline,
     get_pipeline_for_dataset,
     get_task_for_dataset,
+    list_pipelines,
     register_dataset,
+)
+
+
+BUILTIN_VISION_DATASETS = (
+    "cifar10",
+    "cifar100",
+    "imagenet",
+    "imagenette",
+    "stanford_dogs",
+    "kitti_road",
+    "zenodo:",
+    "wilds:camelyon17",
+    "wilds:fmow",
+    "wilds:iwildcam",
+    "wilds:rxrx1",
 )
 
 
@@ -20,9 +36,6 @@ class TestDatasetTaskMapping:
         assert get_task_for_dataset("cifar10") == "classification"
         assert get_task_for_dataset("cifar100") == "classification"
         assert get_task_for_dataset("imagenette") == "classification"
-        assert get_task_for_dataset("voc") == "object_detection"
-        assert get_task_for_dataset("voc/2007") == "object_detection"
-        assert get_task_for_dataset("nyu_depth_v2_mini") == "depth_estimation"
         assert get_task_for_dataset("kitti_road") == "segmentation"
 
     def test_unknown_dataset_returns_none(self):
@@ -42,11 +55,6 @@ class TestDatasetTaskMapping:
         assert get_task_for_dataset("cifar100_corrupted") == "classification"
         # Sanity: cifar10_v2 should match cifar10
         assert get_task_for_dataset("cifar10_v2") == "classification"
-
-    def test_prefix_match_voc_subpath(self):
-        """'voc/2012/extra' should match 'voc/2012' (longest prefix)."""
-        assert get_task_for_dataset("voc/2012/extra") == "object_detection"
-
 
 # get_pipeline — argument resolution
 class TestGetPipeline:
@@ -151,6 +159,13 @@ class TestGetPipeline:
         with pytest.raises(ValueError, match="Could not resolve"):
             get_pipeline(dataset="totally_unknown_xyz")
 
+    @pytest.mark.parametrize(
+        "dataset", ("voc", "voc/2007", "voc/2012", "nyu_depth_v2_mini")
+    )
+    def test_unsupported_vision_dataset_raises_during_resolution(self, dataset):
+        with pytest.raises(ValueError, match="Could not resolve pipeline"):
+            get_pipeline(dataset=dataset, apply_presets=False)
+
     def test_unknown_pipeline_name_raises_on_build(self):
         with pytest.raises(ValueError, match="not found"):
             p = get_pipeline(pipeline_name="nonexistent_pipeline_xyz")
@@ -165,6 +180,31 @@ class TestGetPipeline:
             postproc_kwargs={"image_size": 32},
         )
         result = p.build(is_training=True)
+        assert len(result) == 4
+        assert all(callable(fn) for fn in result)
+
+    @pytest.mark.parametrize("dataset", BUILTIN_VISION_DATASETS)
+    def test_builtin_vision_dataset_resolves_to_buildable_pipeline(self, dataset):
+        result = get_pipeline(
+            dataset=dataset,
+            apply_presets=False,
+            aug_kwargs={"image_size": 32},
+            postproc_kwargs={"image_size": 32},
+        ).build(is_training=False)
+        assert len(result) == 4
+        assert all(callable(fn) for fn in result)
+
+    @pytest.mark.parametrize(
+        "pipeline_name",
+        [name for name in list_pipelines() if name.startswith("vision/")],
+    )
+    def test_registered_vision_pipeline_builds(self, pipeline_name):
+        result = get_pipeline(
+            pipeline_name=pipeline_name,
+            apply_presets=False,
+            aug_kwargs={"image_size": 32},
+            postproc_kwargs={"image_size": 32},
+        ).build(is_training=False)
         assert len(result) == 4
         assert all(callable(fn) for fn in result)
 

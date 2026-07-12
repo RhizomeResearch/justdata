@@ -113,7 +113,7 @@ Current vision behavior should remain functionally equivalent unless a task expl
 
 Important locations:
 
-- `justdata.vision.pipelines`: registers `vision/classification`, `vision/segmentation`, `vision/object_detection`, and `vision/depth_estimation`.
+- `justdata.vision.pipelines`: registers `vision/classification` and `vision/segmentation`.
 - `justdata.vision.sources`: registers the `hf:` Hugging Face vision source loader.
 - `justdata.vision.minic`: owns `create_minic_datasets`.
 - `justdata.vision.tasks`: task-specific pipeline factories.

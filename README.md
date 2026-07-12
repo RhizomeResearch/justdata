@@ -37,7 +37,7 @@ ______________________________________________________________________
 
 ## Architecture
 
-`justdata` is structured around a fixed, four-stage pipeline abstraction. Each task (classification, segmentation, depth estimation) exposes exactly four composable functions:
+`justdata` is structured around a fixed, four-stage pipeline abstraction. The currently supported vision tasks, classification and segmentation, each expose exactly four composable functions. Object detection and depth estimation are future scope and are not registered capabilities.
 
 ```
 (preprocess_fn, augment_fn, late_augment_fn, postprocess_fn)

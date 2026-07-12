@@ -179,7 +179,12 @@ def _translate(
     )
 
 
-def _rotate(image: tf.Tensor, degrees: float, replace: int = 0) -> tf.Tensor:
+def _rotate(
+    image: tf.Tensor,
+    degrees: float,
+    replace: int = 0,
+    interpolation: str = "NEAREST",
+) -> tf.Tensor:
     degrees_to_radians = math.pi / 180.0
     radians = tf.convert_to_tensor(degrees * degrees_to_radians, dtype=tf.float32)
     if radians.shape.rank == 0:
@@ -192,7 +197,11 @@ def _rotate(image: tf.Tensor, degrees: float, replace: int = 0) -> tf.Tensor:
 
     transforms = _convert_angles_to_transform(radians, image_width, image_height)
     image = _transform(
-        image, transforms=transforms, fill_mode="CONSTANT", fill_value=float(replace)
+        image,
+        transforms=transforms,
+        interpolation=interpolation,
+        fill_mode="CONSTANT",
+        fill_value=float(replace),
     )
     return from_4d(image, original_ndims)
 

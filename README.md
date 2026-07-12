@@ -173,6 +173,13 @@ This sign randomization is sampled independently per operation per sample, using
 
 **Geometric fill.** When pixels are shifted outside the image boundary by `Rotate`, `ShearX`, `ShearY`, `TranslateX`, or `TranslateY`, the vacated regions are filled with a constant value (default: 128). The interpolation mode defaults to nearest-neighbor for exact integer arithmetic; this may be overridden to bilinear to match the `torchvision` ImageNet presets.
 
+For segmentation pipelines, these geometric operations reuse the same sampled
+parameters for the image and segmentation map. The image uses bilinear
+interpolation, while the map uses nearest-neighbor interpolation and preserves
+its integer dtype. Vacated map pixels use the configurable `mask_fill_value`
+(default `255`), which must be treated as an ignore label by the training loss.
+Photometric operations continue to affect only the image.
+
 **Solarize semantics.** `Solarize` inverts all pixel values that are greater than or equal to the computed threshold $\tau$. Formally, for each pixel $p$:
 
 $$p' = \begin{cases} 255 - p & \text{if } p \geq \tau \\ p & \text{otherwise} \end{cases}$$

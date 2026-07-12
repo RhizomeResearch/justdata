@@ -28,6 +28,7 @@ def make_augmentations(
     ta_kwargs: dict = None,
     padding: int = 4,
     pad_mode: str = "REFLECT",
+    mask_fill_value: int = 255,
 ):
     if not enable:
 
@@ -39,8 +40,8 @@ def make_augmentations(
     crop_fn = get_crop_strategy(crop_type)
     aug_fn = get_augment_strategy(augment_type)
 
-    ra_kwargs = ra_kwargs or {}
-    ta_kwargs = ta_kwargs or {}
+    ra_kwargs = dict(ra_kwargs or {})
+    ta_kwargs = dict(ta_kwargs or {})
 
     def augmentations(sample, seed):
         seeds = tf.random.split(seed, 2)
@@ -71,8 +72,22 @@ def make_augmentations(
         mask = tf.cond(mask_was_2d, lambda: tf.squeeze(mask, -1), lambda: mask)
         sample = sample | {"image": image, "mask": mask}
 
-        # Color augmentation on image only (not mask)
+        # Automatic policies apply geometric operations to image and mask together.
         aug_kwargs_dict = ra_kwargs if augment_type == "rand_augment" else ta_kwargs
+        if augment_type in {
+            "rand_augment",
+            "trivial_augment",
+            "trivial_augment_wide",
+        }:
+            image, mask = aug_fn(
+                sample["image"],
+                seed=seeds[1],
+                segmentation_mask=sample["mask"],
+                segmentation_fill_value=mask_fill_value,
+                **aug_kwargs_dict,
+            )
+            return sample | {"image": image, "mask": mask}
+
         image = aug_fn(sample["image"], seed=seeds[1], **aug_kwargs_dict)
 
         return sample | {"image": image}

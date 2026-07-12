@@ -61,6 +61,16 @@ For vision classification the stages are:
 | `postprocess` | Deterministic resize/crop for eval, tensor normalization, layout conversion, one-hot labels, and hard-label metadata. |
 | `late_augment` | Training-only batch transforms such as Mixup, CutMix, and random erasing. |
 
+For segmentation, RandAugment, TrivialAugment, and TrivialAugmentWide apply
+each sampled rotation, shear, or translation to the image and `mask` together.
+Images use bilinear interpolation while masks use nearest-neighbor
+interpolation, preserving discrete class values and mask dtype. Pixels exposed
+outside the transformed mask use `mask_fill_value` from
+`make_augmentations` (default `255`); the training loss must ignore the chosen
+fill label. Photometric policy operations modify only the image. Custom
+registered augmentation strategies remain image-only and therefore must not
+perform geometry when used by the segmentation pipeline.
+
 ## 4. How to choose a preset
 
 Choose the preset that matches the dataset scale and model recipe:

@@ -14,6 +14,7 @@ from justdata.vision.utils import (
     _invert,
     _posterize,
     _randomly_negate_tensor,
+    _rotate,
     _rotate_with_bboxes,
     _sharpness,
     _shear_with_bboxes,
@@ -22,6 +23,8 @@ from justdata.vision.utils import (
     _solarize_add,
     _solarize_val,
     _translate_bbox,
+    _transform,
+    _translate,
     _translate_x,
     _translate_y,
     _wrapped_rotate,
@@ -33,9 +36,80 @@ _B = 30.0
 # Ops outside the strict 14-op RA space; not in the default pool for any algorithm
 _NON_RA_OPS = ["Invert", "Cutout", "SolarizeAdd", "Grayscale"]
 
+RAND_AUGMENT_OPS = (
+    "Identity",
+    "AutoContrast",
+    "Equalize",
+    "Rotate",
+    "Posterize",
+    "Solarize",
+    "Color",
+    "Contrast",
+    "Brightness",
+    "Sharpness",
+    "ShearX",
+    "ShearY",
+    "TranslateX",
+    "TranslateY",
+)
+RAND_AUGMENT_SPATIAL_OPS = (
+    "Rotate",
+    "ShearX",
+    "ShearY",
+    "TranslateX",
+    "TranslateY",
+)
+
 
 def _identity(image):
     return image
+
+
+def _apply_segmentation_geometric_op(
+    image,
+    mask,
+    name,
+    args,
+    image_replace,
+    mask_replace,
+):
+    def apply(value, interpolation, replace):
+        if name == "Rotate":
+            return _rotate(
+                value,
+                args[0],
+                replace=replace,
+                interpolation=interpolation,
+            )
+        if name in ("TranslateX", "TranslateY"):
+            translations = (
+                [-args[0], 0] if name == "TranslateX" else [0, -args[0]]
+            )
+            return _translate(
+                value,
+                translations,
+                replace=replace,
+                interpolation=interpolation,
+            )
+        if name in ("ShearX", "ShearY"):
+            transforms = (
+                [1.0, args[0], 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+                if name == "ShearX"
+                else [1.0, 0.0, 0.0, args[0], 1.0, 0.0, 0.0, 0.0]
+            )
+            return _transform(
+                value,
+                transforms=transforms,
+                interpolation=interpolation,
+                fill_mode="CONSTANT",
+                fill_value=float(replace),
+            )
+        raise ValueError(f"Unsupported segmentation geometric operation: {name}")
+
+    return (
+        apply(image, interpolation="BILINEAR", replace=image_replace),
+        apply(mask, interpolation="NEAREST", replace=mask_replace),
+    )
 
 
 @tf.function
@@ -54,6 +128,8 @@ def rand_augment(
     shear_max: float = 0.3,
     enhance_max: float = 0.9,
     posterize_max_bits: int = 4,
+    segmentation_mask: Optional[tf.Tensor] = None,
+    segmentation_fill_value: int = 255,
 ) -> Union[tf.Tensor, Tuple[tf.Tensor, tf.Tensor]]:
     """RandAugment on the 31-bin (m ∈ {0…30}, B=30) scale.
 
@@ -64,7 +140,14 @@ def rand_augment(
     - Enhance:   1 + (m/B) * enhance_max * s      default MaxDelta=0.9
     - Posterize: 8 - round(m * posterize_max_bits / B)  default min 4 bits
     - Solarize:  255 * (1 - m/B)
+
+    When ``segmentation_mask`` is provided, geometric operations reuse the
+    image's sampled parameters with bilinear image interpolation and nearest
+    mask interpolation. Vacated mask pixels use ``segmentation_fill_value``.
     """
+    if bboxes is not None and segmentation_mask is not None:
+        raise ValueError("RandAugment cannot transform bboxes and a mask together")
+
     input_image_type = image.dtype
     if input_image_type != tf.uint8:
         image = tf.clip_by_value(image, 0.0, 255.0)
@@ -146,6 +229,16 @@ def rand_augment(
         ]
 
         def wrapped(img, boxes, args, seed):
+            if segmentation_mask is not None and name in RAND_AUGMENT_SPATIAL_OPS:
+                return _apply_segmentation_geometric_op(
+                    img,
+                    boxes,
+                    name,
+                    args,
+                    replace_value,
+                    segmentation_fill_value,
+                )
+
             call_args = [img]
             if needs_bbox:
                 call_args.append(boxes)
@@ -197,22 +290,7 @@ def rand_augment(
     }
 
     # Strict 14-op RA space: 3 magnitude-independent + 11 magnitude-dependent
-    available_ops = [
-        "Identity",
-        "AutoContrast",
-        "Equalize",
-        "Rotate",
-        "Posterize",
-        "Solarize",
-        "Color",
-        "Contrast",
-        "Brightness",
-        "Sharpness",
-        "ShearX",
-        "ShearY",
-        "TranslateX",
-        "TranslateY",
-    ]
+    available_ops = list(RAND_AUGMENT_OPS)
 
     if bboxes is not None:
         box_aware_ops = {
@@ -226,9 +304,11 @@ def rand_augment(
 
     if exclude_ops:
         available_ops = [op for op in available_ops if op not in exclude_ops]
+    if not available_ops:
+        raise ValueError("RandAugment requires at least one non-excluded operation")
 
     aug_image = image
-    aug_bboxes = bboxes
+    aug_bboxes = segmentation_mask if segmentation_mask is not None else bboxes
     seed_layers = tf.random.split(seed, num_layers)
 
     for i in range(num_layers):
@@ -278,7 +358,7 @@ def rand_augment(
 
     aug_image = tf.cast(aug_image, dtype=input_image_type)
 
-    if bboxes is None:
+    if bboxes is None and segmentation_mask is None:
         return aug_image
     return aug_image, aug_bboxes
 
@@ -290,11 +370,14 @@ def trivial_augment(
     bboxes: Optional[tf.Tensor] = None,
     translate_const: Optional[float] = None,
     exclude_ops: Optional[List[str]] = None,
+    segmentation_mask: Optional[tf.Tensor] = None,
+    segmentation_fill_value: int = 255,
 ) -> Union[tf.Tensor, Tuple[tf.Tensor, tf.Tensor]]:
     """TrivialAugment: one op from the strict 14-op RA space, m ~ U{0,…,30}.
 
     Standard bounds. translate_const defaults to (150/331)*image_width if not
-    provided, matching the proportional RA-space definition.
+    provided, matching the proportional RA-space definition. Segmentation
+    masks follow the paired geometric behavior documented by ``rand_augment``.
     """
     seeds = tf.random.split(seed, 2)
     # Discrete uniform magnitude: m ~ U{0, 1, …, 30}
@@ -322,6 +405,8 @@ def trivial_augment(
         magnitude=magnitude,
         translate_const=translate_const,
         exclude_ops=ta_exclude,
+        segmentation_mask=segmentation_mask,
+        segmentation_fill_value=segmentation_fill_value,
     )
 
 
@@ -331,6 +416,8 @@ def trivial_augment_wide(
     seed: tf.Tensor,
     bboxes: Optional[tf.Tensor] = None,
     exclude_ops: Optional[List[str]] = None,
+    segmentation_mask: Optional[tf.Tensor] = None,
+    segmentation_fill_value: int = 255,
 ) -> Union[tf.Tensor, Tuple[tf.Tensor, tf.Tensor]]:
     """TrivialAugmentWide: one op from the strict 14-op RA space, m ~ U{0,…,30}.
 
@@ -341,6 +428,9 @@ def trivial_augment_wide(
     - Shear:     ±0.99   (vs standard ±0.3)
     - Enhance:   MaxDelta=0.99  (vs standard 0.9)
     - Posterize: min 2 bits  (vs standard min 4 bits)
+
+    Segmentation masks follow the paired geometric behavior documented by
+    ``rand_augment``.
     """
     seeds = tf.random.split(seed, 2)
     # Discrete uniform magnitude: m ~ U{0, 1, …, 30}
@@ -367,6 +457,8 @@ def trivial_augment_wide(
         enhance_max=0.99,  # Wide: MaxDelta=0.99
         posterize_max_bits=6,  # Wide: min 2 bits kept (8 − 6 = 2)
         exclude_ops=ta_exclude,
+        segmentation_mask=segmentation_mask,
+        segmentation_fill_value=segmentation_fill_value,
     )
 
 

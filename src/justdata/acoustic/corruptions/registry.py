@@ -143,6 +143,7 @@ def _resize_time(x: tf.Tensor, target_length: tf.Tensor) -> tf.Tensor:
 
 
 def _sample_rate(config: dict | None, default: int = 32000) -> tf.Tensor:
+    """Read the rate supplied by dataset helpers, defaulting for direct callers."""
     value = default if config is None else config.get("sample_rate", default)
     return tf.cast(value, tf.float32)
 

@@ -9,7 +9,7 @@ from justdata.acoustic.corruptions.registry import (
     _seed_from_index,
     apply_audio_corruption,
 )
-from justdata.acoustic.schema import FEATURES, WAVEFORM
+from justdata.acoustic.schema import FEATURES, SAMPLE_RATE, WAVEFORM
 from justdata.core.loader import load_ds
 from justdata.core.registry import get_pipeline
 
@@ -125,6 +125,15 @@ def _corrupt_sample(
         raise ValueError(
             f"Audio corruption domain '{domain}' requires sample key '{key}'."
         )
+    corruption_config = config
+    if domain == "waveform":
+        if SAMPLE_RATE not in sample:
+            raise ValueError(
+                f"Audio corruption domain '{domain}' requires sample key "
+                f"'{SAMPLE_RATE}'."
+            )
+        corruption_config = dict(config) if config is not None else {}
+        corruption_config.setdefault("sample_rate", sample[SAMPLE_RATE])
     sample_seed = _seed_from_index(seed, index, salt=salt * 1_000_003)
     result = dict(sample)
     result[key] = apply_audio_corruption(
@@ -132,7 +141,7 @@ def _corrupt_sample(
         name,
         severity,
         sample_seed,
-        config=config,
+        config=corruption_config,
     )
     return _metadata_with_corruption(
         result,

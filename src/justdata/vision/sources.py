@@ -1,14 +1,18 @@
 import hashlib
 import json
 import os
+import re
 import shutil
+import stat
 import tarfile
+import tempfile
+import time
 import urllib.request
 import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Union
 from urllib.parse import parse_qsl, quote, urlparse
 
@@ -20,6 +24,13 @@ from justdata.core.sources import register_source_loader, source_cache_dir
 
 _ZENODO_PREFIX = "zenodo:"
 _ZENODO_QUERY_PARAMS = {"file"}
+_ZENODO_ORIGIN = "zenodo.org"
+_ZENODO_NETWORK_TIMEOUT_SECONDS = 60
+_ZENODO_DOWNLOAD_TIMEOUT_SECONDS = 60 * 60
+_ZENODO_DOWNLOAD_CHUNK_BYTES = 1024 * 1024
+_ZENODO_MAX_ARCHIVE_BYTES = 20 * 1024**3
+_ZENODO_MAX_EXTRACTED_BYTES = 100 * 1024**3
+_ZENODO_MAX_ARCHIVE_MEMBERS = 100_000
 _IMAGE_EXTENSIONS = {
     ".bmp",
     ".gif",
@@ -83,10 +94,8 @@ def _import_datasets():
 def _parse_zenodo_spec(dataset_name: str) -> _ZenodoImageFolderSpec:
     raw = _strip_prefix(dataset_name, _ZENODO_PREFIX)
     record_id, sep, query = raw.partition("?")
-    if not record_id:
-        raise ValueError("Zenodo dataset name must include a record id.")
-    if "/" in record_id:
-        raise ValueError("Zenodo record id must not contain '/'.")
+    if not re.fullmatch(r"[1-9][0-9]*", record_id):
+        raise ValueError("Zenodo record id must be a positive integer.")
 
     values: dict[str, str] = {}
     for key, value in parse_qsl(query if sep else "", keep_blank_values=True):
@@ -102,8 +111,29 @@ def _parse_zenodo_spec(dataset_name: str) -> _ZenodoImageFolderSpec:
     filename = values.get("file", "")
     if not filename:
         raise ValueError("Zenodo source requires ?file=<archive-name>.")
+    _validate_zenodo_filename(filename)
 
     return _ZenodoImageFolderSpec(record_id=record_id, filename=filename)
+
+
+def _validate_zenodo_filename(filename: str) -> None:
+    posix_path = PurePosixPath(filename)
+    windows_path = PureWindowsPath(filename)
+    if (
+        filename in {".", ".."}
+        or "\x00" in filename
+        or posix_path.is_absolute()
+        or windows_path.is_absolute()
+        or windows_path.drive
+        or posix_path.name != filename
+        or windows_path.name != filename
+        or "/" in filename
+        or "\\" in filename
+    ):
+        raise ValueError(
+            f"Zenodo archive filename must be a basename without path segments: "
+            f"{filename!r}."
+        )
 
 
 def _zenodo_record_dir(
@@ -120,11 +150,15 @@ def _fetch_zenodo_record(record_id: str) -> dict[str, Any]:
 
 
 def _select_zenodo_file(record: dict[str, Any], filename: str) -> dict[str, Any]:
+    if not isinstance(record, dict):
+        raise ValueError("Zenodo record metadata must be an object.")
     files = record.get("files")
     if not isinstance(files, list):
         raise ValueError("Zenodo record metadata does not contain a files list.")
 
     for file_info in files:
+        if not isinstance(file_info, dict):
+            continue
         if file_info.get("key") == filename or file_info.get("filename") == filename:
             return file_info
 
@@ -142,23 +176,66 @@ def _zenodo_download_url(
     spec: _ZenodoImageFolderSpec,
     file_info: dict[str, Any],
 ) -> str:
-    links = file_info.get("links") or {}
+    links = file_info.get("links")
+    if links is None:
+        links = {}
+    if not isinstance(links, dict):
+        raise ValueError("Zenodo file links metadata must be an object.")
     for key in ("content", "download"):
         value = links.get(key)
         if value:
-            return str(value)
+            return _validate_zenodo_download_url(str(value))
 
     value = links.get("self")
     if value and str(value).rstrip("/").endswith("/content"):
-        return str(value)
+        return _validate_zenodo_download_url(str(value))
 
     quoted = quote(spec.filename)
-    return f"https://zenodo.org/records/{spec.record_id}/files/{quoted}?download=1"
+    return _validate_zenodo_download_url(
+        f"https://zenodo.org/records/{spec.record_id}/files/{quoted}?download=1"
+    )
+
+
+def _validate_zenodo_download_url(url: str) -> str:
+    parsed = urlparse(url)
+    try:
+        port = parsed.port
+    except ValueError as e:
+        raise ValueError(
+            "Zenodo download link must use the https://zenodo.org origin."
+        ) from e
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != _ZENODO_ORIGIN
+        or port not in (None, 443)
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError(
+            "Zenodo download link must use the https://zenodo.org origin."
+        )
+    return url
+
+
+def _zenodo_declared_size(file_info: dict[str, Any]) -> int | None:
+    size = file_info.get("size")
+    if size is None:
+        return None
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        raise ValueError("Zenodo file size must be a non-negative integer.")
+    if size > _ZENODO_MAX_ARCHIVE_BYTES:
+        raise ValueError(
+            f"Zenodo file size {size} exceeds the archive byte limit "
+            f"({_ZENODO_MAX_ARCHIVE_BYTES})."
+        )
+    return size
 
 
 def _checksum_parts(checksum: str | None) -> tuple[str, str] | None:
     if not checksum:
         return None
+    if not isinstance(checksum, str):
+        raise ValueError("Zenodo checksum must be a string.")
 
     algorithm, sep, expected = checksum.partition(":")
     if not sep:
@@ -185,27 +262,74 @@ def _file_matches_checksum(path: Path, checksum: str | None) -> bool:
     return digest.hexdigest().lower() == expected
 
 
-def _copy_file_url(url: str, target: Path) -> None:
-    parsed = urlparse(url)
-    source = Path(urllib.request.url2pathname(parsed.path))
-    shutil.copyfile(source, target)
-
-
-def _download_file(url: str, target: Path) -> None:
+def _download_file(
+    url: str,
+    target: Path,
+    *,
+    expected_size: int | None,
+    checksum: str | None,
+) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(f"{target.name}.tmp")
-    if tmp.exists():
-        tmp.unlink()
-
+    parts = _checksum_parts(checksum)
+    digest = hashlib.new(parts[0]) if parts is not None else None
+    started_at = time.monotonic()
+    bytes_downloaded = 0
+    tmp_path: Path | None = None
     try:
-        if urlparse(url).scheme == "file":
-            _copy_file_url(url, tmp)
-        else:
-            urllib.request.urlretrieve(url, tmp)
-        tmp.replace(target)
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            dir=target.parent,
+            delete=False,
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+            with urllib.request.urlopen(
+                url, timeout=_ZENODO_NETWORK_TIMEOUT_SECONDS
+            ) as response:
+                while True:
+                    if (
+                        time.monotonic() - started_at
+                        > _ZENODO_DOWNLOAD_TIMEOUT_SECONDS
+                    ):
+                        raise TimeoutError(
+                            "Zenodo download exceeded the transfer time limit."
+                        )
+                    chunk = response.read(_ZENODO_DOWNLOAD_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    bytes_downloaded += len(chunk)
+                    byte_limit = (
+                        expected_size
+                        if expected_size is not None
+                        else _ZENODO_MAX_ARCHIVE_BYTES
+                    )
+                    if bytes_downloaded > byte_limit:
+                        raise ValueError(
+                            "Zenodo download exceeded its declared or configured "
+                            "archive byte limit."
+                        )
+                    tmp.write(chunk)
+                    if digest is not None:
+                        digest.update(chunk)
+
+            if expected_size is not None and bytes_downloaded != expected_size:
+                raise ValueError(
+                    f"Zenodo download size mismatch: expected {expected_size} "
+                    f"bytes, received {bytes_downloaded}."
+                )
+            if parts is not None and digest.hexdigest().lower() != parts[1]:
+                raise ValueError(
+                    f"Downloaded Zenodo file {target.name!r} failed checksum "
+                    "validation."
+                )
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_path, target)
+        tmp_path = None
     finally:
-        if tmp.exists():
-            tmp.unlink()
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
 def _archive_stem(filename: str) -> str:
@@ -221,33 +345,113 @@ def _archive_stem(filename: str) -> str:
 
 
 def _assert_safe_extract_path(destination: Path, member_name: str) -> None:
+    path = PurePosixPath(member_name)
+    windows_path = PureWindowsPath(member_name)
+    if (
+        not member_name
+        or "\\" in member_name
+        or path.is_absolute()
+        or windows_path.is_absolute()
+        or windows_path.drive
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise ValueError(f"Unsafe archive member path: {member_name!r}.")
     target = (destination / member_name).resolve()
     root = destination.resolve()
     if target != root and root not in target.parents:
         raise ValueError(f"Archive member escapes extraction directory: {member_name}")
 
 
+def _check_archive_budget(
+    destination: Path,
+    members: list[tuple[str, int]],
+) -> None:
+    if len(members) > _ZENODO_MAX_ARCHIVE_MEMBERS:
+        raise ValueError(
+            f"Archive member count {len(members)} exceeds the limit "
+            f"({_ZENODO_MAX_ARCHIVE_MEMBERS})."
+        )
+    expanded_bytes = sum(size for _, size in members)
+    if expanded_bytes > _ZENODO_MAX_EXTRACTED_BYTES:
+        raise ValueError(
+            f"Archive expanded size {expanded_bytes} exceeds the byte limit "
+            f"({_ZENODO_MAX_EXTRACTED_BYTES})."
+        )
+    free_bytes = shutil.disk_usage(destination.parent).free
+    if expanded_bytes > free_bytes:
+        raise ValueError(
+            f"Archive requires {expanded_bytes} extracted bytes but the cache has "
+            f"only {free_bytes} bytes free."
+        )
+
+
+def _normalized_archive_member(destination: Path, member_name: str) -> str:
+    _assert_safe_extract_path(destination, member_name)
+    return PurePosixPath(member_name).as_posix().rstrip("/")
+
+
+def _preflight_zip(archive: zipfile.ZipFile, destination: Path) -> None:
+    members: list[tuple[str, int]] = []
+    destinations: set[str] = set()
+    for member in archive.infolist():
+        normalized = _normalized_archive_member(destination, member.filename)
+        if normalized in destinations:
+            raise ValueError(
+                f"Archive contains duplicate member path: {member.filename!r}."
+            )
+        destinations.add(normalized)
+
+        mode = member.external_attr >> 16
+        file_type = stat.S_IFMT(mode)
+        is_directory = member.is_dir()
+        if file_type == stat.S_IFLNK:
+            raise ValueError(f"Archive member uses a link: {member.filename!r}.")
+        if file_type not in (0, stat.S_IFREG, stat.S_IFDIR) or (
+            file_type == stat.S_IFDIR and not is_directory
+        ):
+            raise ValueError(
+                f"Archive member is not a regular file or directory: "
+                f"{member.filename!r}."
+            )
+        members.append((member.filename, 0 if is_directory else member.file_size))
+    _check_archive_budget(destination, members)
+
+
+def _preflight_tar(archive: tarfile.TarFile, destination: Path) -> None:
+    members: list[tuple[str, int]] = []
+    destinations: set[str] = set()
+    for member in archive.getmembers():
+        normalized = _normalized_archive_member(destination, member.name)
+        if normalized in destinations:
+            raise ValueError(
+                f"Archive contains duplicate member path: {member.name!r}."
+            )
+        destinations.add(normalized)
+        if not (member.isfile() or member.isdir()):
+            category = "link" if member.issym() or member.islnk() else "special file"
+            raise ValueError(f"Archive member uses a {category}: {member.name!r}.")
+        members.append((member.name, member.size if member.isfile() else 0))
+    _check_archive_budget(destination, members)
+
+
 def _extract_archive(archive_path: Path, extract_dir: Path) -> None:
-    tmp_dir = extract_dir.with_name(f"{extract_dir.name}.tmp")
-    if tmp_dir.exists():
-        shutil.rmtree(tmp_dir)
-    tmp_dir.mkdir(parents=True, exist_ok=True)
+    extract_dir.parent.mkdir(parents=True, exist_ok=True)
+    tmp_dir = Path(
+        tempfile.mkdtemp(prefix=f".{extract_dir.name}.", dir=extract_dir.parent)
+    )
 
     try:
         if zipfile.is_zipfile(archive_path):
             with zipfile.ZipFile(archive_path) as archive:
-                for member in archive.infolist():
-                    _assert_safe_extract_path(tmp_dir, member.filename)
+                _preflight_zip(archive, tmp_dir)
                 archive.extractall(tmp_dir)
         elif tarfile.is_tarfile(archive_path):
             with tarfile.open(archive_path) as archive:
-                for member in archive.getmembers():
-                    if member.issym() or member.islnk():
-                        raise ValueError(
-                            f"Archive member uses a link: {member.name}"
-                        )
-                    _assert_safe_extract_path(tmp_dir, member.name)
-                archive.extractall(tmp_dir)
+                _preflight_tar(archive, tmp_dir)
+                if hasattr(tarfile, "data_filter"):
+                    archive.extractall(tmp_dir, filter="data")
+                else:
+                    archive.extractall(tmp_dir)
         else:
             raise ValueError(
                 f"Zenodo file {archive_path.name!r} is not a supported ZIP/TAR archive."
@@ -255,7 +459,7 @@ def _extract_archive(archive_path: Path, extract_dir: Path) -> None:
 
         if extract_dir.exists():
             shutil.rmtree(extract_dir)
-        tmp_dir.replace(extract_dir)
+        os.replace(tmp_dir, extract_dir)
     except Exception:
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir)
@@ -269,26 +473,41 @@ def _prepare_zenodo_archive(
     record = _fetch_zenodo_record(spec.record_id)
     file_info = _select_zenodo_file(record, spec.filename)
     checksum = file_info.get("checksum")
+    expected_size = _zenodo_declared_size(file_info)
+    download_url = _zenodo_download_url(spec, file_info)
 
     record_dir = _zenodo_record_dir(spec, data_dir)
     archive_path = record_dir / "files" / spec.filename
     extract_dir = record_dir / "extracted" / _archive_stem(spec.filename)
+    lock_path = record_dir / "locks" / f"{spec.filename}.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if not _file_matches_checksum(archive_path, checksum):
-        logger.info(
-            f"Downloading Zenodo record {spec.record_id} file {spec.filename}."
-        )
-        _download_file(_zenodo_download_url(spec, file_info), archive_path)
+    try:
+        from filelock import FileLock
+    except ImportError as e:
+        raise ImportError(
+            "Zenodo source loading requires the 'filelock' package. Install "
+            "justdata with the vision extra."
+        ) from e
+
+    with FileLock(lock_path):
         if not _file_matches_checksum(archive_path, checksum):
-            raise ValueError(
-                f"Downloaded Zenodo file {spec.filename!r} failed checksum validation."
+            archive_path.unlink(missing_ok=True)
+            logger.info(
+                f"Downloading Zenodo record {spec.record_id} file {spec.filename}."
             )
-        if extract_dir.exists():
-            shutil.rmtree(extract_dir)
+            _download_file(
+                download_url,
+                archive_path,
+                expected_size=expected_size,
+                checksum=checksum,
+            )
+            if extract_dir.exists():
+                shutil.rmtree(extract_dir)
 
-    if not extract_dir.exists():
-        logger.info(f"Extracting Zenodo archive {archive_path}.")
-        _extract_archive(archive_path, extract_dir)
+        if not extract_dir.exists():
+            logger.info(f"Extracting Zenodo archive {archive_path}.")
+            _extract_archive(archive_path, extract_dir)
 
     return extract_dir
 

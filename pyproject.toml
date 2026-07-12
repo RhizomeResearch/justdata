@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 vision = [
     "datasets[vision]>=4.5.0",
+    "filelock>=3.20",
 ]
 wilds = [
     "wilds>=2.0.0",
@@ -35,6 +36,7 @@ golden = [
 dev = [
     "datasets[audio]>=4.5.0",
     "datasets[vision]>=4.5.0",
+    "filelock>=3.20",
     "librosa>=0.11",
     "matplotlib>=3.10.8",
     "pytest>=9.0.2",
@@ -52,6 +54,7 @@ build-backend = "uv_build"
 dev = [
     "datasets[audio]>=4.5.0",
     "datasets[vision]>=4.5.0",
+    "filelock>=3.20",
     "librosa>=0.11",
     "matplotlib>=3.10.8",
     "pytest>=9.0.2",

@@ -126,6 +126,18 @@ For remote/downloaded sources, `data_dir` is a cache root. justdata namespaces
 source-owned caches under it, for example `hf/vision/`, `wilds/`, and `zenodo/`.
 If omitted, the root is `~/.cache/justdata`.
 
+Zenodo sources accept only positive numeric record IDs, basename-only archive
+names, and HTTPS downloads from `zenodo.org`. Downloads have a 60-second
+network-operation timeout, a one-hour overall deadline, and a 20 GiB archive
+limit; a provider-declared size must match exactly, and a declared checksum is
+verified before the cache file is atomically installed. ZIP and TAR extraction
+accepts only regular files and directories, rejecting links, special files,
+duplicate destinations, and path escapes. Extraction is preflighted against a
+100,000-member limit, a 100 GiB expanded-size limit, and available cache-disk
+space. Per-archive interprocess locking and unique staging paths make concurrent
+cache preparation safe. These checks bound resource use and filesystem effects;
+checksums establish provider integrity but do not make image contents trusted.
+
 The base `wilds:fmow` preset is deterministic during training, so the explicit
 train model-input cache above is suitable for local SSD benchmarking. Use
 `cache_dataset/cache_path` alone for stochastic presets such as

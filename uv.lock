@@ -982,6 +982,7 @@ acoustic = [
 ]
 dev = [
     { name = "datasets", extra = ["audio", "vision"] },
+    { name = "filelock" },
     { name = "librosa" },
     { name = "matplotlib" },
     { name = "pytest" },
@@ -995,6 +996,7 @@ golden = [
 ]
 vision = [
     { name = "datasets", extra = ["vision"] },
+    { name = "filelock" },
 ]
 wilds = [
     { name = "wilds" },
@@ -1003,6 +1005,7 @@ wilds = [
 [package.dev-dependencies]
 dev = [
     { name = "datasets", extra = ["audio", "vision"] },
+    { name = "filelock" },
     { name = "librosa" },
     { name = "matplotlib" },
     { name = "pytest" },
@@ -1018,6 +1021,8 @@ requires-dist = [
     { name = "datasets", extras = ["audio"], marker = "extra == 'dev'", specifier = ">=4.5.0" },
     { name = "datasets", extras = ["vision"], marker = "extra == 'dev'", specifier = ">=4.5.0" },
     { name = "datasets", extras = ["vision"], marker = "extra == 'vision'", specifier = ">=4.5.0" },
+    { name = "filelock", marker = "extra == 'dev'", specifier = ">=3.20" },
+    { name = "filelock", marker = "extra == 'vision'", specifier = ">=3.20" },
     { name = "importlib-resources", specifier = ">=6.5.2" },
     { name = "librosa", marker = "extra == 'acoustic'", specifier = ">=0.11" },
     { name = "librosa", marker = "extra == 'dev'", specifier = ">=0.11" },
@@ -1043,6 +1048,7 @@ provides-extras = ["vision", "wilds", "acoustic", "golden", "dev"]
 dev = [
     { name = "datasets", extras = ["audio"], specifier = ">=4.5.0" },
     { name = "datasets", extras = ["vision"], specifier = ">=4.5.0" },
+    { name = "filelock", specifier = ">=3.20" },
     { name = "librosa", specifier = ">=0.11" },
     { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "pytest", specifier = ">=9.0.2" },

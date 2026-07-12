@@ -71,6 +71,25 @@ For acoustic data the stages are:
 | `postprocess` | Evaluation segmentation, frontend computation, layout conversion, dtype cast, static shape assignment, and label transform. |
 | `late_augment` | Training-only batch transforms such as Mixup, CutMixSpec, WavMix, and MixStyle. |
 
+### Segmentation contract
+
+`SegmentStrategyConfig.pad_position` controls where short waveforms are padded:
+`right` preserves the existing behavior, `center` splits the deficit with an
+extra sample on the right, and `random` chooses the split statelessly from the
+sample seed. The position applies consistently to zero, repeat, and reflect
+padding.
+
+Evaluation `multi_crop` produces a fixed leading view axis `[V, ...]` through
+raw-waveform and feature frontends. Batching therefore produces `[B, V, ...]`,
+and `duration` describes one emitted view. View start/end times remain vectors
+in metadata. `sliding` has a data-dependent view count and is supported only by
+the direct segmentation/evaluation-view helpers; model-input static shaping and
+batching reject it with a clear error.
+
+`drop_short=True` and non-`None` `min_duration` are rejected during config
+validation. They require dataset-level filtering, including an explicit
+cardinality and label contract, which is not implemented.
+
 ## 4. How to choose a preset
 
 Choose the preset that matches the model frontend contract first, then the

@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+import pytest
+
 from justdata.acoustic.configs import (
     AudioPreset,
     AudioPreprocessConfig,
@@ -55,3 +57,21 @@ def test_static_shape_override_used():
     preset = replace(_preset(16000, 1.0, 160), static_shape=(100, 64))
 
     assert expected_audio_static_shape(preset) == (100, 64)
+
+
+def test_fixed_multi_crop_static_shape_has_leading_view_axis():
+    preset = _preset(16000, 1.0, 160)
+    preset = replace(
+        preset,
+        segment=replace(preset.segment, eval_mode="multi_crop", num_views=3),
+    )
+
+    assert expected_audio_static_shape(preset) == (3, 101, 64)
+
+
+def test_sliding_static_shape_fails_instead_of_claiming_fixed_shape():
+    preset = _preset(16000, 1.0, 160)
+    preset = replace(preset, segment=replace(preset.segment, eval_mode="sliding"))
+
+    with pytest.raises(ValueError, match="sliding"):
+        expected_audio_static_shape(preset)

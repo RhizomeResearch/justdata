@@ -28,13 +28,46 @@ def _seed_tensor(seed: tf.Tensor | int | None) -> tf.Tensor:
     return seed[:2]
 
 
-def _pad_zero(audio: tf.Tensor, target_samples: tf.Tensor) -> tf.Tensor:
-    pad = tf.maximum(target_samples - tf.shape(audio)[0], 0)
-    padded = tf.pad(audio, [[0, pad], [0, 0]])
+def _padding_counts(
+    audio: tf.Tensor,
+    target_samples: tf.Tensor,
+    pad_position: str,
+    seed: tf.Tensor | int | None,
+) -> tuple[tf.Tensor, tf.Tensor]:
+    deficit = tf.maximum(target_samples - tf.shape(audio)[0], 0)
+    if pad_position == "right":
+        before = tf.constant(0, dtype=tf.int32)
+    elif pad_position == "center":
+        before = deficit // 2
+    elif pad_position == "random":
+        before = tf.random.stateless_uniform(
+            shape=[],
+            seed=_seed_tensor(seed),
+            minval=0,
+            maxval=deficit + 1,
+            dtype=tf.int32,
+        )
+    else:
+        raise ValueError(f"Unknown audio pad_position: {pad_position!r}")
+    return before, deficit - before
+
+
+def _pad_zero(
+    audio: tf.Tensor,
+    target_samples: tf.Tensor,
+    before: tf.Tensor,
+    after: tf.Tensor,
+) -> tf.Tensor:
+    padded = tf.pad(audio, [[before, after], [0, 0]])
     return padded[:target_samples]
 
 
-def _pad_repeat(audio: tf.Tensor, target_samples: tf.Tensor) -> tf.Tensor:
+def _pad_repeat(
+    audio: tf.Tensor,
+    target_samples: tf.Tensor,
+    before: tf.Tensor,
+    after: tf.Tensor,
+) -> tf.Tensor:
     t = tf.shape(audio)[0]
     channels = tf.shape(audio)[-1]
 
@@ -42,41 +75,48 @@ def _pad_repeat(audio: tf.Tensor, target_samples: tf.Tensor) -> tf.Tensor:
         return tf.zeros([target_samples, channels], dtype=audio.dtype)
 
     def _repeat() -> tf.Tensor:
-        repeats = tf.cast(tf.math.ceil(target_samples / tf.cast(t, tf.int32)), tf.int32)
-        tiled = tf.tile(audio, [repeats, 1])
-        return tiled[:target_samples]
+        indices = tf.range(-before, t + after)
+        return tf.gather(audio, tf.math.floormod(indices, t))[:target_samples]
 
     return tf.cond(t > 0, _repeat, _empty)
 
 
-def _pad_reflect(audio: tf.Tensor, target_samples: tf.Tensor) -> tf.Tensor:
+def _pad_reflect(
+    audio: tf.Tensor,
+    target_samples: tf.Tensor,
+    before: tf.Tensor,
+    after: tf.Tensor,
+) -> tf.Tensor:
     t = tf.shape(audio)[0]
 
     def _zero_pad() -> tf.Tensor:
-        return _pad_zero(audio, target_samples)
+        return _pad_zero(audio, target_samples, before, after)
 
     def _reflect() -> tf.Tensor:
-        period = tf.concat([audio, tf.reverse(audio[1:-1], axis=[0])], axis=0)
-        period_len = tf.shape(period)[0]
-        repeats = tf.cast(
-            tf.math.ceil(target_samples / tf.cast(period_len, tf.int32)),
-            tf.int32,
-        )
-        return tf.tile(period, [repeats, 1])[:target_samples]
+        period = 2 * t - 2
+        indices = tf.math.floormod(tf.range(-before, t + after), period)
+        indices = tf.where(indices < t, indices, period - indices)
+        return tf.gather(audio, indices)[:target_samples]
 
     return tf.cond(t > 1, _reflect, _zero_pad)
 
 
 def pad_waveform(
-    audio: tf.Tensor, target_samples: tf.Tensor, pad_mode: str
+    audio: tf.Tensor,
+    target_samples: tf.Tensor,
+    pad_mode: str,
+    *,
+    pad_position: str = "right",
+    seed: tf.Tensor | int | None = None,
 ) -> tf.Tensor:
     audio = tf.convert_to_tensor(audio)
+    before, after = _padding_counts(audio, target_samples, pad_position, seed)
     if pad_mode == "zero":
-        return _pad_zero(audio, target_samples)
+        return _pad_zero(audio, target_samples, before, after)
     if pad_mode == "repeat":
-        return _pad_repeat(audio, target_samples)
+        return _pad_repeat(audio, target_samples, before, after)
     if pad_mode == "reflect":
-        return _pad_reflect(audio, target_samples)
+        return _pad_reflect(audio, target_samples, before, after)
     raise ValueError(f"Unknown audio pad_mode: {pad_mode!r}")
 
 
@@ -85,6 +125,8 @@ def _crop_or_pad(
     start: tf.Tensor,
     target_samples: tf.Tensor,
     pad_mode: str,
+    pad_position: str,
+    seed: tf.Tensor | int | None,
 ) -> tf.Tensor:
     t = tf.shape(audio)[0]
     start = tf.clip_by_value(start, 0, tf.maximum(t - 1, 0))
@@ -93,7 +135,13 @@ def _crop_or_pad(
 
     return tf.cond(
         tf.shape(cropped)[0] < target_samples,
-        lambda: pad_waveform(cropped, target_samples, pad_mode),
+        lambda: pad_waveform(
+            cropped,
+            target_samples,
+            pad_mode,
+            pad_position=pad_position,
+            seed=seed,
+        ),
         lambda: cropped[:target_samples],
     )
 
@@ -197,11 +245,15 @@ def _views_result(
     starts: tf.Tensor,
     target_samples: tf.Tensor,
     pad_mode: str,
+    pad_position: str,
+    seed: tf.Tensor | int | None,
 ) -> dict:
     starts = tf.cast(starts, tf.int32)
 
     def _view(start: tf.Tensor) -> tf.Tensor:
-        return _crop_or_pad(audio, start, target_samples, pad_mode)
+        return _crop_or_pad(
+            audio, start, target_samples, pad_mode, pad_position, seed
+        )
 
     views = tf.map_fn(_view, starts, fn_output_signature=audio.dtype)
     lengths = tf.fill(tf.shape(starts), target_samples)
@@ -214,8 +266,12 @@ def _single_result(
     start: tf.Tensor,
     target_samples: tf.Tensor,
     pad_mode: str,
+    pad_position: str,
+    seed: tf.Tensor | int | None,
 ) -> dict:
-    view = _crop_or_pad(audio, start, target_samples, pad_mode)
+    view = _crop_or_pad(
+        audio, start, target_samples, pad_mode, pad_position, seed
+    )
     starts = tf.reshape(tf.cast(start, tf.int32), [1])
     lengths = tf.reshape(target_samples, [1])
     return {AUDIO: view, METADATA: _metadata(starts, lengths, sample_rate)}
@@ -272,6 +328,8 @@ def segment_waveform(
             _random_start(t, target_samples, seed),
             target_samples,
             pad_mode,
+            config.pad_position,
+            seed,
         )
     if mode in {"center_crop", "pad_or_crop"}:
         return _single_result(
@@ -280,13 +338,31 @@ def segment_waveform(
             _center_start(t, target_samples),
             target_samples,
             pad_mode,
+            config.pad_position,
+            seed,
         )
     if mode == "multi_crop":
         starts = _multi_crop_starts(t, target_samples, config.num_views)
-        return _views_result(audio, sample_rate, starts, target_samples, pad_mode)
+        return _views_result(
+            audio,
+            sample_rate,
+            starts,
+            target_samples,
+            pad_mode,
+            config.pad_position,
+            seed,
+        )
     if mode == "sliding":
         starts = _sliding_starts(t, target_samples, sample_rate, config)
-        return _views_result(audio, sample_rate, starts, target_samples, pad_mode)
+        return _views_result(
+            audio,
+            sample_rate,
+            starts,
+            target_samples,
+            pad_mode,
+            config.pad_position,
+            seed,
+        )
 
     raise ValueError(f"Unknown segment mode: {mode!r}")
 

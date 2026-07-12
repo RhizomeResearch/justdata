@@ -7,7 +7,7 @@ import tensorflow as tf
 from justdata.acoustic.configs import AudioPreprocessConfig, SegmentStrategyConfig
 from justdata.acoustic.preprocessing import make_preprocessing
 from justdata.acoustic.segment import segment_waveform
-from justdata.acoustic.schema import METADATA, SAMPLE_RATE, WAVEFORM
+from justdata.acoustic.schema import DURATION, METADATA, SAMPLE_RATE, WAVEFORM
 
 
 def make_segment_stage(
@@ -27,10 +27,20 @@ def make_segment_stage(
             seed=seed,
         )
         metadata = dict(sample.get(METADATA, {}))
+        if "original_duration" not in metadata and DURATION in sample:
+            metadata["original_duration"] = sample[DURATION]
         metadata.update(segmented[METADATA])
 
+        audio = segmented["audio"]
+        time_axis = 1 if audio.shape.rank == 3 else 0
+        duration = tf.cast(tf.shape(audio)[time_axis], tf.float32) / tf.cast(
+            sample[SAMPLE_RATE], tf.float32
+        )
+        metadata[DURATION] = duration
+
         result = dict(sample)
-        result[audio_key] = segmented["audio"]
+        result[audio_key] = audio
+        result[DURATION] = duration
         result[METADATA] = metadata
         return result
 

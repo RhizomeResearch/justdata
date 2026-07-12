@@ -95,12 +95,39 @@ def _frequency_bins(frontend: FrontendConfig) -> int | None:
     return None
 
 
+def _fixed_eval_view_count(
+    preset: AudioPreset | Mapping[str, Any],
+) -> int | None:
+    segment = _get(preset, "segment")
+    if segment is None:
+        return None
+    duration_policy = _get(segment, "duration_policy", "none")
+    if duration_policy == "sliding_windows":
+        raise ValueError(
+            "sliding segmentation has a data-dependent number of views and "
+            "cannot be assigned a fixed shape or batched"
+        )
+    if duration_policy != "none":
+        return None
+    eval_mode = _get(segment, "eval_mode")
+    if eval_mode == "sliding":
+        raise ValueError(
+            "sliding segmentation has a data-dependent number of views and "
+            "cannot be assigned a fixed shape or batched"
+        )
+    if eval_mode == "multi_crop":
+        return int(_get(segment, "num_views"))
+    return None
+
+
 def expected_audio_static_shape(
     preset: AudioPreset | Mapping[str, Any],
 ) -> tuple[int | None, ...] | None:
+    view_count = _fixed_eval_view_count(preset)
     explicit_shape = _get(preset, "static_shape")
     if explicit_shape is not None:
-        return tuple(explicit_shape)
+        shape = tuple(explicit_shape)
+        return (view_count,) + shape if view_count is not None else shape
 
     frontend = _frontend_from_preset(preset)
     layout = _layout_from_preset(preset)
@@ -128,13 +155,14 @@ def expected_audio_static_shape(
         )
         frequency = _frequency_bins(frontend)
 
-    return unbatched_shape_for_layout(
+    shape = unbatched_shape_for_layout(
         layout,
         output_kind=output_kind,
         time=time,
         frequency=frequency,
         channels=channels,
     )
+    return (view_count,) + shape if view_count is not None else shape
 
 
 def set_static_audio_shape(
@@ -229,10 +257,30 @@ def make_model_input_stage(
     output_kind = frontend_output_kind(frontend_config)
     resolved_output_key = output_key or default_output_key(frontend_config)
 
-    def stage(sample: dict, num_classes: int | None = None) -> dict:
-        features = frontend_fn(sample[WAVEFORM], frontend_config)
+    if preset is not None:
+        _fixed_eval_view_count(preset)
+
+    def process_waveform(waveform: tf.Tensor) -> tf.Tensor:
+        features = frontend_fn(waveform, frontend_config)
         features = convert_audio_layout(features, layout, output_kind=output_kind)
-        features = cast_audio_dtype(features, dtype)
+        return cast_audio_dtype(features, dtype)
+
+    def stage(sample: dict, num_classes: int | None = None) -> dict:
+        waveform = tf.convert_to_tensor(sample[WAVEFORM])
+        if waveform.shape.rank == 2:
+            features = process_waveform(waveform)
+        elif waveform.shape.rank == 3:
+            features = tf.map_fn(
+                process_waveform,
+                waveform,
+                fn_output_signature=tf.TensorSpec(
+                    shape=None, dtype=tf.as_dtype(dtype)
+                ),
+            )
+        else:
+            raise ValueError(
+                "Model input stage expects waveform shape [T, C] or [V, T, C]"
+            )
 
         result = dict(sample)
         result[resolved_output_key] = features

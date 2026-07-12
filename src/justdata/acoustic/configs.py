@@ -166,8 +166,16 @@ class SegmentStrategyConfig(_SerializableConfig):
                 "none",
             },
         )
+        if self.drop_short:
+            raise ValueError(
+                "drop_short is not supported because dataset-level filtering "
+                "is not implemented"
+            )
         if self.min_duration is not None:
-            _ensure_positive("min_duration", self.min_duration)
+            raise ValueError(
+                "min_duration is not supported because dataset-level filtering "
+                "is not implemented"
+            )
         return self
 
 

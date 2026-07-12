@@ -1,8 +1,10 @@
 import numpy as np
+import pytest
 import tensorflow as tf
 
 from justdata.acoustic.configs import SegmentStrategyConfig
 from justdata.acoustic.segment import pad_waveform, segment_waveform
+from justdata.acoustic.stages import make_segment_stage
 
 
 def _config(**overrides):
@@ -93,6 +95,72 @@ def test_pad_reflect_single_sample_zero_pads():
     np.testing.assert_allclose(result.numpy()[:, 0], [1.0, 0.0, 0.0, 0.0])
 
 
+@pytest.mark.parametrize(
+    ("pad_mode", "pad_position", "expected"),
+    [
+        ("zero", "right", [1, 2, 0, 0, 0]),
+        ("zero", "center", [0, 1, 2, 0, 0]),
+        ("repeat", "right", [1, 2, 1, 2, 1]),
+        ("repeat", "center", [2, 1, 2, 1, 2]),
+        ("reflect", "right", [1, 2, 1, 2, 1]),
+        ("reflect", "center", [2, 1, 2, 1, 2]),
+    ],
+)
+def test_pad_position_exact_samples(pad_mode, pad_position, expected):
+    audio = tf.constant([[1.0], [2.0]])
+
+    result = pad_waveform(
+        audio,
+        tf.constant(5),
+        pad_mode,
+        pad_position=pad_position,
+        seed=[7, 0],
+    )
+
+    np.testing.assert_allclose(result.numpy()[:, 0], expected)
+
+
+@pytest.mark.parametrize("pad_mode", ["zero", "repeat", "reflect"])
+@pytest.mark.parametrize("pad_position", ["right", "center", "random"])
+def test_pad_empty_waveform_has_target_shape(pad_mode, pad_position):
+    result = pad_waveform(
+        tf.zeros([0, 1]),
+        tf.constant(4),
+        pad_mode,
+        pad_position=pad_position,
+        seed=[7, 0],
+    )
+
+    assert result.shape == (4, 1)
+    np.testing.assert_allclose(result.numpy(), 0.0)
+
+
+def test_random_pad_position_is_stateless_and_seeded():
+    audio = tf.constant([[1.0], [2.0]])
+
+    first = pad_waveform(
+        audio, tf.constant(20), "zero", pad_position="random", seed=[3, 0]
+    )
+    second = pad_waveform(
+        audio, tf.constant(20), "zero", pad_position="random", seed=[3, 0]
+    )
+    different = pad_waveform(
+        audio, tf.constant(20), "zero", pad_position="random", seed=[4, 0]
+    )
+
+    np.testing.assert_array_equal(first.numpy(), second.numpy())
+    assert not np.array_equal(first.numpy(), different.numpy())
+
+
+@pytest.mark.parametrize(
+    "overrides,field",
+    [({"drop_short": True}, "drop_short"), ({"min_duration": 0.5}, "min_duration")],
+)
+def test_unsupported_short_clip_controls_fail_fast(overrides, field):
+    with pytest.raises(ValueError, match=field):
+        _config(**overrides)
+
+
 def test_dcase_keep_1s_does_not_tile():
     sample_rate = 44100
     audio = tf.ones([sample_rate, 1], dtype=tf.float32)
@@ -140,3 +208,34 @@ def test_view_metadata_start_end_times():
     np.testing.assert_allclose(result["metadata"]["view_start_time"].numpy(), [1.5])
     np.testing.assert_allclose(result["metadata"]["view_end_time"].numpy(), [3.5])
     np.testing.assert_array_equal(result["metadata"]["view_index"].numpy(), [0])
+
+
+@pytest.mark.parametrize(
+    ("eval_mode", "samples", "expected_duration"),
+    [
+        ("center_crop", 2, 1.0),
+        ("center_crop", 8, 1.0),
+        ("full", 8, 4.0),
+        ("multi_crop", 8, 1.0),
+    ],
+)
+def test_segment_stage_refreshes_duration(eval_mode, samples, expected_duration):
+    sample = {
+        "waveform": tf.ones([samples, 1]),
+        "sample_rate": tf.constant(2),
+        "duration": tf.constant(samples / 2),
+        "metadata": {
+            "duration": tf.constant(samples / 2),
+            "original_duration": tf.constant(9.0),
+        },
+    }
+    stage = make_segment_stage(
+        _config(clip_duration=1.0, eval_mode=eval_mode, num_views=3),
+        is_training=False,
+    )
+
+    result = stage(sample)
+
+    assert float(result["duration"].numpy()) == expected_duration
+    assert float(result["metadata"]["duration"].numpy()) == expected_duration
+    assert float(result["metadata"]["original_duration"].numpy()) == 9.0

@@ -148,6 +148,25 @@ register_preset(
     },
 )
 
+# KITTI road segmentation. Keep this separate from the ImageNet classification
+# default because segmentation augmentation accepts a deliberately smaller API.
+register_preset(
+    "kitti_road",
+    {
+        "preproc_kwargs": {},
+        "aug_kwargs": {
+            "image_size": 224,
+            "crop_type": "random_resized",
+            "augment_type": "rand_augment",
+        },
+        "laug_kwargs": {},
+        "postproc_kwargs": {
+            "image_size": 224,
+            "normalization_params": _IMAGENET_NORM,
+        },
+    },
+)
+
 # ImageNet default  (ViT / ConvNeXt modern recipe)
 # RandAugment(n=2, m=9), bicubic interpolation, 0.875 crop ratio validation.
 register_preset(

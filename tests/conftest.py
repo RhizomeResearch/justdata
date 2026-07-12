@@ -87,3 +87,30 @@ def synthetic_segmentation_ds():
     )
     ds = ds.apply(tf.data.experimental.assert_cardinality(10))
     return ds
+
+
+@pytest.fixture
+def make_synthetic_vision_ds():
+    """Build a tiny raw vision dataset with one padded final batch."""
+
+    def factory(*, task: str, num_examples: int = 3):
+        values = np.arange(num_examples * 40 * 48 * 3, dtype=np.uint32)
+        images = (values % 256).astype(np.uint8).reshape(num_examples, 40, 48, 3)
+        samples = {
+            "image": images,
+            "label": np.arange(num_examples, dtype=np.int64),
+            "metadata": {
+                "camera_id": np.arange(num_examples, dtype=np.int32),
+                "camera_name": np.asarray([f"cam-{i}" for i in range(num_examples)]),
+            },
+        }
+        if task == "segmentation":
+            rows, cols = np.indices((40, 48))
+            mask = ((rows + cols) % 3).astype(np.int32)
+            samples["mask"] = np.tile(mask[None, ...], (num_examples, 1, 1))
+
+        return tf.data.Dataset.from_tensor_slices(samples).apply(
+            tf.data.experimental.assert_cardinality(num_examples)
+        )
+
+    return factory

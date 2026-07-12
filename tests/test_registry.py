@@ -194,17 +194,18 @@ class TestGetPipeline:
         assert len(result) == 4
         assert all(callable(fn) for fn in result)
 
+    @pytest.mark.parametrize("is_training", [False, True], ids=["eval", "train"])
     @pytest.mark.parametrize(
         "pipeline_name",
         [name for name in list_pipelines() if name.startswith("vision/")],
     )
-    def test_registered_vision_pipeline_builds(self, pipeline_name):
+    def test_registered_vision_pipeline_builds(self, pipeline_name, is_training):
         result = get_pipeline(
             pipeline_name=pipeline_name,
             apply_presets=False,
             aug_kwargs={"image_size": 32},
             postproc_kwargs={"image_size": 32},
-        ).build(is_training=False)
+        ).build(is_training=is_training)
         assert len(result) == 4
         assert all(callable(fn) for fn in result)
 

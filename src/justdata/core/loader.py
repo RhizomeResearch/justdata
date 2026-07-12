@@ -371,7 +371,7 @@ def load_ds(
     if is_training:
         ds = ds.map(
             seeded_augment,
-            num_parallel_calls=tf.data.AUTOTUNE,
+            num_parallel_calls=1 if deterministic else tf.data.AUTOTUNE,
             deterministic=deterministic,
         )
 

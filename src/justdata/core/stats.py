@@ -32,12 +32,38 @@ def make_stats_iterator(
     ds = dataset.with_options(options)
     if metadata_mode != "full":
         ds = ds.map(
-            lambda sample: apply_metadata_mode(sample, metadata_mode),
+            lambda sample: _apply_stats_metadata_mode(
+                sample, metadata_mode=metadata_mode, groupby=groupby
+            ),
             num_parallel_calls=tf.data.AUTOTUNE,
             deterministic=deterministic,
         )
     ds = ds.batch(batch_size)
     return ds.as_numpy_iterator()
+
+
+def _apply_stats_metadata_mode(
+    sample: dict,
+    *,
+    metadata_mode: Literal["full", "numeric_only", "none"],
+    groupby: str | list[str] | None,
+) -> dict:
+    result = apply_metadata_mode(sample, metadata_mode)
+    if metadata_mode != "numeric_only" or groupby is None:
+        return result
+
+    metadata = sample.get("metadata")
+    if not isinstance(metadata, dict):
+        return result
+
+    keys = (groupby,) if isinstance(groupby, str) else tuple(groupby)
+    grouping_metadata = {key: metadata[key] for key in keys if key in metadata}
+    if not grouping_metadata:
+        return result
+
+    result = dict(result)
+    result["metadata"] = {**result.get("metadata", {}), **grouping_metadata}
+    return result
 
 
 def _to_numpy(value: Any) -> np.ndarray:
@@ -81,6 +107,13 @@ def _group_value(metadata: dict, groupby: str | list[str] | None) -> Any:
     return tuple(python_value(metadata.get(key)) for key in groupby)
 
 
+def _hashable_group_value(value: Any) -> Any:
+    value = python_value(value)
+    if isinstance(value, list):
+        return tuple(_hashable_group_value(child) for child in value)
+    return value
+
+
 def _iter_group_feature_pairs(
     dataset,
     *,
@@ -112,9 +145,48 @@ def _iter_group_feature_pairs(
 
         if batched_group is not None:
             for idx, value in enumerate(batched_group):
-                yield python_value(value), features[idx]
+                yield _hashable_group_value(value), features[idx]
         else:
             yield group_value, features
+
+
+def _partial_state(
+    observations: np.ndarray,
+) -> tuple[int, np.ndarray | None, np.ndarray | None]:
+    count = int(observations.shape[0])
+    if count == 0:
+        return 0, None, None
+
+    mean = np.mean(observations, axis=0, dtype=np.float64)
+    centered = observations - mean
+    m2 = np.sum(centered * centered, axis=0, dtype=np.float64)
+    return count, mean, m2
+
+
+def _merge_partial_state(
+    state: dict[str, Any],
+    count_b: int,
+    mean_b: np.ndarray | None,
+    m2_b: np.ndarray | None,
+) -> None:
+    if count_b == 0:
+        return
+    if state["count"] == 0:
+        state["count"] = count_b
+        state["mean"] = mean_b
+        state["m2"] = m2_b
+        return
+
+    count_a = state["count"]
+    count = count_a + count_b
+    delta = mean_b - state["mean"]
+    state["mean"] = state["mean"] + delta * count_b / count
+    state["m2"] = (
+        state["m2"]
+        + m2_b
+        + delta * delta * count_a * count_b / count
+    )
+    state["count"] = count
 
 
 def compute_feature_stats(
@@ -136,15 +208,7 @@ def compute_feature_stats(
             group_value,
             {"count": 0, "mean": None, "m2": None},
         )
-        for obs in observations:
-            if state["mean"] is None:
-                state["mean"] = np.zeros_like(obs, dtype=np.float64)
-                state["m2"] = np.zeros_like(obs, dtype=np.float64)
-            state["count"] += 1
-            delta = obs - state["mean"]
-            state["mean"] = state["mean"] + delta / state["count"]
-            delta2 = obs - state["mean"]
-            state["m2"] = state["m2"] + delta * delta2
+        _merge_partial_state(state, *_partial_state(observations))
 
     result = {}
     for group_value, state in states.items():

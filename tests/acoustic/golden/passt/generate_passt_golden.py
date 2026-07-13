@@ -42,7 +42,11 @@ def _load_frontend(reference_root: Path):
     ingredient = types.ModuleType("ba3l.ingredients.ingredient")
     ingredient.Ingredient = _Ingredient
     sys.modules.update(
-        {"ba3l": ba3l, "ba3l.ingredients": ingredients, "ba3l.ingredients.ingredient": ingredient}
+        {
+            "ba3l": ba3l,
+            "ba3l.ingredients": ingredients,
+            "ba3l.ingredients.ingredient": ingredient,
+        }
     )
     source = reference_root / "models" / "preprocess.py"
     spec = importlib.util.spec_from_file_location("passt_preprocess", source)
@@ -84,7 +88,10 @@ def main() -> None:
             "path": "models/preprocess.py:AugmentMelSTFT",
             "license": "Apache-2.0",
         },
-        "dependencies": {"torch": torch.__version__, "torchaudio": torchaudio.__version__},
+        "dependencies": {
+            "torch": torch.__version__,
+            "torchaudio": torchaudio.__version__,
+        },
         "fixture": {
             "file": "passt_32k_1s.npz",
             "waveform": "../corpus.npz:waveform_32000",
@@ -92,10 +99,19 @@ def main() -> None:
             "features_sha256": array_sha256(features),
             "patchout": False,
         },
-        "tolerance": {"rtol": 0.003, "atol": 0.003, "rationale": "TensorFlow and Torch FFT kernel drift"},
-        "logits": {"certification": "declared", "reason": "No licensed compact checkpoint-derived oracle is redistributed"},
+        "tolerance": {
+            "rtol": 0.003,
+            "atol": 0.003,
+            "rationale": "TensorFlow and Torch FFT kernel drift",
+        },
+        "logits": {
+            "certification": "declared",
+            "reason": "No licensed compact checkpoint-derived oracle is redistributed",
+        },
     }
-    (ROOT / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+    (ROOT / "metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n"
+    )
 
 
 if __name__ == "__main__":

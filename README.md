@@ -690,13 +690,17 @@ train_ds, N = load_ds(
 ### Loading a Hugging Face Dataset
 
 ```python
-train_ds = load_ds(
+train_ds, n_batches = load_ds(
     dataset_names_arg=["hf:cifar10"],
     splits_arg={"hf:cifar10": ["train"]},
     cache_dataset=False,
     ...
 )
 ```
+
+`load_ds` returns the dataset and its batch cardinality. The cardinality is a
+Python integer when TensorFlow can determine it and `None` for unknown or
+infinite pipelines.
 
 For remote/downloaded sources, `data_dir` is a cache root. justdata namespaces
 source-owned caches under it: `tfds/`, `hf/vision/`, `hf/acoustic/`, `wilds/`,

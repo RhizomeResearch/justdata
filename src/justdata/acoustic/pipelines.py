@@ -48,13 +48,17 @@ def default_pipeline(
         laug_kwargs.setdefault("spectrogram_augmentations", spectrogram_augmentations)
     if batch_augmentations is not None:
         laug_kwargs.setdefault("batch_augmentations", batch_augmentations)
-    if train_augment is not None and is_training and "batch" in train_augment:
+    if (
+        train_augment is not None
+        and (is_training or augment_eval)
+        and "batch" in train_augment
+    ):
         laug_kwargs.setdefault("batch_augmentations", train_augment["batch"])
     if spectrogram_layout is not None:
         laug_kwargs.setdefault("spectrogram_layout", spectrogram_layout)
 
     if segment is not None:
-        if is_training:
+        if is_training or augment_eval:
             aug_kwargs.setdefault("segment_config", segment)
         else:
             postproc_kwargs.setdefault("segment_config", segment)

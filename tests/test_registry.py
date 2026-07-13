@@ -1,3 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
 import pytest
 
 from justdata.vision.augmentations.registry import (
@@ -46,6 +49,35 @@ class TestDatasetTaskMapping:
         assert get_task_for_dataset("my_custom_ds") == "classification"
         assert get_dataset_info("my_custom_ds").modality == "vision"
 
+    def test_duplicate_dataset_registration_is_rejected(self):
+        name = "test_duplicate_dataset_registration"
+        register_dataset(name, "classification", modality="vision")
+
+        with pytest.raises(ValueError, match=f"Dataset '{name}'.*already registered"):
+            register_dataset(name, "classification", modality="acoustic")
+
+        assert get_dataset_info(name).modality == "vision"
+
+    def test_concurrent_duplicate_dataset_registration_has_one_winner(self):
+        name = "test_concurrent_duplicate_dataset_registration"
+        barrier = Barrier(8)
+
+        def register(index):
+            barrier.wait()
+            try:
+                register_dataset(name, str(index), modality="unit")
+            except ValueError as error:
+                return error
+            return None
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(register, range(8)))
+
+        errors = [result for result in results if result is not None]
+        assert len(errors) == 7
+        assert all(name in str(error) for error in errors)
+        assert get_dataset_info(name).task in {str(index) for index in range(8)}
+
     def test_prefix_match_imagenet_variant(self):
         """'imagenet_a3' should resolve via 'imagenet' prefix."""
         assert get_task_for_dataset("imagenet_a3") == "classification"
@@ -55,6 +87,7 @@ class TestDatasetTaskMapping:
         assert get_task_for_dataset("cifar100_corrupted") == "classification"
         # Sanity: cifar10_v2 should match cifar10
         assert get_task_for_dataset("cifar10_v2") == "classification"
+
 
 # get_pipeline — argument resolution
 class TestGetPipeline:

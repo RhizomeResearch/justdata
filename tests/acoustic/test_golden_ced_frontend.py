@@ -40,9 +40,7 @@ def test_ced_eval_pipeline_matches_hugging_face_extractor_fixture():
         preset="dcase2025_task1_ced_16k_1s",
         pipeline_name="acoustic/classification",
     )
-    preprocess, augment, _late_augment, postprocess = pipeline.build(
-        is_training=False
-    )
+    preprocess, augment, _late_augment, postprocess = pipeline.build(is_training=False)
     sample = preprocess(
         {
             "waveform": tf.constant(waveform),

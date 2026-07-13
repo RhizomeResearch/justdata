@@ -27,12 +27,14 @@ def register_adapter(dataset_name: str):
 
 
 def get_adapter(dataset_name: str) -> DatasetAdapter:
-    if dataset_name in _ADAPTERS:
-        return _ADAPTERS[dataset_name]
+    with _ADAPTER_LOCK:
+        exact = _ADAPTERS.get(dataset_name)
+        entries = tuple(_ADAPTERS.items())
 
-    for key, adapter in sorted(
-        _ADAPTERS.items(), key=lambda kv: len(kv[0]), reverse=True
-    ):
+    if exact is not None:
+        return exact
+
+    for key, adapter in sorted(entries, key=lambda kv: len(kv[0]), reverse=True):
         if dataset_name.startswith(key):
             return adapter
 

@@ -38,7 +38,7 @@ def test_finalize_dataset_applies_metadata_modes(metadata_mode):
     )
 
     batch = next(iter(ds))
-    assert int(n_batches.numpy()) == 2
+    assert n_batches == 2
     if metadata_mode == "none":
         assert "metadata" not in batch
     elif metadata_mode == "numeric_only":
@@ -97,10 +97,25 @@ def test_finalize_dataset_drop_remainder_and_numpy_conversion():
     )
 
     batches = list(iterator)
-    assert int(n_batches.numpy()) == 1
+    assert n_batches == 1
     assert len(batches) == 1
     assert isinstance(batches[0]["x"], np.ndarray)
     np.testing.assert_array_equal(batches[0]["padding_mask"], [True, True])
+
+
+def test_finalize_dataset_reports_unknown_cardinality_as_none():
+    filtered = _dataset().filter(lambda sample: sample["x"] > 1)
+
+    ds, n_batches = finalize_dataset(
+        filtered,
+        postprocess_fn=_identity,
+        num_classes=None,
+        batch_size=2,
+        prefetch=False,
+    )
+
+    assert n_batches is None
+    assert len(list(ds)) == 1
 
 
 def test_finalize_dataset_model_input_cache_reuses_postprocessing(tmp_path):

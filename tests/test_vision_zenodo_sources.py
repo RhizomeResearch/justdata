@@ -575,6 +575,24 @@ def test_zenodo_imagefolder_empty_split_still_errors(monkeypatch, tmp_path):
         )
 
 
+def test_zenodo_image_validation_rejects_oversized_encoded_file(monkeypatch, tmp_path):
+    path = tmp_path / "image.png"
+    path.write_bytes(_png_bytes(1))
+    monkeypatch.setattr(vision_sources, "_ZENODO_MAX_IMAGE_FILE_BYTES", 1)
+
+    with pytest.raises(ValueError, match="encoded-file limit"):
+        vision_sources._validate_image_file(path)
+
+
+def test_zenodo_image_validation_rejects_oversized_decoded_image(monkeypatch, tmp_path):
+    path = tmp_path / "image.png"
+    path.write_bytes(_png_bytes(1))
+    monkeypatch.setattr(vision_sources, "_ZENODO_MAX_IMAGE_PIXELS", 15)
+
+    with pytest.raises(ValueError, match="decoded pixels"):
+        vision_sources._validate_image_file(path)
+
+
 def test_zenodo_imagefolder_unknown_class_errors_descriptively(tmp_path):
     (tmp_path / "val" / "class_a").mkdir(parents=True)
 
@@ -613,7 +631,7 @@ def test_load_ds_accepts_zenodo_imagefolder_source(monkeypatch, tmp_path):
     )
     batch = next(iter(ds))
 
-    assert int(n.numpy()) == 1
+    assert n == 1
     assert batch["image"].shape == (2, 3, 8, 8)
     np.testing.assert_array_equal(batch["label"].numpy(), [1, 2])
     np.testing.assert_array_equal(batch["metadata"]["class_index"].numpy(), [1, 2])

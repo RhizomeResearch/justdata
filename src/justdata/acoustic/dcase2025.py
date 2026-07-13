@@ -13,6 +13,7 @@ import tensorflow as tf
 from loguru import logger
 
 from justdata.acoustic.adapters import adapt_acoustic_sample
+from justdata.acoustic.configs import AudioPreset
 from justdata.acoustic.presets import register_preset
 from justdata.acoustic.schema import (
     CLIP_ID,
@@ -468,8 +469,17 @@ def _register_presets() -> None:
         "output_key": "inputs",
         "dtype": "float32",
         "metadata_mode": "numeric_only",
+        "metadata": {
+            "preset_version": 1,
+            "model_family": "generic",
+            "frontend_contract": "dcase2025-native-logmel-44k-v1",
+            "compatibility_status": "declared",
+        },
     }
-    register_preset("dcase2025_task1_native_44k_1s", native)
+    register_preset(
+        "dcase2025_task1_native_44k_1s",
+        AudioPreset.from_dict(native),
+    )
 
 
 _register_presets()

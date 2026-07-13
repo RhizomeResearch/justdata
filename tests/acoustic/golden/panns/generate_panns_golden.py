@@ -28,7 +28,13 @@ RECIPES = {
 def main() -> None:
     corpus = np.load(GOLDEN_ROOT / "corpus.npz")
     fixture_metadata = {}
-    for filename, (sample_rate, window_size, hop_size, f_max, duration) in RECIPES.items():
+    for filename, (
+        sample_rate,
+        window_size,
+        hop_size,
+        f_max,
+        duration,
+    ) in RECIPES.items():
         waveform = corpus[f"waveform_{sample_rate}"]
         waveform = np.pad(waveform, (0, sample_rate * (duration - 1)))
         spectrogram = Spectrogram(
@@ -52,7 +58,9 @@ def main() -> None:
             freeze_parameters=True,
         )
         with torch.no_grad():
-            features = logmel(spectrogram(torch.from_numpy(waveform)[None])).numpy()[0, 0]
+            features = logmel(spectrogram(torch.from_numpy(waveform)[None])).numpy()[
+                0, 0
+            ]
         np.savez_compressed(ROOT / filename, features=features)
         fixture_metadata[filename] = {
             "waveform": f"../corpus.npz:waveform_{sample_rate}",
@@ -71,12 +79,24 @@ def main() -> None:
             "path": "pytorch/models.py:Cnn14 Spectrogram/LogmelFilterBank",
             "license": "MIT",
         },
-        "dependencies": {"torch": torch.__version__, "torchlibrosa": torchlibrosa.__version__},
+        "dependencies": {
+            "torch": torch.__version__,
+            "torchlibrosa": torchlibrosa.__version__,
+        },
         "fixtures": fixture_metadata,
-        "tolerance": {"rtol": 0.001, "atol": 0.06, "rationale": "dB-scale FFT kernel drift across TensorFlow and TorchLibrosa"},
-        "logits": {"certification": "declared", "reason": "No checkpoint-derived output is redistributed"},
+        "tolerance": {
+            "rtol": 0.001,
+            "atol": 0.06,
+            "rationale": "dB-scale FFT kernel drift across TensorFlow and TorchLibrosa",
+        },
+        "logits": {
+            "certification": "declared",
+            "reason": "No checkpoint-derived output is redistributed",
+        },
     }
-    (ROOT / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+    (ROOT / "metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n"
+    )
 
 
 if __name__ == "__main__":

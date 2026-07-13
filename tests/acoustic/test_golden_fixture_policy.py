@@ -46,6 +46,7 @@ def test_shared_waveform_corpus_matches_deterministic_recipe():
             )
         name = f"waveform_{sample_rate}"
         np.testing.assert_array_equal(corpus[name], regenerated)
-        assert hashlib.sha256(regenerated.tobytes()).hexdigest() == metadata[
-            "sha256"
-        ][name]
+        assert (
+            hashlib.sha256(regenerated.tobytes()).hexdigest()
+            == metadata["sha256"][name]
+        )

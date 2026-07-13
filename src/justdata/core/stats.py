@@ -181,11 +181,7 @@ def _merge_partial_state(
     count = count_a + count_b
     delta = mean_b - state["mean"]
     state["mean"] = state["mean"] + delta * count_b / count
-    state["m2"] = (
-        state["m2"]
-        + m2_b
-        + delta * delta * count_a * count_b / count
-    )
+    state["m2"] = state["m2"] + m2_b + delta * delta * count_a * count_b / count
     state["count"] = count
 
 

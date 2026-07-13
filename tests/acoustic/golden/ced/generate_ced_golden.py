@@ -46,18 +46,33 @@ def main() -> None:
             "path": "feature_extraction_ced.py:CedFeatureExtractor",
             "license": "Apache-2.0",
         },
-        "dependencies": {"torch": torch.__version__, "torchaudio": torchaudio.__version__},
+        "dependencies": {
+            "torch": torch.__version__,
+            "torchaudio": torchaudio.__version__,
+        },
         "fixture": {
             "file": "ced_16k_1s.npz",
             "waveform": "../corpus.npz:waveform_16000",
             "features_layout": "frequency,time",
             "features_sha256": array_sha256(features),
         },
-        "tolerance": {"rtol": 0.005, "atol": 0.25, "rationale": "dB-scale drift in near-floor FFT bins across TensorFlow and Torch"},
-        "onnx_kaldi": {"certification": "declared", "reason": "The upstream helper uses center=False and differs from the authoritative Hugging Face extractor"},
-        "logits": {"certification": "declared", "reason": "No checkpoint-derived output is redistributed"},
+        "tolerance": {
+            "rtol": 0.005,
+            "atol": 0.25,
+            "rationale": "dB-scale drift in near-floor FFT bins across TensorFlow and Torch",
+        },
+        "onnx_kaldi": {
+            "certification": "declared",
+            "reason": "The upstream helper uses center=False and differs from the authoritative Hugging Face extractor",
+        },
+        "logits": {
+            "certification": "declared",
+            "reason": "No checkpoint-derived output is redistributed",
+        },
     }
-    (ROOT / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+    (ROOT / "metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n"
+    )
 
 
 if __name__ == "__main__":

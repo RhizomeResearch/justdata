@@ -41,9 +41,7 @@ def make_synthetic_acoustic_ds():
             "label": np.arange(num_examples, dtype=np.int64),
             "metadata": {
                 "device_id": np.arange(num_examples, dtype=np.int32),
-                "device_name": np.asarray(
-                    [f"mic-{i}" for i in range(num_examples)]
-                ),
+                "device_name": np.asarray([f"mic-{i}" for i in range(num_examples)]),
             },
         }
         return tf.data.Dataset.from_tensor_slices(samples).apply(

@@ -72,7 +72,7 @@ def test_create_audio_corruption_datasets_adds_metadata():
             cache_dataset=False,
         )
 
-    assert int(n_batches.numpy()) == 2
+    assert n_batches == 2
     batch = next(iter(datasets[0]))
     assert batch[METADATA]["corruption"].numpy()[0] == b"additive_white_noise"
     assert batch[METADATA]["corruption_domain"].numpy()[0] == b"waveform"
@@ -100,7 +100,7 @@ def test_create_audio_corruption_datasets_cardinality_matches_base():
         )
 
     assert len(datasets) == 2
-    assert int(n_batches.numpy()) == 2
+    assert n_batches == 2
     assert int(tf.data.Dataset.cardinality(datasets[0]).numpy()) == 2
     assert int(tf.data.Dataset.cardinality(datasets[1]).numpy()) == 2
 

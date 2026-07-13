@@ -35,11 +35,52 @@ class AcousticPipelineContract:
 
 
 ACOUSTIC_PIPELINE_CONTRACTS = (
-    AcousticPipelineContract("waveform", "acoustic/classification", "audio_default_16k_waveform", 16000, "waveform", (16000,), ()),
-    AcousticPipelineContract("logmel", "acoustic/classification", "audio_default_32k_logmel64", 32000, "features", (101, 64), ()),
-    AcousticPipelineContract("passt", "acoustic/classification", "dcase2025_task1_passt_32k_1s", 32000, "features", (1, 128, 100), (), (1, 124, 60)),
-    AcousticPipelineContract("ast", "acoustic/ast_classification", "ast_speechcommands_16k_1s_fbank128", 16000, "features", (128, 128), (35,)),
-    AcousticPipelineContract("dcase-efficientat", "acoustic/classification", "dcase2025_task1_efficientat_32k_1s", 32000, "features", (1, 128, 100), ()),
+    AcousticPipelineContract(
+        "waveform",
+        "acoustic/classification",
+        "audio_default_16k_waveform",
+        16000,
+        "waveform",
+        (16000,),
+        (),
+    ),
+    AcousticPipelineContract(
+        "logmel",
+        "acoustic/classification",
+        "audio_default_32k_logmel64",
+        32000,
+        "features",
+        (101, 64),
+        (),
+    ),
+    AcousticPipelineContract(
+        "passt",
+        "acoustic/classification",
+        "dcase2025_task1_passt_32k_1s",
+        32000,
+        "features",
+        (1, 128, 100),
+        (),
+        (1, 124, 60),
+    ),
+    AcousticPipelineContract(
+        "ast",
+        "acoustic/ast_classification",
+        "ast_speechcommands_16k_1s_fbank128",
+        16000,
+        "features",
+        (128, 128),
+        (35,),
+    ),
+    AcousticPipelineContract(
+        "dcase-efficientat",
+        "acoustic/classification",
+        "dcase2025_task1_efficientat_32k_1s",
+        32000,
+        "features",
+        (1, 128, 100),
+        (),
+    ),
 )
 
 
@@ -84,7 +125,7 @@ def test_acoustic_pipeline_contract_end_to_end(
         else contract.eval_shape
     )
 
-    assert int(cardinality.numpy()) == 2
+    assert cardinality == 2
     assert len(batches) == 2
     assert batches[0][contract.output_key].shape == (2, *expected_shape)
     assert batches[0][contract.output_key].dtype == tf.float32
@@ -111,6 +152,37 @@ def test_acoustic_eval_contract_is_deterministic_and_supports_numpy(
     assert isinstance(first[0]["features"], np.ndarray)
     for left, right in zip(first, second):
         np.testing.assert_allclose(left["features"], right["features"])
+
+
+def test_acoustic_augment_eval_runs_configured_sample_and_batch_stages(
+    make_synthetic_acoustic_ds,
+):
+    contract = ACOUSTIC_PIPELINE_CONTRACTS[2]
+    pipeline = get_pipeline(
+        pipeline_name=contract.pipeline_name,
+        preset=contract.preset,
+        modality="acoustic",
+        augment_eval=True,
+    )
+    raw_ds = make_synthetic_acoustic_ds(sample_rate=contract.sample_rate)
+
+    with patch("justdata.core.loader.fetch_ds", return_value=raw_ds):
+        ds, cardinality = load_ds(
+            dataset_names_arg="synthetic",
+            splits_arg="validation",
+            dataset_type="validation",
+            batch_size=2,
+            seed=29,
+            pipeline=pipeline,
+            cache_dataset=False,
+            deterministic=True,
+            shuffle_buffer=1,
+            metadata_mode="numeric_only",
+        )
+
+    batch = next(iter(ds))
+    assert cardinality == 2
+    assert batch[contract.output_key].shape == (2, *contract.train_shape)
 
 
 @pytest.mark.parametrize(

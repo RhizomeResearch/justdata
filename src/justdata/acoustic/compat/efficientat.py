@@ -62,9 +62,7 @@ def efficientat_frontend() -> FrontendConfig:
 
 
 @register_audio_frontend("efficientat_logmel")
-def efficientat_logmel(
-    audio: tf.Tensor, config: FrontendConfig | dict
-) -> tf.Tensor:
+def efficientat_logmel(audio: tf.Tensor, config: FrontendConfig | dict) -> tf.Tensor:
     config = FrontendConfig.from_dict(config)
     if config.stft is None or config.mel is None:
         raise ValueError("EfficientAT frontend requires STFT and mel configs")

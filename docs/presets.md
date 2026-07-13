@@ -13,7 +13,7 @@ Start with the checkpoint or model family:
 | EfficientAT/DyMN | `efficientat_32k_10s_logmel128`, `dymn_32k_10s_logmel128`, `dcase2025_task1_efficientat_32k_1s`, `dcase2025_task1_dymn_32k_1s` |
 | PaSST | `passt_32k_10s_logmel128`, `dcase2025_task1_passt_32k_1s` and 10 s DCASE padding variants |
 | CED | `ced_tiny_16k_logmel64`, `ced_mini_16k_logmel64`, `ced_small_16k_logmel64`, `ced_base_16k_logmel64`, `dcase2025_task1_ced_16k_1s` |
-| Generic acoustic | `audio_default_16k_waveform`, `audio_default_32k_logmel64`, `audio_default_32k_logmel128` |
+| Generic acoustic | `audio_default_16k_waveform`, `audio_default_32k_logmel64`, `audio_default_32k_logmel128`, `dcase2025_task1_native_44k_1s` |
 | Vision classification | `cifar`, `cifar100`, `imagenet_resnet`, `imagenet_a1`, `imagenet_a2`, `imagenet_a3`, `dinov2`, WILDS `wilds:*` presets |
 
 Then choose the dataset duration policy. For DCASE Task 1, 1 s direct-view
@@ -91,6 +91,10 @@ EfficientAT and DyMN presets use:
 
 DCASE variants use 10 scene classes and a `keep_1s`, zero-pad-to-10s, or
 repeat-pad-to-10s duration policy.
+
+The generic `dcase2025_task1_native_44k_1s` preset preserves 44.1 kHz audio and
+uses its declared native log-mel contract. It is hash- and shape-pinned, but it
+does not claim external-reference golden certification.
 
 ## PaSST contract
 

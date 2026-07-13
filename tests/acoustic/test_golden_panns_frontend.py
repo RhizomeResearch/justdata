@@ -105,9 +105,7 @@ def test_panns_eval_pipeline_matches_torchlibrosa_fixture(
         preset=preset,
         pipeline_name="acoustic/classification",
     )
-    preprocess, augment, _late_augment, postprocess = pipeline.build(
-        is_training=False
-    )
+    preprocess, augment, _late_augment, postprocess = pipeline.build(is_training=False)
     sample = preprocess(
         {
             "waveform": tf.constant(waveform),

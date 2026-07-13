@@ -12,9 +12,7 @@ from justdata.audio.configs import AudioPreset as AliasAudioPreset
 
 
 PUBLIC_ACOUSTIC_MODULES = tuple(
-    name
-    for name in acoustic.__all__
-    if isinstance(getattr(acoustic, name), ModuleType)
+    name for name in acoustic.__all__ if isinstance(getattr(acoustic, name), ModuleType)
 )
 
 NESTED_MODULES = (
@@ -93,7 +91,9 @@ def test_every_loaded_acoustic_descendant_has_an_audio_alias():
     canonical_prefix = "justdata.acoustic."
     for canonical_name, module in tuple(sys.modules.items()):
         if canonical_name.startswith(canonical_prefix):
-            alias_name = f"justdata.audio.{canonical_name.removeprefix(canonical_prefix)}"
+            alias_name = (
+                f"justdata.audio.{canonical_name.removeprefix(canonical_prefix)}"
+            )
             assert importlib.import_module(alias_name) is module, (
                 canonical_name,
                 alias_name,

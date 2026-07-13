@@ -117,9 +117,7 @@ def test_compute_feature_stats_handles_empty_chunks():
 
 
 def test_stats_iterator_preserves_string_grouping_key():
-    iterator = make_stats_iterator(
-        _stats_dataset(), "dev_train_25", "device", 2
-    )
+    iterator = make_stats_iterator(_stats_dataset(), "dev_train_25", "device", 2)
 
     stats = compute_feature_stats(iterator, groupby="device", feature_key="inputs")
 
@@ -133,9 +131,7 @@ def test_stats_iterator_preserves_multiple_string_grouping_keys():
             "metadata": {**sample["metadata"], "site": "city"},
         }
     )
-    iterator = make_stats_iterator(
-        dataset, "dev_train_25", ["device", "site"], 2
-    )
+    iterator = make_stats_iterator(dataset, "dev_train_25", ["device", "site"], 2)
 
     stats = compute_feature_stats(
         iterator, groupby=["device", "site"], feature_key="inputs"

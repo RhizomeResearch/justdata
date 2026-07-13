@@ -65,7 +65,7 @@ output values, and is separate from source-owned download caches under
 `data_dir`. `cache_model_inputs` can additionally cache deterministic
 postprocess outputs before batching; train use requires
 `allow_train_model_input_cache=True` because stochastic training views are
-materialized on first fill.
+materialized on first fill. The same opt-in is required when `augment_eval=True`.
 
 For acoustic data the stages are:
 
@@ -74,7 +74,7 @@ For acoustic data the stages are:
 | `preprocess` | Decode or accept waveform, cast to float32, standardize layout, resample, fold channels, normalize waveform, and attach base metadata. |
 | `augment` | Training-only per-sample segmentation plus waveform or spectrogram augmentations. Evaluation uses deterministic segmentation unless `augment_eval=True`. |
 | `postprocess` | Evaluation segmentation, frontend computation, layout conversion, dtype cast, static shape assignment, and label transform. |
-| `late_augment` | Training-only batch transforms such as Mixup, CutMixSpec, WavMix, and MixStyle. |
+| `late_augment` | Batch transforms such as Mixup, CutMixSpec, WavMix, and MixStyle. They run during training by default and during evaluation only when `augment_eval=True`. |
 
 ### Segmentation contract
 

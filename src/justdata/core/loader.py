@@ -215,9 +215,8 @@ def load_ds(
         model_input_cache_path: Filesystem path for ``cache_model_inputs``.
             If a filename is not provided, model inputs will be cached in memory.
         allow_train_model_input_cache: Required opt-in for model-input caching
-            with ``dataset_type="train"``. Only use this for deterministic
-            training views, because stochastic augmentations will be materialized
-            into the cache on first fill.
+            with training or evaluation augmentation. Only use this when
+            materializing the first sampled augmented views is intentional.
         drop_remainder: Choose to drop or pad batches without the correct size,
         data_dir: Optional path to the TFDS data directory.
         return_raw_ds: If True, returns the dataset immediately after
@@ -238,9 +237,11 @@ def load_ds(
         source_filter_fn: Optional predicate applied to raw source records before
                           adapter mapping. Unlike ``filter_fn``, it may reference
                           only fields exposed by the source loader.
-
     Returns:
-        A batched `tf.data.Dataset` converted to NumPy arrays.
+        ``(dataset, n_batches)`` where ``dataset`` is a batched
+        ``tf.data.Dataset`` or NumPy iterator and ``n_batches`` is an integer
+        when cardinality is known, otherwise ``None``. With
+        ``return_raw_ds=True``, returns ``(dataset, tools_dict)`` instead.
 
     Raises:
         ValueError: If dataset loading fails and `fetch_ds` returns None.
@@ -280,9 +281,13 @@ def load_ds(
         )
 
     is_training = dataset_type == "train"
-    if cache_model_inputs and is_training and not allow_train_model_input_cache:
+    augment_eval = bool(
+        pipeline is not None and pipeline.kwargs.get("augment_eval", False)
+    )
+    apply_augmentation = is_training or augment_eval
+    if cache_model_inputs and apply_augmentation and not allow_train_model_input_cache:
         raise ValueError(
-            "cache_model_inputs with dataset_type='train' requires "
+            "cache_model_inputs with training or evaluation augmentation requires "
             "allow_train_model_input_cache=True."
         )
     if cache_dataset and cache_model_inputs and cache_path and model_input_cache_path:
@@ -349,6 +354,7 @@ def load_ds(
         model_input_cache_path=model_input_cache_path,
         drop_remainder=drop_remainder,
         is_training=is_training,
+        apply_late_augment=apply_augmentation,
         late_augment_fn=late_augment_fn,
         rng=rng,
         deterministic=deterministic,
@@ -368,7 +374,7 @@ def load_ds(
             },
         )
 
-    if is_training:
+    if apply_augmentation:
         ds = ds.map(
             seeded_augment,
             num_parallel_calls=1 if deterministic else tf.data.AUTOTUNE,

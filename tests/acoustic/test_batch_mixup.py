@@ -173,10 +173,6 @@ def test_load_ds_mixup_does_not_mix_with_final_batch_padding():
 
     final_batch = list(ds)[-1]
 
-    np.testing.assert_array_equal(
-        final_batch["waveform"].numpy(), [[3.0], [0.0]]
-    )
-    np.testing.assert_array_equal(
-        final_batch["label"].numpy(), [[0, 0, 1], [0, 0, 0]]
-    )
+    np.testing.assert_array_equal(final_batch["waveform"].numpy(), [[3.0], [0.0]])
+    np.testing.assert_array_equal(final_batch["label"].numpy(), [[0, 0, 1], [0, 0, 0]])
     np.testing.assert_array_equal(final_batch["padding_mask"].numpy(), [True, False])

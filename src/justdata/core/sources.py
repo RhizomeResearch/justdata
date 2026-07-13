@@ -54,15 +54,19 @@ def register_default_source_loader(fn: SourceLoader) -> SourceLoader:
 
 
 def get_source_loader(dataset_name: str) -> SourceLoader:
+    with _SOURCE_LOCK:
+        prefix_loaders = tuple(_PREFIX_LOADERS.items())
+        default_loader = _DEFAULT_LOADER
+
     for prefix, loader in sorted(
-        _PREFIX_LOADERS.items(), key=lambda kv: len(kv[0]), reverse=True
+        prefix_loaders, key=lambda kv: len(kv[0]), reverse=True
     ):
         if dataset_name.startswith(prefix):
             return loader
 
-    if _DEFAULT_LOADER is None:
+    if default_loader is None:
         raise ValueError("No default source loader registered.")
-    return _DEFAULT_LOADER
+    return default_loader
 
 
 @register_default_source_loader

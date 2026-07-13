@@ -20,7 +20,9 @@ class VisionPipelineContract:
 
 
 VISION_PIPELINE_CONTRACTS = (
-    VisionPipelineContract("cifar10", "classification", "validation", (3, 32, 32), (10,)),
+    VisionPipelineContract(
+        "cifar10", "classification", "validation", (3, 32, 32), (10,)
+    ),
     VisionPipelineContract("cifar10", "classification", "train", (3, 32, 32), (10,)),
     VisionPipelineContract("kitti_road", "segmentation", "validation", (3, 32, 32), ()),
     VisionPipelineContract("kitti_road", "segmentation", "train", (3, 32, 32), ()),
@@ -60,7 +62,7 @@ def test_vision_pipeline_contract_end_to_end(contract, make_synthetic_vision_ds)
     ds, cardinality = _load_contract(contract, raw_ds)
     batches = list(ds)
 
-    assert int(cardinality.numpy()) == 2
+    assert cardinality == 2
     assert len(batches) == 2
     assert batches[0]["image"].shape == (2, *contract.image_shape)
     assert batches[0]["image"].dtype == tf.float32

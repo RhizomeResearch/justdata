@@ -142,6 +142,9 @@ duplicate destinations, and path escapes. Extraction is preflighted against a
 space. Per-archive interprocess locking and unique staging paths make concurrent
 cache preparation safe. These checks bound resource use and filesystem effects;
 checksums establish provider integrity but do not make image contents trusted.
+Before TensorFlow decoding, each image header is checked with Pillow and rejected
+if the encoded file exceeds 256 MiB, either dimension exceeds 32,768 pixels, or
+the decoded image exceeds 64 million pixels.
 
 The base `wilds:fmow` preset is deterministic during training, so the explicit
 train model-input cache above is suitable for local SSD benchmarking. Use
@@ -277,7 +280,7 @@ release surface does not drift between modalities.
 | Stateless stochastic transforms | required | required |
 | Corruption datasets             | required | required |
 | JAX-friendly numeric metadata   | required | required |
-| Golden preprocessing tests      | required | required |
+| External-reference frontend golden tests | not currently certified | certified acoustic families only |
 
 Shared guarantees are implemented in `justdata.core` where possible:
 `metadata_mode`, `as_numpy`, padding masks, seeded execution, and preset hashing.

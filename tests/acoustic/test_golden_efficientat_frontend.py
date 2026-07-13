@@ -19,17 +19,15 @@ GOLDEN_ROOT = Path(__file__).parent / "golden"
 
 def _inputs():
     waveform = np.load(GOLDEN_ROOT / "corpus.npz")["waveform_32000"]
-    expected = np.load(
-        GOLDEN_ROOT / "efficientat" / "efficientat_32k_1s.npz"
-    )["features"]
+    expected = np.load(GOLDEN_ROOT / "efficientat" / "efficientat_32k_1s.npz")[
+        "features"
+    ]
     return waveform, expected
 
 
 def test_efficientat_eval_frontend_matches_upstream_fixture():
     waveform, expected = _inputs()
-    actual = efficientat_logmel(
-        tf.constant(waveform[:, None]), efficientat_frontend()
-    )
+    actual = efficientat_logmel(tf.constant(waveform[:, None]), efficientat_frontend())
 
     np.testing.assert_allclose(
         np.squeeze(actual.numpy(), axis=-1).T,
@@ -50,9 +48,7 @@ def test_efficientat_and_dymn_eval_pipelines_match_upstream_fixture(preset):
         preset=preset,
         pipeline_name="acoustic/classification",
     )
-    preprocess, augment, _late_augment, postprocess = pipeline.build(
-        is_training=False
-    )
+    preprocess, augment, _late_augment, postprocess = pipeline.build(is_training=False)
     sample = preprocess(
         {
             "waveform": tf.constant(waveform),

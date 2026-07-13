@@ -273,9 +273,7 @@ def make_model_input_stage(
             features = tf.map_fn(
                 process_waveform,
                 waveform,
-                fn_output_signature=tf.TensorSpec(
-                    shape=None, dtype=tf.as_dtype(dtype)
-                ),
+                fn_output_signature=tf.TensorSpec(shape=None, dtype=tf.as_dtype(dtype)),
             )
         else:
             raise ValueError(

@@ -251,9 +251,7 @@ def _views_result(
     starts = tf.cast(starts, tf.int32)
 
     def _view(start: tf.Tensor) -> tf.Tensor:
-        return _crop_or_pad(
-            audio, start, target_samples, pad_mode, pad_position, seed
-        )
+        return _crop_or_pad(audio, start, target_samples, pad_mode, pad_position, seed)
 
     views = tf.map_fn(_view, starts, fn_output_signature=audio.dtype)
     lengths = tf.fill(tf.shape(starts), target_samples)
@@ -269,9 +267,7 @@ def _single_result(
     pad_position: str,
     seed: tf.Tensor | int | None,
 ) -> dict:
-    view = _crop_or_pad(
-        audio, start, target_samples, pad_mode, pad_position, seed
-    )
+    view = _crop_or_pad(audio, start, target_samples, pad_mode, pad_position, seed)
     starts = tf.reshape(tf.cast(start, tf.int32), [1])
     lengths = tf.reshape(target_samples, [1])
     return {AUDIO: view, METADATA: _metadata(starts, lengths, sample_rate)}

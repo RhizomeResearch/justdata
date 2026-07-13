@@ -30,9 +30,7 @@ def _pad_dataset(ds: tf.data.Dataset, batch_size: int) -> tf.data.Dataset:
 
     def pad_value(value, pad_size):
         if isinstance(value, dict):
-            return {
-                key: pad_value(child, pad_size) for key, child in value.items()
-            }
+            return {key: pad_value(child, pad_size) for key, child in value.items()}
 
         pad_shape = tf.concat([[pad_size], tf.shape(value)[1:]], axis=0)
         if value.dtype == tf.string:
@@ -44,9 +42,7 @@ def _pad_dataset(ds: tf.data.Dataset, batch_size: int) -> tf.data.Dataset:
     def pad_batch(batch):
         current_size = get_batch_dim(batch)
         pad_size = batch_size - current_size
-        padded = {
-            key: pad_value(value, pad_size) for key, value in batch.items()
-        }
+        padded = {key: pad_value(value, pad_size) for key, value in batch.items()}
         padded["padding_mask"] = tf.concat(
             [
                 tf.ones((current_size,), dtype=tf.bool),
@@ -60,8 +56,7 @@ def _pad_dataset(ds: tf.data.Dataset, batch_size: int) -> tf.data.Dataset:
         lambda batch: tf.cond(
             get_batch_dim(batch) < batch_size,
             lambda: pad_batch(batch),
-            lambda: batch
-            | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)},
+            lambda: batch | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)},
         ),
         num_parallel_calls=tf.data.AUTOTUNE,
     )
@@ -80,6 +75,7 @@ def finalize_dataset(
     model_input_cache_path: str = "",
     drop_remainder: bool = False,
     is_training: bool = False,
+    apply_late_augment: bool | None = None,
     late_augment_fn: Callable | None = None,
     rng: tf.random.Generator | None = None,
     deterministic: bool = False,
@@ -87,14 +83,16 @@ def finalize_dataset(
     shuffle_seed: int | None = None,
     prefetch: bool = True,
     as_numpy: bool = False,
-) -> tuple[Any, tf.Tensor]:
+) -> tuple[Any, int | None]:
     """Finalize preprocessed samples into padded, model-ready batches."""
     if metadata_mode not in {"full", "numeric_only", "none"}:
         raise ValueError(
             "metadata_mode must be one of 'full', 'numeric_only', or 'none'."
         )
-    if is_training and late_augment_fn is not None and rng is None:
-        raise ValueError("rng is required for training late augmentation.")
+    if apply_late_augment is None:
+        apply_late_augment = is_training
+    if apply_late_augment and late_augment_fn is not None and rng is None:
+        raise ValueError("rng is required when late augmentation is enabled.")
 
     map_deterministic = deterministic if is_training else None
 
@@ -140,7 +138,7 @@ def finalize_dataset(
 
     ds = ds.batch(batch_size, drop_remainder=drop_remainder)
 
-    if is_training and late_augment_fn is not None:
+    if apply_late_augment and late_augment_fn is not None:
         ds = ds.map(
             lambda batch: late_augment_fn(
                 batch,
@@ -153,8 +151,9 @@ def finalize_dataset(
 
     if drop_remainder:
         ds = ds.map(
-            lambda batch: batch
-            | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)},
+            lambda batch: (
+                batch | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)}
+            ),
             num_parallel_calls=tf.data.AUTOTUNE,
             deterministic=map_deterministic,
         )
@@ -164,10 +163,11 @@ def finalize_dataset(
     if prefetch:
         ds = ds.prefetch(tf.data.AUTOTUNE)
 
-    cardinality = tf.data.Dataset.cardinality(ds)
+    cardinality = int(tf.data.Dataset.cardinality(ds).numpy())
+    n_batches = cardinality if cardinality >= 0 else None
     if as_numpy:
-        return ds.as_numpy_iterator(), cardinality
-    return ds, cardinality
+        return ds.as_numpy_iterator(), n_batches
+    return ds, n_batches
 
 
 __all__ = ["finalize_dataset"]

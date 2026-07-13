@@ -82,9 +82,7 @@ def _apply_segmentation_geometric_op(
                 interpolation=interpolation,
             )
         if name in ("TranslateX", "TranslateY"):
-            translations = (
-                [-args[0], 0] if name == "TranslateX" else [0, -args[0]]
-            )
+            translations = [-args[0], 0] if name == "TranslateX" else [0, -args[0]]
             return _translate(
                 value,
                 translations,

@@ -349,6 +349,73 @@ def test_late_augmentation_sees_unpadded_final_batch():
     )
 
 
+def test_pipeline_augment_eval_runs_sample_and_batch_augmentation():
+    class EvalAugmentPipeline:
+        kwargs = {"augment_eval": True}
+
+        @staticmethod
+        def build(is_training):
+            assert is_training is False
+
+            def augment(sample, seed=None):
+                del seed
+                return sample | {"x": sample["x"] + 1}
+
+            def late_augment(batch, num_classes=None, seed=None):
+                del num_classes, seed
+                return batch | {"x": batch["x"] * 10}
+
+            return _identity, augment, late_augment, _identity
+
+    with patch(
+        "justdata.core.loader.fetch_ds",
+        return_value=_range_dataset(3),
+    ):
+        ds, n_batches = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="validation",
+            dataset_type="validation",
+            batch_size=2,
+            seed=0,
+            pipeline=EvalAugmentPipeline(),
+            deterministic=True,
+        )
+
+    batches = list(ds)
+    assert n_batches == 2
+    np.testing.assert_array_equal(batches[0]["x"].numpy(), [10, 20])
+    np.testing.assert_array_equal(batches[1]["x"].numpy(), [30, 0])
+
+
+def test_validation_skips_augmentation_without_opt_in():
+    def augment(sample, seed=None):
+        del seed
+        return sample | {"x": sample["x"] + 1}
+
+    def late_augment(batch, num_classes=None, seed=None):
+        del num_classes, seed
+        return batch | {"x": batch["x"] * 10}
+
+    with patch(
+        "justdata.core.loader.fetch_ds",
+        return_value=_range_dataset(2),
+    ):
+        ds, _n = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="validation",
+            dataset_type="validation",
+            batch_size=2,
+            seed=0,
+            preprocess_fn=_identity,
+            augment_fn=augment,
+            late_augment_fn=late_augment,
+            postprocess_fn=_identity,
+            deterministic=True,
+        )
+
+    np.testing.assert_array_equal(next(iter(ds))["x"].numpy(), [0, 1])
+
+
 def test_validation_model_input_cache_reuses_postprocessed_samples(tmp_path):
     counter = {"calls": 0}
     with patch("justdata.core.loader.fetch_ds", return_value=_range_dataset(4)):
@@ -442,7 +509,7 @@ def test_raw_dataset_finalizer_supports_model_input_cache():
 
     ds, n_batches = tools["finalize_fn"](raw_ds)
 
-    assert int(n_batches.numpy()) == 2
+    assert n_batches == 2
     np.testing.assert_array_equal(
         list(ds)[-1]["padding_mask"].numpy(),
         [True, False],

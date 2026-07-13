@@ -137,7 +137,9 @@ def test_sidecar_rejects_missing_identity_before_writing(tmp_path):
     )
     ds = attach_sidecar_writer(ds, str(path))
 
-    with pytest.raises(tf.errors.InvalidArgumentError, match="requires either non-null"):
+    with pytest.raises(
+        tf.errors.InvalidArgumentError, match="requires either non-null"
+    ):
         list(ds)
 
     assert path.read_text(encoding="utf-8") == ""
@@ -213,9 +215,7 @@ def test_padding_preserves_top_level_strings_across_metadata_modes(metadata_mode
         assert "metadata" not in final
         return
 
-    np.testing.assert_allclose(
-        final["metadata"]["nested"]["score"].numpy(), [0.3, 0.0]
-    )
+    np.testing.assert_allclose(final["metadata"]["nested"]["score"].numpy(), [0.3, 0.0])
     if metadata_mode == "full":
         np.testing.assert_array_equal(
             final["metadata"]["nested"]["city"].numpy(), [b"Rome", b""]

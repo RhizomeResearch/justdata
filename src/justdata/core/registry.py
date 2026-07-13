@@ -29,6 +29,12 @@ def register_dataset(
 ):
     """Register dataset metadata at runtime."""
     with _REGISTRY_LOCK:
+        if name in _DATASETS:
+            existing = _DATASETS[name]
+            raise ValueError(
+                f"Dataset '{name}' is already registered with modality "
+                f"'{existing.modality}' and task '{existing.task}'."
+            )
         _DATASETS[name] = DatasetInfo(
             name=name,
             modality=modality,
@@ -39,10 +45,14 @@ def register_dataset(
 
 
 def get_dataset_info(name: str) -> DatasetInfo | None:
-    if name in _DATASETS:
-        return _DATASETS[name]
+    with _REGISTRY_LOCK:
+        exact = _DATASETS.get(name)
+        entries = tuple(_DATASETS.items())
 
-    for key, val in sorted(_DATASETS.items(), key=lambda kv: len(kv[0]), reverse=True):
+    if exact is not None:
+        return exact
+
+    for key, val in sorted(entries, key=lambda kv: len(kv[0]), reverse=True):
         if name.startswith(key):
             return val
 
@@ -84,10 +94,12 @@ class DataPipeline:
         postproc = config.setdefault("postproc_kwargs", {})
         postproc["is_training"] = is_training
 
-        if self.pipeline_name not in _PIPELINES:
+        with _REGISTRY_LOCK:
+            factory = _PIPELINES.get(self.pipeline_name)
+        if factory is None:
             raise ValueError(f"Pipeline '{self.pipeline_name}' not found.")
 
-        return _PIPELINES[self.pipeline_name](**config)
+        return factory(**config)
 
     def __iter__(self):
         return iter(self.build(is_training=self._is_training_legacy))
@@ -121,11 +133,13 @@ def register_pipeline(name: str):
 
 
 def list_pipelines() -> tuple[str, ...]:
-    return tuple(sorted(_PIPELINES))
+    with _REGISTRY_LOCK:
+        return tuple(sorted(_PIPELINES))
 
 
 def has_pipeline(name: str) -> bool:
-    return name in _PIPELINES
+    with _REGISTRY_LOCK:
+        return name in _PIPELINES
 
 
 def get_pipeline(
@@ -163,7 +177,7 @@ def get_pipeline(
             effective_pipeline = dataset_info.pipeline_name
             if effective_pipeline is None and dataset_info.task is not None:
                 effective_pipeline = f"{dataset_info.modality}/{dataset_info.task}"
-        elif dataset in _PIPELINES:
+        elif has_pipeline(dataset):
             effective_pipeline = dataset
             effective_modality = effective_modality or _pipeline_modality(dataset)
             dataset_is_pipeline_name = True

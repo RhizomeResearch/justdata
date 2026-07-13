@@ -244,9 +244,7 @@ def test_late_spectrogram_augmentation_maps_real_rows_deterministically(batch_si
 def test_late_spectrogram_augmentation_infers_sample_layout(model_layout, shape):
     batch = {FEATURES: tf.ones(shape, dtype=tf.float32)}
     stage = make_late_augmentations(
-        spectrogram_augmentations={
-            "time_mask": {"max_width": 4, "fill_value": "zero"}
-        },
+        spectrogram_augmentations={"time_mask": {"max_width": 4, "fill_value": "zero"}},
         model_layout=model_layout,
     )
 
@@ -304,5 +302,9 @@ def test_late_spectrogram_augmentation_is_eval_opt_in():
         augment_eval=True,
     )
 
-    np.testing.assert_array_equal(disabled(batch, seed=[29, 4])[FEATURES], batch[FEATURES])
-    assert np.any(enabled(batch, seed=[29, 4])[FEATURES].numpy() != batch[FEATURES].numpy())
+    np.testing.assert_array_equal(
+        disabled(batch, seed=[29, 4])[FEATURES], batch[FEATURES]
+    )
+    assert np.any(
+        enabled(batch, seed=[29, 4])[FEATURES].numpy() != batch[FEATURES].numpy()
+    )

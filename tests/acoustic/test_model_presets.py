@@ -28,6 +28,7 @@ EXPECTED_HASHES = {
     "dymn_32k_10s_logmel128": "70bc6a224672a7fa",
     "dcase2025_task1_efficientat_32k_1s": "cf83407bd742f0b7",
     "dcase2025_task1_dymn_32k_1s": "9325444075a854a3",
+    "dcase2025_task1_native_44k_1s": "52715459bb61fcd6",
     "dcase2025_task1_efficientat_32k_1s_zero_pad_to_10s": "ae7f5f75cfa3696e",
     "dcase2025_task1_efficientat_32k_1s_repeat_to_10s": "aa942a90a1ea3a05",
     "passt_32k_10s_logmel128": "eb08a69e03151c55",
@@ -57,6 +58,7 @@ EXPECTED_SHAPES = {
     "dymn_32k_10s_logmel128": (1, 128, 1000),
     "dcase2025_task1_efficientat_32k_1s": (1, 128, 100),
     "dcase2025_task1_dymn_32k_1s": (1, 128, 100),
+    "dcase2025_task1_native_44k_1s": (138, 128),
     "dcase2025_task1_efficientat_32k_1s_zero_pad_to_10s": (1, 128, 1000),
     "dcase2025_task1_efficientat_32k_1s_repeat_to_10s": (1, 128, 1000),
     "passt_32k_10s_logmel128": (1, 128, 1000),
@@ -126,7 +128,15 @@ def test_layout_and_label_transform_match_contract(name):
     ):
         assert preset.layout == "bcft"
     elif name.startswith(
-        ("ced", "dcase2025_task1_ced", "panns", "audioset", "audio_default_32k", "ast")
+        (
+            "ced",
+            "dcase2025_task1_ced",
+            "dcase2025_task1_native",
+            "panns",
+            "audioset",
+            "audio_default_32k",
+            "ast",
+        )
     ):
         assert preset.layout == "btf"
     else:
@@ -149,6 +159,19 @@ def test_golden_family_presets_report_frontend_golden_status():
     for name in EXPECTED_HASHES:
         if name.startswith(golden_prefixes):
             assert _preset(name).metadata["compatibility_status"] == "frontend_golden"
+
+
+def test_dcase_native_preset_reports_declared_compatibility():
+    preset = _preset("dcase2025_task1_native_44k_1s")
+
+    assert preset.metadata == {
+        "preset_version": 1,
+        "model_family": "generic",
+        "frontend_contract": "dcase2025-native-logmel-44k-v1",
+        "compatibility_status": "declared",
+    }
+
+
 def test_efficientat_preset_fields():
     preset = _preset("efficientat_32k_10s_logmel128")
 
@@ -220,9 +243,7 @@ def test_passt_assembled_pipeline_applies_patchout_after_frontend():
 
     preprocess, augment, late_augment, postprocess = pipeline.build(is_training=False)
     processed = postprocess(augment(preprocess(sample), seed=[7, 2]))
-    eval_batch = tf.nest.map_structure(
-        lambda value: value[tf.newaxis, ...], processed
-    )
+    eval_batch = tf.nest.map_structure(lambda value: value[tf.newaxis, ...], processed)
 
     np.testing.assert_array_equal(
         late_augment(eval_batch, seed=[13, 5])[FEATURES], eval_batch[FEATURES]

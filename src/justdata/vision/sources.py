@@ -31,6 +31,9 @@ _ZENODO_DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 _ZENODO_MAX_ARCHIVE_BYTES = 20 * 1024**3
 _ZENODO_MAX_EXTRACTED_BYTES = 100 * 1024**3
 _ZENODO_MAX_ARCHIVE_MEMBERS = 100_000
+_ZENODO_MAX_IMAGE_FILE_BYTES = 256 * 1024**2
+_ZENODO_MAX_IMAGE_DIMENSION = 32_768
+_ZENODO_MAX_IMAGE_PIXELS = 64_000_000
 _IMAGE_EXTENSIONS = {
     ".bmp",
     ".gif",
@@ -533,6 +536,45 @@ def _is_image_file(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in _IMAGE_EXTENSIONS
 
 
+def _validate_image_file(path: Path) -> None:
+    size = path.stat().st_size
+    if size > _ZENODO_MAX_IMAGE_FILE_BYTES:
+        raise ValueError(
+            f"Zenodo image {path} exceeds the encoded-file limit of "
+            f"{_ZENODO_MAX_IMAGE_FILE_BYTES} bytes."
+        )
+
+    try:
+        from PIL import Image, UnidentifiedImageError
+    except ImportError as e:
+        raise ImportError(
+            "Pillow is required for bounded Zenodo image validation. "
+            "Install justdata with the vision extra."
+        ) from e
+
+    try:
+        with Image.open(path) as image:
+            width, height = image.size
+    except (Image.DecompressionBombError, UnidentifiedImageError, OSError) as e:
+        raise ValueError(f"Zenodo image {path} has an invalid image header.") from e
+
+    if width <= 0 or height <= 0:
+        raise ValueError(
+            f"Zenodo image {path} has invalid dimensions {width}x{height}."
+        )
+    if width > _ZENODO_MAX_IMAGE_DIMENSION or height > _ZENODO_MAX_IMAGE_DIMENSION:
+        raise ValueError(
+            f"Zenodo image {path} dimensions {width}x{height} exceed the "
+            f"per-dimension limit of {_ZENODO_MAX_IMAGE_DIMENSION}."
+        )
+    pixels = width * height
+    if pixels > _ZENODO_MAX_IMAGE_PIXELS:
+        raise ValueError(
+            f"Zenodo image {path} has {pixels} decoded pixels, exceeding the "
+            f"limit of {_ZENODO_MAX_IMAGE_PIXELS}."
+        )
+
+
 def _split_class_dirs(split_dir: Path) -> list[Path]:
     return sorted(
         child
@@ -594,6 +636,7 @@ def _imagefolder_records(
             for path in sorted(class_dir.rglob("*")):
                 if not _is_image_file(path):
                     continue
+                _validate_image_file(path)
                 relative_path = path.relative_to(root).as_posix()
                 split_records.append(
                     {

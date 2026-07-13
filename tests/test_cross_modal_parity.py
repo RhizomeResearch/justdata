@@ -246,7 +246,7 @@ def test_both_modalities_have_corruption_dataset_api():
         )
 
     vision_batch = next(iter(vision_ds))
-    assert int(vision_n.numpy()) == 2
+    assert vision_n == 2
     assert "padding_mask" in vision_batch
     assert vision_batch["metadata"]["corruption"].numpy()[0] == b"noise"
 
@@ -270,7 +270,7 @@ def test_both_modalities_have_corruption_dataset_api():
         )
 
     acoustic_batch = next(iter(acoustic_ds))
-    assert int(acoustic_n.numpy()) == 2
+    assert acoustic_n == 2
     assert "padding_mask" in acoustic_batch
     assert acoustic_batch["metadata"]["corruption"].numpy()[0] == b"identity"
 
@@ -299,7 +299,7 @@ def test_minic_uses_shared_metadata_and_numpy_finalization(metadata_mode):
         )
 
     final = list(iterator)[-1]
-    assert int(n_batches.numpy()) == 2
+    assert n_batches == 2
     assert isinstance(final["image"], np.ndarray)
     np.testing.assert_array_equal(final["padding_mask"], [True, False])
     if metadata_mode == "none":

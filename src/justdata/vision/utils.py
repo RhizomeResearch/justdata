@@ -523,6 +523,7 @@ def _rotate_with_bboxes(image, bboxes, degrees, replace):
     image = _wrapped_rotate(image, degrees, replace)
     image_height = tf.shape(image)[0]
     image_width = tf.shape(image)[1]
+
     def wrapped_rotate_bbox(bbox):
         return _rotate_bbox(bbox, image_height, image_width, degrees)
 
@@ -570,10 +571,9 @@ def _shear_with_bboxes(image, bboxes, level, replace, shear_horizontal):
         image = _shear_y(image, level, replace)
     image_height = tf.shape(image)[0]
     image_width = tf.shape(image)[1]
+
     def wrapped_shear_bbox(bbox):
-        return _shear_bbox(
-            bbox, image_height, image_width, level, shear_horizontal
-        )
+        return _shear_bbox(bbox, image_height, image_width, level, shear_horizontal)
 
     bboxes = tf.map_fn(wrapped_shear_bbox, bboxes)
     return image, bboxes
@@ -611,10 +611,9 @@ def _translate_bbox(image, bboxes, pixels, replace, shift_horizontal):
 
     image_height = tf.shape(image)[0]
     image_width = tf.shape(image)[1]
+
     def wrapped_shift_bbox(bbox):
-        return _shift_bbox(
-            bbox, image_height, image_width, pixels, shift_horizontal
-        )
+        return _shift_bbox(bbox, image_height, image_width, pixels, shift_horizontal)
 
     bboxes = tf.map_fn(wrapped_shift_bbox, bboxes)
     return image, bboxes

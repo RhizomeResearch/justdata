@@ -73,6 +73,7 @@ def test_domain_and_caller_filters_use_independent_hooks(
     monkeypatch, builder, domain_arg, domain
 ):
     calls = {}
+
     def source_filter_fn(sample):
         return tf.equal(sample["split"], "selected")
 
@@ -156,9 +157,7 @@ def test_domain_filter_skips_rejected_wav_decoding(
         sample_rate.set_shape([])
         return waveform, sample_rate
 
-    monkeypatch.setattr(
-        "justdata.acoustic.adapters.decode_audio_file", counted_decode
-    )
+    monkeypatch.setattr("justdata.acoustic.adapters.decode_audio_file", counted_decode)
 
     domain_kwargs = (
         {"source_domain": {"device": "A"}}

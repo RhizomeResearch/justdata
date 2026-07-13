@@ -17,9 +17,7 @@ GOLDEN_ROOT = Path(__file__).parent / "golden"
 
 def _inputs():
     waveform = np.load(GOLDEN_ROOT / "corpus.npz")["waveform_32000"]
-    expected = np.load(GOLDEN_ROOT / "passt" / "passt_32k_1s.npz")[
-        "features"
-    ]
+    expected = np.load(GOLDEN_ROOT / "passt" / "passt_32k_1s.npz")["features"]
     return waveform, expected
 
 

@@ -184,9 +184,7 @@ def make_late_augmentations(**kwargs):
             key: kwargs.pop(key) for key in tuple(kwargs) if key in known_batch_augments
         }
 
-    spectrogram_specs = normalize_spectrogram_augment_specs(
-        spectrogram_augmentations
-    )
+    spectrogram_specs = normalize_spectrogram_augment_specs(spectrogram_augmentations)
     if not spectrogram_specs and not batch_augmentations:
         return _identity_batch
 
@@ -269,8 +267,7 @@ def make_late_augmentations(**kwargs):
         if spectrogram_specs:
             if spectrogram_key not in batch:
                 raise ValueError(
-                    f"Spectrogram augmentations require batch key "
-                    f"{spectrogram_key!r}"
+                    f"Spectrogram augmentations require batch key {spectrogram_key!r}"
                 )
             base_seed = _seed_tensor(seed)
             if base_seed is None:

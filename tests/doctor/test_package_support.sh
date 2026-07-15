@@ -53,7 +53,7 @@ for extra in base vision acoustic; do
         requirement="$wheel[$extra]"
     fi
 
-    uv pip install --python "$venv/bin/python" "$requirement"
+    uv pip install --torch-backend cpu --python "$venv/bin/python" "$requirement"
 
     case "$extra" in
         base)

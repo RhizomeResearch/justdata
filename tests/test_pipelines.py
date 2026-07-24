@@ -12,6 +12,8 @@ import numpy as np
 import pytest
 import tensorflow as tf
 
+from justdata.core.registry import get_pipeline_for_dataset
+from justdata.vision.augmentations import geometric
 from justdata.vision.augmentations.color import color_jitter
 from justdata.vision.augmentations.composed import (
     create_global_crops,
@@ -20,9 +22,9 @@ from justdata.vision.augmentations.composed import (
 from justdata.vision.augmentations.registry import (
     get_augment_strategy,
     get_crop_strategy,
+    get_crop_strategy_metadata,
 )
 from justdata.vision.presets import get_dataset_presets, merge_with_presets
-from justdata.core.registry import get_pipeline_for_dataset
 from justdata.vision.tasks.classification import (
     make_augmentations,
     make_late_augmentations,
@@ -277,6 +279,157 @@ class TestImageNetModernTrainingPipeline:
         presets = get_dataset_presets("imagenet")
         assert presets["laug_kwargs"]["mixup_alpha"] == 0.8
         assert presets["laug_kwargs"]["cutmix_alpha"] == 1.0
+
+
+class TestRandomResizedHVFlip:
+    def test_strategy_metadata_declares_image_only_crop(self):
+        metadata = get_crop_strategy_metadata("random_resized_hvflip")
+        assert metadata.name == "random_resized_hvflip"
+        assert metadata.domain == "image"
+        assert metadata.is_training_only is True
+        assert metadata.requires_labels is False
+
+    def test_crop_specific_scale_and_ratio_are_forwarded(
+        self,
+        monkeypatch,
+        cifar_image,
+        seed,
+    ):
+        captured = {}
+
+        def capture_crop(
+            image,
+            size,
+            seed,
+            scale,
+            ratio,
+            interpolation,
+        ):
+            captured.update(
+                {
+                    "size": size,
+                    "seed": seed,
+                    "scale": scale,
+                    "ratio": ratio,
+                    "interpolation": interpolation,
+                }
+            )
+            return tf.image.resize(image, [size, size])
+
+        monkeypatch.setattr(geometric, "random_resized_crop", capture_crop)
+        crop = get_crop_strategy("random_resized_hvflip")
+        result = crop(
+            cifar_image,
+            size=16,
+            seed=seed,
+            scale=(0.85, 1.0),
+            ratio=(0.9, 1.1),
+            interpolation="bicubic",
+            horizontal_flip_probability=0.0,
+            vertical_flip_probability=0.0,
+        )
+
+        assert result.shape == (16, 16, 3)
+        assert captured["size"] == 16
+        assert captured["scale"] == (0.85, 1.0)
+        assert captured["ratio"] == (0.9, 1.1)
+        assert captured["interpolation"] == "bicubic"
+        assert captured["seed"].shape == (2,)
+
+    @pytest.mark.parametrize(
+        (
+            "horizontal_probability",
+            "vertical_probability",
+            "expected_transform",
+        ),
+        [
+            (0.0, 0.0, lambda image: image),
+            (1.0, 0.0, tf.image.flip_left_right),
+            (0.0, 1.0, tf.image.flip_up_down),
+            (
+                1.0,
+                1.0,
+                lambda image: tf.image.flip_up_down(tf.image.flip_left_right(image)),
+            ),
+        ],
+    )
+    def test_flip_probabilities_are_independent_and_forceable(
+        self,
+        monkeypatch,
+        seed,
+        horizontal_probability,
+        vertical_probability,
+        expected_transform,
+    ):
+        image = tf.reshape(tf.range(2 * 3 * 3), [2, 3, 3])
+        monkeypatch.setattr(
+            geometric,
+            "random_resized_crop",
+            lambda image, **_kwargs: image,
+        )
+        crop = get_crop_strategy("random_resized_hvflip")
+        result = crop(
+            image,
+            size=(2, 3),
+            seed=seed,
+            horizontal_flip_probability=horizontal_probability,
+            vertical_flip_probability=vertical_probability,
+        )
+        np.testing.assert_array_equal(
+            result.numpy(),
+            expected_transform(image).numpy(),
+        )
+
+    def test_fmow_m1_mapping_builds_and_is_seed_deterministic(
+        self,
+        imagenet_sample,
+        seed,
+    ):
+        augmentation = make_augmentations(
+            image_size=224,
+            crop_type="random_resized_hvflip",
+            interpolation="bicubic",
+            crop_kwargs={
+                "scale": (0.85, 1.0),
+                "ratio": (0.90, 1.10),
+                "horizontal_flip_probability": 0.5,
+                "vertical_flip_probability": 0.5,
+            },
+            augment_type="none",
+        )
+        sample = {
+            **imagenet_sample,
+            "metadata": {"wilds_index": tf.constant(7, dtype=tf.int64)},
+        }
+        first = augmentation(sample, seed=seed)
+        second = augmentation(sample, seed=seed)
+
+        assert first["image"].shape == (224, 224, 3)
+        np.testing.assert_array_equal(
+            first["image"].numpy(),
+            second["image"].numpy(),
+        )
+        assert first["label"].numpy() == imagenet_sample["label"].numpy()
+        assert first["metadata"]["wilds_index"].numpy() == 7
+
+    def test_crop_kwargs_reject_legacy_top_level_key_conflicts(self):
+        with pytest.raises(ValueError, match="interpolation"):
+            make_augmentations(
+                image_size=224,
+                crop_type="random_resized_hvflip",
+                interpolation="bicubic",
+                crop_kwargs={"interpolation": "nearest"},
+            )
+
+    def test_existing_presets_do_not_gain_crop_kwargs(self):
+        for name in (
+            "cifar10",
+            "imagenet",
+            "imagenet_resnet",
+            "wilds:fmow",
+            "wilds:fmow_strong",
+        ):
+            assert "crop_kwargs" not in get_dataset_presets(name)["aug_kwargs"]
 
 
 class TestWILDSClassificationPresets:

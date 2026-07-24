@@ -68,6 +68,7 @@ def make_augmentations(
     gc_kwargs: dict = None,
     lc_kwargs: dict = None,
     crop_type: str = "random_resized",
+    crop_kwargs: dict | None = None,
     interpolation: str = "bilinear",
     padding: int = 4,
     pad_mode: str = "REFLECT",
@@ -82,6 +83,20 @@ def make_augmentations(
 
     crop_fn = get_crop_strategy(crop_type)
     aug_fn = get_augment_strategy(augment_type)
+
+    crop_kwargs = dict(crop_kwargs or {})
+    reserved_crop_kwargs = {
+        "interpolation",
+        "pad_mode",
+        "padding",
+        "seed",
+        "size",
+    }
+    conflicts = sorted(reserved_crop_kwargs.intersection(crop_kwargs))
+    if conflicts:
+        raise ValueError(
+            f"crop_kwargs contains keys controlled by make_augmentations: {conflicts}"
+        )
 
     ra_kwargs = ra_kwargs or {}
     ta_kwargs = ta_kwargs or {}
@@ -128,6 +143,7 @@ def make_augmentations(
                 padding=padding,
                 pad_mode=pad_mode,
                 interpolation=interpolation,
+                **crop_kwargs,
             )
             aug_image = aug_fn(cropped_image, seeds[1], **_aug_kwargs)
             res["image"] = aug_image

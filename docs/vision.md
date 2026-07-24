@@ -80,6 +80,32 @@ fill label. Photometric policy operations modify only the image. Custom
 registered augmentation strategies remain image-only and therefore must not
 perform geometry when used by the segmentation pipeline.
 
+Classification crop strategies receive common `image_size`, `seed`,
+`interpolation`, `padding`, and `pad_mode` values from `make_augmentations`.
+Strategy-specific values belong in `crop_kwargs`; common keys are rejected
+there rather than silently overriding the top-level configuration.
+`random_resized_hvflip` performs a random resized crop followed by independent
+stateless horizontal and vertical flips:
+
+```python
+fmow_m1_aug_kwargs = {
+    "enable": True,
+    "image_size": 224,
+    "crop_type": "random_resized_hvflip",
+    "interpolation": "bicubic",
+    "crop_kwargs": {
+        "scale": (0.85, 1.0),
+        "ratio": (0.90, 1.10),
+        "horizontal_flip_probability": 0.5,
+        "vertical_flip_probability": 0.5,
+    },
+}
+```
+
+The input seed is split in crop, horizontal-flip, vertical-flip order. Neither
+the strategy nor its registry metadata requires labels. Existing presets omit
+`crop_kwargs` and retain their prior hashes and behavior.
+
 ## 4. How to choose a preset
 
 Choose the preset that matches the dataset scale and model recipe:
@@ -240,11 +266,68 @@ Optional external-reference golden tests should be marked `golden` and placed
 under a vision-specific test file when a reference implementation is available,
 for example torchvision/timm preprocessing parity for a named ImageNet recipe.
 
-## 10. Mini-C corruption benchmark
+## 10. Versioned image corruptions
 
-`create_minic_datasets` forks a raw preprocessed dataset, applies deterministic
-severity 1-5 image corruptions, runs postprocessing, batches, and preserves
-`padding_mask`.
+Versioned decoded-image corruptions are registered by exact `(name, version)`.
+`get_corruption_descriptor(name, version)` returns an immutable descriptor made
+only from plain Python values. It records input/output domains, supported dtype,
+same-shape policy, ordered severity values and parameters, randomness and seed
+contract, clipping/rounding, and the TensorFlow implementation identity.
+`list_corruption_descriptors()` enumerates descriptors in stable name/version
+order.
+
+The public low-level API requires an exact version and a complete stateless
+`int32[2]` seed:
+
+```python
+import tensorflow as tf
+
+from justdata.vision.corruptions import apply_corruption
+
+shifted = apply_corruption(
+    decoded_rgb_uint8,
+    name="gaussian_noise",
+    version="1.0.0",
+    severity=3,
+    seed=tf.constant([123, 456], dtype=tf.int32),
+)
+```
+
+It accepts decoded RGB `uint8` HWC for the five versioned operators and returns
+RGB `uint8` HWC with the same spatial shape. It is compatible with
+`tf.function` and `tf.data.Dataset.map`; no global RNG is read.
+`gaussian_noise@1.0.0` uses the explicit TensorFlow Philox algorithm. The
+non-random operators validate and ignore the supplied seed.
+
+The version-`1.0.0` severity contracts are:
+
+| Name | Severity 1–5 parameter |
+| :--- | :--- |
+| `gaussian_blur` | Gaussian sigma in pixels: `0.5, 1.0, 2.0, 3.0, 4.0` |
+| `gaussian_noise` | Unit-range standard deviation: `0.01, 0.02, 0.04, 0.08, 0.16` |
+| `jpeg_compression` | JPEG quality: `90, 75, 55, 35, 15` |
+| `contrast_reduction` | Factor around `127.5`: `0.9, 0.75, 0.6, 0.45, 0.3` |
+| `brightness_reduction` | Factor: `0.9, 0.8, 0.7, 0.6, 0.5` |
+
+Gaussian blur uses a normalized float32 kernel with radius
+`ceil(3 * sigma)`, TensorFlow depthwise convolution, and reflect-101 borders.
+Float outputs clip to `[0, 255]`, round half to even with `tf.math.rint`, and
+cast to `uint8`. JPEG uses RGB encode, chroma downsampling, no optimization, no
+progressive mode, three-channel decode, fancy chroma upscaling, and the
+`INTEGER_ACCURATE` DCT hint. JPEG bytes are repeatable for a fixed
+TensorFlow/codec build; cross-version codec byte parity is not part of the
+`1.0.0` guarantee and downstream environment locks remain part of a scientific
+identity.
+
+The legacy Mini-C names `noise`, `blur`, `weather`, and `digital` are also
+described as `1.0.0`, retain float-or-uint8 `[0, 255]` input compatibility and
+their prior truncate-on-cast numerical behavior, and remain available through
+`apply_minic_corruption`.
+
+`create_minic_datasets` forks the preprocessed RGB dataset, applies corruption
+before resize, float conversion, normalization, batching, and padding, then
+uses normal finalization. It preserves deterministic ordering, postprocessing,
+metadata passthrough, and `padding_mask`.
 
 ```python
 import justdata.vision
@@ -254,7 +337,7 @@ from justdata.vision.minic import create_minic_datasets
 pipeline = get_pipeline(dataset="cifar10")
 
 datasets, n = create_minic_datasets(
-    corruption_types=["noise", "blur"],
+    corruption_types=["gaussian_noise", "jpeg_compression", "blur"],
     severity=3,
     dataset_names_arg=["cifar10"],
     splits_arg={"cifar10": ["test"]},
@@ -263,11 +346,22 @@ datasets, n = create_minic_datasets(
     seed=0,
     pipeline=pipeline,
     num_classes=10,
-    metadata_mode="numeric_only",
+    metadata_mode="full",
 )
 ```
 
-## 10. Vision/acoustic parity guarantees
+Full metadata adds `corruption`, `corruption_version`,
+`corruption_identity`, `corruption_identity_hash`, `severity`, and
+`corruption_domain`. The shared `metadata_mode` contract remains authoritative:
+`numeric_only` removes string fields but retains the integer identity hash and
+severity, while `none` removes metadata. Dataset-derived randomness retains the
+legacy enumeration-position salt. A consumer with an independent scientific
+PRNG lineage should call `apply_corruption` with its per-sample seed instead.
+
+Changing parameters, rounding, RNG, codec/filter behavior, or backend requires
+a new semantic version and downstream fingerprint regeneration.
+
+## 11. Vision/acoustic parity guarantees
 
 The parity harness in `tests/test_cross_modal_parity.py` checks that the final
 release surface does not drift between modalities.

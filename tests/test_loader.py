@@ -94,8 +94,9 @@ def test_create_minic_datasets(synthetic_classification_ds):
         "justdata.core.loader.fetch_ds", return_value=synthetic_classification_ds
     ):
         ds_list, N = create_minic_datasets(
-            corruption_types=["noise", "blur"],
+            corruption_types=["noise", "gaussian_noise"],
             severity=1,
+            corruption_versions={"gaussian_noise": "1.0.0"},
             dataset_names_arg="mock",
             splits_arg="val",
             dataset_type="validation",
@@ -113,13 +114,30 @@ def test_create_minic_datasets(synthetic_classification_ds):
         assert len(ds_list) == 2
         assert N == 5
 
-        for ds in ds_list:
+        for name, ds in zip(
+            ("noise", "gaussian_noise"),
+            ds_list,
+            strict=True,
+        ):
             batch = next(iter(ds))
             assert "image" in batch
             assert "metadata" in batch
             assert "corruption" in batch["metadata"]
+            assert "corruption_version" in batch["metadata"]
+            assert "corruption_identity" in batch["metadata"]
+            assert "corruption_identity_hash" in batch["metadata"]
             assert "severity" in batch["metadata"]
             assert "corruption_domain" in batch["metadata"]
+            assert batch["metadata"]["corruption"].numpy()[0].decode() == name
+            assert batch["metadata"]["corruption_version"].numpy()[0] == b"1.0.0"
+            assert (
+                batch["metadata"]["corruption_identity"]
+                .numpy()[0]
+                .decode()
+                .startswith(f"{name}@1.0.0:sha256:")
+            )
+            assert batch["metadata"]["corruption_identity_hash"].dtype == tf.int64
+            assert batch["metadata"]["corruption_domain"].numpy()[0] == b"image"
             assert batch["image"].shape == (4, 3, 32, 32)
             assert batch["image"].dtype == tf.float32
 

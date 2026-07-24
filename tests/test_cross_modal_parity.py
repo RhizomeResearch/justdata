@@ -305,7 +305,12 @@ def test_minic_uses_shared_metadata_and_numpy_finalization(metadata_mode):
     if metadata_mode == "none":
         assert "metadata" not in final
     else:
-        assert set(final["metadata"]) == {"quality", "severity"}
+        assert set(final["metadata"]) == {
+            "corruption_identity_hash",
+            "quality",
+            "severity",
+        }
+        assert final["metadata"]["corruption_identity_hash"].dtype == np.int64
 
 
 def test_both_modalities_preserve_padding_mask():

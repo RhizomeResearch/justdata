@@ -186,6 +186,17 @@ def random_horizontal_flip(image, seed, p=0.5, bboxes=None):
 
 
 @tf.function
+def random_vertical_flip(image, seed, p=0.5):
+    """Randomly flip an image vertically with a stateless explicit seed."""
+    should_flip = tf.random.stateless_uniform([], seed=seed) < p
+    return tf.cond(
+        should_flip,
+        lambda: tf.image.flip_up_down(image),
+        lambda: image,
+    )
+
+
+@tf.function
 def random_crop_with_pad(
     image: tf.Tensor,
     size: Union[Tuple[int, int], int],
@@ -260,13 +271,82 @@ def random_rot90(image: tf.Tensor, seed) -> tf.Tensor:
     return tf.image.rot90(image, k=k)
 
 
+def _validate_flip_probability(value: float, *, name: str) -> None:
+    if value < 0.0 or value > 1.0:
+        raise ValueError(f"{name} must be in the range [0.0, 1.0].")
+
+
 @register_crop_strategy("random_resized")
-def _crop_random_resized(image, size, seed, interpolation="bilinear", **kwargs):
+def _crop_random_resized(
+    image,
+    size,
+    seed,
+    interpolation="bilinear",
+    scale=(0.08, 1.0),
+    ratio=(0.75, 1.3333333333333333),
+    horizontal_flip_probability=0.5,
+    **kwargs,
+):
+    _validate_flip_probability(
+        horizontal_flip_probability,
+        name="horizontal_flip_probability",
+    )
     s = tf.random.split(seed, 2)
     cropped = random_resized_crop(
-        image, size=size, seed=s[0], interpolation=interpolation
+        image,
+        size=size,
+        seed=s[0],
+        scale=scale,
+        ratio=ratio,
+        interpolation=interpolation,
     )
-    return random_horizontal_flip(cropped, seed=s[1])
+    return random_horizontal_flip(
+        cropped,
+        seed=s[1],
+        p=horizontal_flip_probability,
+    )
+
+
+@register_crop_strategy("random_resized_hvflip")
+def _crop_random_resized_hvflip(
+    image,
+    size,
+    seed,
+    interpolation="bilinear",
+    scale=(0.08, 1.0),
+    ratio=(0.75, 1.3333333333333333),
+    horizontal_flip_probability=0.5,
+    vertical_flip_probability=0.5,
+    **kwargs,
+):
+    del kwargs
+    _validate_flip_probability(
+        horizontal_flip_probability,
+        name="horizontal_flip_probability",
+    )
+    _validate_flip_probability(
+        vertical_flip_probability,
+        name="vertical_flip_probability",
+    )
+    seeds = tf.random.split(seed, 3)
+    cropped = random_resized_crop(
+        image,
+        size=size,
+        seed=seeds[0],
+        scale=scale,
+        ratio=ratio,
+        interpolation=interpolation,
+    )
+    cropped = random_horizontal_flip(
+        cropped,
+        seed=seeds[1],
+        p=horizontal_flip_probability,
+    )
+    return random_vertical_flip(
+        cropped,
+        seed=seeds[2],
+        p=vertical_flip_probability,
+    )
 
 
 @register_crop_strategy("random_pad")

@@ -1,6 +1,7 @@
 import tensorflow as tf
 
 from justdata.vision.corruptions.registry import (
+    CorruptionDescriptor,
     _get_severity_index,
     register_corruption,
 )
@@ -10,8 +11,44 @@ DEFOCUS_RADIUS = (3.0, 4.0, 6.0, 8.0, 10.0)
 
 DEFOCUS_ALIAS = (0.1, 0.5, 0.5, 0.5, 0.5)
 
+BLUR_DESCRIPTOR = CorruptionDescriptor(
+    name="blur",
+    version="1.0.0",
+    input_domain="decoded_rgb_hwc_0_255",
+    input_dtypes=("uint8", "float32"),
+    output_domain="decoded_rgb_hwc_0_255",
+    output_shape="same_as_input_hwc",
+    output_dtype="uint8",
+    severity_values=(1, 2, 3, 4, 5),
+    severity_parameters=tuple(
+        (
+            level,
+            (
+                ("disk_radius_pixels", radius),
+                ("alias_gaussian_sigma", alias),
+            ),
+        )
+        for level, (radius, alias) in enumerate(
+            zip(DEFOCUS_RADIUS, DEFOCUS_ALIAS, strict=True),
+            start=1,
+        )
+    ),
+    uses_randomness=False,
+    seed_contract="caller_supplied_int32_shape_2; accepted_and_ignored",
+    clipping_policy="clip_float32_to_closed_interval_0_255_after_filtering",
+    rounding_policy="clip_then_truncate_toward_zero",
+    implementation="justdata_minic_disk_defocus_tensorflow_v1",
+    implementation_parameters=(
+        ("disk_kernel_size", "next_odd_integer_at_least_2_radius_plus_1"),
+        ("disk_border_mode", "reflect"),
+        ("alias_kernel_size", 5),
+        ("alias_border_mode", "reflect"),
+        ("compute_dtype", "float32"),
+    ),
+)
 
-@register_corruption("blur")
+
+@register_corruption("blur", descriptor=BLUR_DESCRIPTOR)
 @tf.function
 def defocus_blur(image: tf.Tensor, severity: int, seed: tf.Tensor) -> tf.Tensor:
     """

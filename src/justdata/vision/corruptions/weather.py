@@ -1,6 +1,7 @@
 import tensorflow as tf
 
 from justdata.vision.corruptions.registry import (
+    CorruptionDescriptor,
     _get_severity_index,
     register_corruption,
 )
@@ -14,8 +15,53 @@ SNOW_PARAMS = (
     (0.85, 0.55),
 )
 
+WEATHER_DESCRIPTOR = CorruptionDescriptor(
+    name="weather",
+    version="1.0.0",
+    input_domain="decoded_rgb_hwc_0_255",
+    input_dtypes=("uint8", "float32"),
+    output_domain="decoded_rgb_hwc_0_255",
+    output_shape="same_as_input_hwc",
+    output_dtype="uint8",
+    severity_values=(1, 2, 3, 4, 5),
+    severity_parameters=tuple(
+        (
+            level,
+            (
+                ("snow_intensity", snow_intensity),
+                ("brightness_factor", brightness_factor),
+            ),
+        )
+        for level, (snow_intensity, brightness_factor) in enumerate(
+            SNOW_PARAMS,
+            start=1,
+        )
+    ),
+    uses_randomness=True,
+    seed_contract=(
+        "caller_supplied_int32_shape_2; tensorflow_stateless_split_then_normal; "
+        "stable_for_fixed_tensorflow_version_and_supported_hardware"
+    ),
+    clipping_policy="clip_float32_to_closed_interval_0_255_after_compositing",
+    rounding_policy="clip_then_truncate_toward_zero",
+    implementation="justdata_minic_snow_tensorflow_v1",
+    implementation_parameters=(
+        ("snow_layer_scale", 0.25),
+        ("snow_threshold_formula", "2.5_minus_0.5_times_snow_intensity"),
+        ("resize_interpolation", "nearest"),
+        ("motion_sigma_vertical", 4.0),
+        ("motion_sigma_horizontal", 0.5),
+        ("motion_kernel_vertical", 17),
+        ("motion_kernel_horizontal", 3),
+        ("motion_padding", "constant_zero"),
+        ("rotation_degrees", -15.0),
+        ("rotation_fill", 0),
+        ("compute_dtype", "float32"),
+    ),
+)
 
-@register_corruption("weather")
+
+@register_corruption("weather", descriptor=WEATHER_DESCRIPTOR)
 @tf.function
 def snow(image: tf.Tensor, severity: int, seed: tf.Tensor) -> tf.Tensor:
     """

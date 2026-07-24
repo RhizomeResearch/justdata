@@ -120,6 +120,47 @@ def test_both_modalities_have_metadata_mode():
         assert "device" not in batch["metadata"]
 
 
+@pytest.mark.parametrize(
+    "raw_ds",
+    [_vision_dataset(), _acoustic_dataset()],
+    ids=["vision", "acoustic"],
+)
+def test_both_modalities_have_reusable_epoch_finalization(raw_ds):
+    def augment(sample, seed=None):
+        return sample | {
+            "epoch_random": tf.random.stateless_uniform([], seed=seed),
+        }
+
+    with patch("justdata.core.loader.fetch_ds", return_value=raw_ds):
+        prepared_ds, tools = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="train",
+            dataset_type="train",
+            batch_size=2,
+            seed=0,
+            preprocess_fn=_identity,
+            augment_fn=augment,
+            late_augment_fn=_identity,
+            postprocess_fn=_identity,
+            shuffle_buffer=3,
+            cache_dataset=False,
+            deterministic=True,
+            return_raw_ds=True,
+        )
+
+    first_ds, first_n = tools["finalize_epoch"](prepared_ds, seed=17)
+    second_ds, second_n = tools["finalize_epoch"](prepared_ds, seed=17)
+    first = list(first_ds)
+    second = list(second_ds)
+
+    assert first_n == second_n == 2
+    for left, right in zip(first, second, strict=True):
+        np.testing.assert_array_equal(left["label"], right["label"])
+        np.testing.assert_array_equal(left["epoch_random"], right["epoch_random"])
+        assert "device" in left["metadata"]
+    np.testing.assert_array_equal(first[-1]["padding_mask"], [True, False])
+
+
 class _IdentityPipeline:
     def __init__(self, kwargs):
         self.kwargs = kwargs

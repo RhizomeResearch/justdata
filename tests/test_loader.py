@@ -287,6 +287,152 @@ def _iterate_x_twice(ds):
     return [[sample["x"].numpy().item() for sample in ds] for _ in range(2)]
 
 
+def _snapshot_epoch(ds):
+    batches = list(ds)
+    return {
+        key: np.concatenate([np.asarray(batch[key]) for batch in batches])
+        for key in ("x", "augmentation", "late_augmentation")
+    }
+
+
+def test_finalize_epoch_reuses_preparation_and_rereads_uncached_source():
+    counter = {"source": 0, "preprocess": 0, "build": 0}
+
+    class CountingPipeline:
+        kwargs = {}
+
+        @staticmethod
+        def build(is_training):
+            assert is_training
+            counter["build"] += 1
+            return (
+                _counting_preprocess(counter),
+                _identity,
+                _identity,
+                _identity,
+            )
+
+    with patch(
+        "justdata.core.loader.fetch_ds",
+        return_value=_counted_dataset(3, counter),
+    ) as fetch:
+        raw_ds, tools = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="train",
+            dataset_type="train",
+            batch_size=2,
+            seed=0,
+            pipeline=CountingPipeline(),
+            shuffle_buffer=3,
+            cache_dataset=False,
+            deterministic=True,
+            return_raw_ds=True,
+        )
+
+    for epoch_seed in (11, 12):
+        epoch_ds, _n = tools["finalize_epoch"](raw_ds, seed=epoch_seed)
+        list(epoch_ds)
+
+    fetch.assert_called_once_with(["mock"], ["train"], None)
+    assert counter == {"source": 6, "preprocess": 6, "build": 1}
+
+
+def test_finalize_epoch_is_addressable_reiterable_and_supports_numpy():
+    def augment(sample, seed=None):
+        return sample | {
+            "augmentation": tf.random.stateless_uniform([], seed=seed),
+        }
+
+    def late_augment(batch, num_classes=None, seed=None):
+        del num_classes
+        value = tf.random.stateless_uniform([], seed=seed)
+        return batch | {
+            "late_augmentation": tf.fill(tf.shape(batch["x"]), value),
+        }
+
+    with patch(
+        "justdata.core.loader.fetch_ds",
+        return_value=_range_dataset(24),
+    ):
+        raw_ds, tools = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="train",
+            dataset_type="train",
+            batch_size=4,
+            seed=0,
+            preprocess_fn=_identity,
+            augment_fn=augment,
+            late_augment_fn=late_augment,
+            postprocess_fn=_identity,
+            shuffle_buffer=24,
+            cache_dataset=False,
+            deterministic=True,
+            return_raw_ds=True,
+        )
+
+    partial_epoch, _n = tools["finalize_epoch"](raw_ds, seed=99)
+    next(iter(partial_epoch))
+
+    first_ds, n_batches = tools["finalize_epoch"](raw_ds, seed=23)
+    first = _snapshot_epoch(first_ds)
+    repeated_iteration = _snapshot_epoch(first_ds)
+    different_ds, _n = tools["finalize_epoch"](raw_ds, seed=24)
+    different = _snapshot_epoch(different_ds)
+    repeated_ds, _n = tools["finalize_epoch"](raw_ds, seed=23)
+    repeated_materialization = _snapshot_epoch(repeated_ds)
+
+    assert n_batches == 6
+    for key in first:
+        np.testing.assert_array_equal(first[key], repeated_iteration[key])
+        np.testing.assert_array_equal(first[key], repeated_materialization[key])
+    assert sorted(first["x"].tolist()) == list(range(24))
+    assert sorted(different["x"].tolist()) == list(range(24))
+    assert not np.array_equal(first["x"], different["x"])
+    assert not np.array_equal(first["augmentation"], different["augmentation"])
+    assert not np.array_equal(
+        first["late_augmentation"],
+        different["late_augmentation"],
+    )
+
+    numpy_iterator, _n = tools["finalize_epoch"](
+        raw_ds,
+        seed=23,
+        as_numpy=True,
+    )
+    numpy_snapshot = _snapshot_epoch(numpy_iterator)
+    for key in first:
+        np.testing.assert_array_equal(first[key], numpy_snapshot[key])
+    assert list(numpy_iterator) == []
+
+
+def test_finalize_epoch_validation_order_does_not_depend_on_seed():
+    with patch(
+        "justdata.core.loader.fetch_ds",
+        return_value=_range_dataset(6),
+    ):
+        raw_ds, tools = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="validation",
+            dataset_type="validation",
+            batch_size=2,
+            seed=0,
+            preprocess_fn=_identity,
+            augment_fn=_identity,
+            late_augment_fn=_identity,
+            postprocess_fn=_identity,
+            return_raw_ds=True,
+        )
+
+    orders = []
+    for epoch_seed in (1, 2):
+        epoch_ds, _n = tools["finalize_epoch"](raw_ds, seed=epoch_seed)
+        orders.append(
+            [int(value) for batch in epoch_ds for value in batch["x"].numpy().tolist()]
+        )
+
+    assert orders == [list(range(6)), list(range(6))]
+
+
 def test_loader_cache_is_disabled_by_default():
     counter = {"source": 0, "preprocess": 0}
     ds, _fetch = _load_counted_raw_dataset(counter)
@@ -532,6 +678,30 @@ def test_raw_dataset_finalizer_supports_model_input_cache():
         list(ds)[-1]["padding_mask"].numpy(),
         [True, False],
     )
+
+
+def test_finalize_epoch_rejects_augmented_model_input_cache():
+    with patch(
+        "justdata.core.loader.fetch_ds",
+        return_value=_range_dataset(3),
+    ):
+        raw_ds, tools = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="train",
+            dataset_type="train",
+            batch_size=2,
+            seed=0,
+            preprocess_fn=_identity,
+            augment_fn=_identity,
+            late_augment_fn=_identity,
+            postprocess_fn=_identity,
+            cache_model_inputs=True,
+            allow_train_model_input_cache=True,
+            return_raw_ds=True,
+        )
+
+    with pytest.raises(ValueError, match="cache_model_inputs"):
+        tools["finalize_epoch"](raw_ds, seed=1)
 
 
 def test_model_input_cache_rejects_preprocess_cache_path_collision(tmp_path):

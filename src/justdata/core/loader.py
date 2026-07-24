@@ -6,7 +6,7 @@ import tensorflow as tf
 from loguru import logger
 
 from justdata.core.adapters import get_adapter
-from justdata.core.finalization import finalize_dataset
+from justdata.core.finalization import _seed_for_index, finalize_dataset
 from justdata.core.sources import get_source_loader
 
 
@@ -223,7 +223,10 @@ def load_ds(
                        preprocessing (and caching) but BEFORE standard
                        augmentation, postprocessing, or batching.
                        Returns (ds, tools_dict) where tools_dict contains
-                       ``finalize_fn``, ``postprocess_fn``, and ``rng``.
+                       ``finalize_fn``, ``finalize_epoch``, ``postprocess_fn``,
+                       and ``rng``. ``finalize_epoch(ds, seed=...)`` applies the
+                       complete remaining pipeline with addressable stateless
+                       augmentation seeds and a fixed shuffle for that epoch.
         deterministic: If false, sacrifices determinism for performance.
         as_numpy: If True, returns an iterator yielding NumPy arrays.
         metadata_mode: Controls metadata in output batches. When omitted, uses
@@ -363,12 +366,55 @@ def load_ds(
         as_numpy=as_numpy,
     )
 
+    default_as_numpy = as_numpy
+
+    def finalize_epoch(
+        epoch_ds: tf.data.Dataset,
+        *,
+        seed: int,
+        as_numpy: bool | None = None,
+    ):
+        if cache_model_inputs and apply_augmentation:
+            raise ValueError(
+                "finalize_epoch does not support cache_model_inputs when "
+                "augmentation is enabled because cached model inputs freeze "
+                "standard augmented views."
+            )
+
+        master_seed = tf.stack(
+            [
+                tf.cast(seed, tf.int64),
+                tf.constant(0, dtype=tf.int64),
+            ]
+        )
+        augment_seed, late_augment_seed = tf.unstack(tf.random.split(master_seed, 2))
+
+        if apply_augmentation:
+            epoch_ds = epoch_ds.enumerate().map(
+                lambda index, sample: augment_fn(
+                    sample,
+                    seed=_seed_for_index(augment_seed, index),
+                ),
+                num_parallel_calls=1 if deterministic else tf.data.AUTOTUNE,
+                deterministic=deterministic,
+            )
+
+        return finalize_fn(
+            epoch_ds,
+            rng=None,
+            late_augment_seed=late_augment_seed,
+            shuffle_seed=seed,
+            reshuffle_each_iteration=False,
+            as_numpy=default_as_numpy if as_numpy is None else as_numpy,
+        )
+
     if return_raw_ds:
         # Return necessary components to build custom pipelines
         return (
             ds,
             {
                 "finalize_fn": finalize_fn,
+                "finalize_epoch": finalize_epoch,
                 "postprocess_fn": postprocess_fn,
                 "rng": rng,
             },

@@ -850,6 +850,52 @@ train_ds, N = load_ds(
 )
 ```
 
+### Reusable, Explicitly Seeded Epochs
+
+Use `return_raw_ds=True` to prepare the source, pipeline, preprocessing, cache,
+and filters once, then materialize the complete remaining training pipeline for
+each epoch:
+
+```python
+prepared_train, tools = load_ds(
+    dataset_names_arg=["cifar10"],
+    splits_arg={"cifar10": ["train"]},
+    dataset_type="train",
+    batch_size=128,
+    seed=0,
+    pipeline=pipeline,
+    num_classes=10,
+    cache_dataset=False,
+    deterministic=True,
+    return_raw_ds=True,
+)
+
+for epoch in range(num_epochs):
+    train_iterator, n_batches = tools["finalize_epoch"](
+        prepared_train,
+        seed=derive_epoch_seed(epoch),
+        as_numpy=True,
+    )
+    train_one_epoch(train_iterator)
+```
+
+`finalize_epoch` applies standard augmentation, shuffle, postprocessing,
+batching, late augmentation, padding, and prefetching. The epoch seed is split
+into standard- and late-augmentation seeds, with source and batch indices folded
+in. Shuffle uses the epoch seed with reshuffling disabled on the materialized
+dataset. With `deterministic=True`, repeating a seed therefore reproduces the
+epoch independently of previous iterator creation or consumption, including
+when the returned TensorFlow dataset is iterated more than once.
+
+With `cache_dataset=False`, source samples, preprocessing, and filters still run
+on every iteration; only loader and graph preparation are reused. A fresh NumPy
+iterator is created by each `finalize_epoch(..., as_numpy=True)` call.
+
+`finalize_epoch` rejects `cache_model_inputs=True` when training or evaluation
+augmentation is enabled because that downstream cache intentionally freezes the
+first sampled augmented views. Existing one-shot `load_ds` and `finalize_fn`
+behavior is unchanged.
+
 ### Loading a Hugging Face Dataset
 
 ```python

@@ -11,6 +11,14 @@ from justdata.core.metadata import apply_metadata_mode, attach_sidecar_writer
 MetadataMode = Literal["full", "numeric_only", "none"]
 
 
+def _seed_for_index(seed: tf.Tensor, index: tf.Tensor) -> tf.Tensor:
+    seed = tf.convert_to_tensor(seed)
+    return tf.random.experimental.stateless_fold_in(
+        seed,
+        tf.cast(index, seed.dtype),
+    )
+
+
 def _pad_dataset(ds: tf.data.Dataset, batch_size: int) -> tf.data.Dataset:
     def first_tensor(value):
         if isinstance(value, dict):
@@ -78,9 +86,11 @@ def finalize_dataset(
     apply_late_augment: bool | None = None,
     late_augment_fn: Callable | None = None,
     rng: tf.random.Generator | None = None,
+    late_augment_seed: tf.Tensor | None = None,
     deterministic: bool = False,
     shuffle_buffer: int | None = None,
     shuffle_seed: int | None = None,
+    reshuffle_each_iteration: bool = True,
     prefetch: bool = True,
     as_numpy: bool = False,
 ) -> tuple[Any, int | None]:
@@ -91,8 +101,15 @@ def finalize_dataset(
         )
     if apply_late_augment is None:
         apply_late_augment = is_training
-    if apply_late_augment and late_augment_fn is not None and rng is None:
-        raise ValueError("rng is required when late augmentation is enabled.")
+    if (
+        apply_late_augment
+        and late_augment_fn is not None
+        and rng is None
+        and late_augment_seed is None
+    ):
+        raise ValueError(
+            "rng or late_augment_seed is required when late augmentation is enabled."
+        )
 
     map_deterministic = deterministic if is_training else None
 
@@ -128,26 +145,45 @@ def finalize_dataset(
 
     should_shuffle = is_training and shuffle_buffer is not None
     if should_shuffle and not cache_model_inputs:
-        ds = ds.shuffle(shuffle_buffer, seed=shuffle_seed)
+        ds = ds.shuffle(
+            shuffle_buffer,
+            seed=shuffle_seed,
+            reshuffle_each_iteration=reshuffle_each_iteration,
+        )
 
     ds = apply_postprocessing(ds)
     ds = apply_metadata_and_cache(ds)
 
     if should_shuffle and cache_model_inputs:
-        ds = ds.shuffle(shuffle_buffer, seed=shuffle_seed)
+        ds = ds.shuffle(
+            shuffle_buffer,
+            seed=shuffle_seed,
+            reshuffle_each_iteration=reshuffle_each_iteration,
+        )
 
     ds = ds.batch(batch_size, drop_remainder=drop_remainder)
 
     if apply_late_augment and late_augment_fn is not None:
-        ds = ds.map(
-            lambda batch: late_augment_fn(
-                batch,
-                num_classes=num_classes,
-                seed=rng.make_seeds(1)[:, 0],
-            ),
-            num_parallel_calls=tf.data.AUTOTUNE,
-            deterministic=deterministic,
-        )
+        if late_augment_seed is not None:
+            ds = ds.enumerate().map(
+                lambda index, batch: late_augment_fn(
+                    batch,
+                    num_classes=num_classes,
+                    seed=_seed_for_index(late_augment_seed, index),
+                ),
+                num_parallel_calls=tf.data.AUTOTUNE,
+                deterministic=deterministic,
+            )
+        else:
+            ds = ds.map(
+                lambda batch: late_augment_fn(
+                    batch,
+                    num_classes=num_classes,
+                    seed=rng.make_seeds(1)[:, 0],
+                ),
+                num_parallel_calls=tf.data.AUTOTUNE,
+                deterministic=deterministic,
+            )
 
     if drop_remainder:
         ds = ds.map(

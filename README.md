@@ -906,6 +906,32 @@ train_ds, N = load_ds(
 )
 ```
 
+FMoW source inventories can opt into authoritative sequence identity and
+acquisition time without changing the default WILDS signature:
+
+```python
+from justdata.core import fetch_ds
+
+fmow = (
+    "wilds:fmow?split_scheme=official&version=1.1&download=false"
+    "&source_metadata=location_id,timestamp"
+)
+inventory = fetch_ds([fmow], {fmow: ["train", "id_val", "id_test", "val"]})
+
+for sample in inventory.as_numpy_iterator():
+    source = sample["metadata"]["wilds_source"]
+    location_id = source["location_id"]  # UTF-8 bytes
+    timestamp = source["timestamp"]      # UTF-8 bytes
+```
+
+The option accepts only `location_id` and `timestamp`. JustData maps every
+emitted `wilds_index` through WILDS' authoritative `full_idxs` mapping:
+`location_id` is the exact original FMoW sequence-directory basename, and
+`timestamp` preserves the source timezone-aware ISO-8601 text. Invalid fields,
+target-equivalent fields, missing source columns, or unreliable mappings fail
+closed. The `wilds_source` mapping is absent without the opt-in; it is retained
+by `metadata_mode="full"` and removed by `numeric_only`.
+
 The base `wilds:fmow` preset has no stochastic per-sample training augmentation, so train model-input caching is safe
 when explicitly opted in. Do not use train model-input caching with `wilds:fmow_strong` unless freezing the first pass
 of stochastic augmentation is intentional.

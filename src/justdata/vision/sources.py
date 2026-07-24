@@ -12,6 +12,7 @@ import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Union
 from urllib.parse import parse_qsl, quote, urlparse
@@ -57,7 +58,15 @@ _UNSUPPORTED_WILDS_DATASETS = {
     "poverty": "regression",
     "py150": "code/text",
 }
-_WILDS_QUERY_PARAMS = {"download", "split_scheme", "unlabeled", "version"}
+_WILDS_QUERY_PARAMS = {
+    "download",
+    "source_metadata",
+    "split_scheme",
+    "unlabeled",
+    "version",
+}
+_FMOW_SOURCE_METADATA_FIELDS = ("location_id", "timestamp")
+_FMOW_TARGET_EQUIVALENT_FIELDS = {"category", "y"}
 
 
 @dataclass(frozen=True)
@@ -73,6 +82,7 @@ class _WILDSDatasetSpec:
     version: str | None
     download: bool
     unlabeled: bool
+    source_metadata: tuple[str, ...]
 
 
 def _strip_prefix(dataset_name: str, prefix: str) -> str:
@@ -812,6 +822,52 @@ def _parse_bool(value: str, *, key: str) -> bool:
     raise ValueError(f"{key} must be a boolean value; got {value!r}.")
 
 
+def _parse_wilds_source_metadata(
+    value: str | None,
+    *,
+    dataset_name: str,
+) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if dataset_name != "fmow":
+        raise ValueError(
+            "WILDS source_metadata is supported only for the 'fmow' dataset."
+        )
+
+    requested = tuple(field.strip() for field in value.split(","))
+    if not requested or any(not field for field in requested):
+        raise ValueError(
+            "WILDS FMoW source_metadata must be a comma-separated list of "
+            "non-empty field names."
+        )
+
+    duplicates = sorted(field for field in set(requested) if requested.count(field) > 1)
+    if duplicates:
+        raise ValueError(
+            f"Duplicate WILDS FMoW source metadata field(s): {', '.join(duplicates)}."
+        )
+
+    target_fields = sorted(set(requested) & _FMOW_TARGET_EQUIVALENT_FIELDS)
+    if target_fields:
+        raise ValueError(
+            "Target-equivalent WILDS FMoW source metadata field(s) are not "
+            f"allowed: {', '.join(target_fields)}."
+        )
+
+    unsupported = sorted(set(requested) - set(_FMOW_SOURCE_METADATA_FIELDS))
+    if unsupported:
+        supported = ", ".join(_FMOW_SOURCE_METADATA_FIELDS)
+        raise ValueError(
+            "Unsupported WILDS FMoW source metadata field(s): "
+            f"{', '.join(unsupported)}. Supported fields: {supported}."
+        )
+
+    requested_set = set(requested)
+    return tuple(
+        field for field in _FMOW_SOURCE_METADATA_FIELDS if field in requested_set
+    )
+
+
 def _parse_wilds_spec(dataset_name: str) -> _WILDSDatasetSpec:
     if not dataset_name.startswith(_WILDS_PREFIX):
         raise ValueError(
@@ -854,6 +910,10 @@ def _parse_wilds_spec(dataset_name: str) -> _WILDSDatasetSpec:
         version=values.get("version") or None,
         download=_parse_bool(values.get("download", "false"), key="download"),
         unlabeled=_parse_bool(values.get("unlabeled", "false"), key="unlabeled"),
+        source_metadata=_parse_wilds_source_metadata(
+            values.get("source_metadata"),
+            dataset_name=name,
+        ),
     )
 
 
@@ -933,6 +993,150 @@ def _metadata_to_int64_dict(
     return result
 
 
+def _fmow_location_id(value: Any, *, public_index: int, raw_index: int) -> str:
+    if not isinstance(value, (str, np.str_)) or not value:
+        raise ValueError(
+            "WILDS FMoW source metadata field 'location_id' is unavailable "
+            f"for public index {public_index} (raw row {raw_index}): "
+            "'img_path' must be a non-empty string."
+        )
+
+    text = str(value)
+    posix_path = PurePosixPath(text)
+    windows_path = PureWindowsPath(text)
+    if len(posix_path.parts) >= 2 and posix_path.parent.name:
+        return posix_path.parent.name
+    if len(windows_path.parts) >= 2 and windows_path.parent.name:
+        return windows_path.parent.name
+    raise ValueError(
+        "WILDS FMoW source metadata field 'location_id' is unavailable "
+        f"for public index {public_index} (raw row {raw_index}): "
+        "'img_path' does not contain a sequence directory."
+    )
+
+
+def _fmow_timestamp(value: Any, *, public_index: int, raw_index: int) -> str:
+    if not isinstance(value, (str, np.str_)) or not value:
+        raise ValueError(
+            "WILDS FMoW source metadata field 'timestamp' is unavailable "
+            f"for public index {public_index} (raw row {raw_index}): "
+            "the source value must be a non-empty string."
+        )
+
+    text = str(value)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError as e:
+        raise ValueError(
+            "WILDS FMoW source metadata field 'timestamp' is invalid "
+            f"for public index {public_index} (raw row {raw_index}): "
+            "expected an ISO-8601 timestamp."
+        ) from e
+    if parsed.utcoffset() is None:
+        raise ValueError(
+            "WILDS FMoW source metadata field 'timestamp' is invalid "
+            f"for public index {public_index} (raw row {raw_index}): "
+            "an explicit UTC designator or timezone offset is required."
+        )
+    return text
+
+
+def _prepare_fmow_source_metadata(
+    dataset,
+    requested_fields: tuple[str, ...],
+) -> dict[str, tuple[str, ...]]:
+    if not requested_fields:
+        return {}
+
+    metadata = getattr(dataset, "metadata", None)
+    if (
+        metadata is None
+        or not hasattr(metadata, "iloc")
+        or not hasattr(metadata, "columns")
+    ):
+        raise ValueError(
+            "WILDS FMoW source metadata requires the authoritative raw "
+            "metadata table exposed as dataset.metadata."
+        )
+
+    full_idxs = getattr(dataset, "full_idxs", None)
+    if full_idxs is None:
+        raise ValueError(
+            "WILDS FMoW source metadata requires the authoritative public-to-raw "
+            "dataset.full_idxs mapping."
+        )
+    public_to_raw = _as_numpy(full_idxs)
+    if public_to_raw.ndim != 1 or not np.issubdtype(public_to_raw.dtype, np.integer):
+        raise ValueError(
+            "WILDS FMoW dataset.full_idxs must be a one-dimensional integer "
+            "public-to-raw index mapping."
+        )
+
+    try:
+        public_size = len(dataset)
+        raw_size = len(metadata)
+    except TypeError as e:
+        raise ValueError(
+            "WILDS FMoW source metadata requires sized public and raw datasets."
+        ) from e
+    if len(public_to_raw) != public_size:
+        raise ValueError(
+            "WILDS FMoW dataset.full_idxs length does not match the public "
+            f"dataset size ({len(public_to_raw)} != {public_size})."
+        )
+    if len(np.unique(public_to_raw)) != len(public_to_raw):
+        raise ValueError(
+            "WILDS FMoW dataset.full_idxs must map each public index to a "
+            "unique raw metadata row."
+        )
+    if public_to_raw.size and (
+        int(public_to_raw.min()) < 0 or int(public_to_raw.max()) >= raw_size
+    ):
+        raise ValueError(
+            "WILDS FMoW dataset.full_idxs contains a raw metadata row outside "
+            f"the valid range [0, {raw_size})."
+        )
+
+    required_columns = {
+        "location_id": "img_path",
+        "timestamp": "timestamp",
+    }
+    columns = set(metadata.columns)
+    missing_columns = sorted(
+        required_columns[field]
+        for field in requested_fields
+        if required_columns[field] not in columns
+    )
+    if missing_columns:
+        raise ValueError(
+            "WILDS FMoW source metadata is unavailable because the raw metadata "
+            f"table is missing column(s): {', '.join(missing_columns)}."
+        )
+
+    raw_indices = public_to_raw.astype(np.int64, copy=False)
+    rows = metadata.iloc[raw_indices]
+    prepared: dict[str, tuple[str, ...]] = {}
+    if "location_id" in requested_fields:
+        prepared["location_id"] = tuple(
+            _fmow_location_id(
+                value,
+                public_index=public_index,
+                raw_index=int(raw_indices[public_index]),
+            )
+            for public_index, value in enumerate(rows["img_path"].tolist())
+        )
+    if "timestamp" in requested_fields:
+        prepared["timestamp"] = tuple(
+            _fmow_timestamp(
+                value,
+                public_index=public_index,
+                raw_index=int(raw_indices[public_index]),
+            )
+            for public_index, value in enumerate(rows["timestamp"].tolist())
+        )
+    return prepared
+
+
 def _is_fmow_timestamp_arg(value: Any) -> bool:
     return getattr(value, "name", None) == "timestamp"
 
@@ -977,6 +1181,7 @@ def _split_to_dataset(
     *,
     spec: _WILDSDatasetSpec,
     include_label: bool,
+    source_metadata: dict[str, tuple[str, ...]],
 ) -> tf.data.Dataset:
     subset = dataset.get_subset(split, transform=None)
     metadata_fields = tuple(getattr(subset, "metadata_fields", ()))
@@ -1013,6 +1218,17 @@ def _split_to_dataset(
                     "wilds": _metadata_to_int64_dict(metadata, metadata_fields),
                 },
             }
+            if source_metadata:
+                try:
+                    sample["metadata"]["wilds_source"] = {
+                        field: source_metadata[field][wilds_index]
+                        for field in spec.source_metadata
+                    }
+                except IndexError as e:
+                    raise ValueError(
+                        f"WILDS subset index {wilds_index} is outside the "
+                        "authoritative FMoW source metadata mapping."
+                    ) from e
             if include_label:
                 sample["label"] = _label_to_int64(label)
             yield sample
@@ -1032,6 +1248,11 @@ def _split_to_dataset(
             },
         },
     }
+    if source_metadata:
+        output_signature["metadata"]["wilds_source"] = {
+            field: tf.TensorSpec(shape=(), dtype=tf.string)
+            for field in spec.source_metadata
+        }
     if include_label:
         output_signature["label"] = tf.TensorSpec(shape=(), dtype=tf.int64)
 
@@ -1069,12 +1290,17 @@ def load_wilds_vision_splits(
     with _wilds_fmow_datetime_compat(spec.name == "fmow"):
         dataset = wilds.get_dataset(**kwargs)
     include_label = not (spec.unlabeled or uses_unlabeled)
+    source_metadata = _prepare_fmow_source_metadata(
+        dataset,
+        spec.source_metadata,
+    )
     return [
         _split_to_dataset(
             dataset,
             split,
             spec=spec,
             include_label=include_label,
+            source_metadata=source_metadata,
         )
         for split in splits
     ]

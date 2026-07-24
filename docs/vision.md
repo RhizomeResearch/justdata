@@ -196,6 +196,44 @@ For datasets without other options, use:
 wilds_ds = "wilds:camelyon17?download=true"
 ```
 
+FMoW can opt into authoritative source metadata for inventory and grouping
+workflows:
+
+```python
+from justdata.core import fetch_ds
+
+fmow = (
+    "wilds:fmow?split_scheme=official&version=1.1&download=false"
+    "&source_metadata=location_id,timestamp"
+)
+source_ds = fetch_ds([fmow], {fmow: ["train", "id_val", "id_test", "val"]})
+
+for sample in source_ds.as_numpy_iterator():
+    location_id = sample["metadata"]["wilds_source"]["location_id"]
+    timestamp = sample["metadata"]["wilds_source"]["timestamp"]
+```
+
+`source_metadata` accepts only `location_id` and `timestamp`, in any
+comma-separated subset. Both are scalar `tf.string` values and therefore
+appear as UTF-8 bytes from `as_numpy_iterator()`. `location_id` is the exact
+FMoW sequence-directory basename retained in the raw WILDS `img_path` (for
+example, `airport_0`); it is not derived from coordinates, regions, or
+`wilds_index`. `timestamp` preserves the source ISO-8601 text exactly,
+including `Z`, explicit timezone offsets, and fractional seconds.
+
+JustData aligns these values by applying WILDS' `full_idxs` public-to-raw
+mapping before reading the raw metadata table. Source construction fails if
+the installed WILDS dataset lacks a reliable mapping, required column, valid
+sequence path, or timezone-aware timestamp. Unknown fields, duplicates, and
+target-equivalent fields such as `y` and `category` are rejected; arbitrary
+raw metadata columns are never exposed. Without `source_metadata`, the output
+signature is unchanged and `metadata["wilds_source"]` is absent.
+
+The source inventory returned by `fetch_ds` always contains requested source
+metadata. In model-input pipelines, `metadata_mode="full"` preserves it,
+`metadata_mode="numeric_only"` removes the string-only `wilds_source` mapping,
+and `metadata_mode="none"` removes all metadata.
+
 ## 6. CIFAR, ImageNet, DINOv2, and WILDS preset contracts
 
 CIFAR presets use 32 px inputs, random padded crop, horizontal flip,

@@ -8,10 +8,7 @@ from justdata.vision.utils import (
     _brightness,
     _color,
     _contrast,
-    _cutout,
     _equalize,
-    _grayscale,
-    _invert,
     _posterize,
     _randomly_negate_tensor,
     _rotate,
@@ -20,7 +17,6 @@ from justdata.vision.utils import (
     _shear_with_bboxes,
     _shear_x,
     _shear_y,
-    _solarize_add,
     _solarize_val,
     _translate_bbox,
     _transform,
@@ -31,9 +27,6 @@ from justdata.vision.utils import (
 
 # 31-bin scale: magnitude m ∈ {0, …, 30}, B = max index = 30
 _B = 30.0
-
-# Ops outside the strict 14-op RA space; not in the default pool for any algorithm
-_NON_RA_OPS = ["Invert", "Cutout", "SolarizeAdd", "Grayscale"]
 
 RAND_AUGMENT_OPS = (
     "Identity",
@@ -130,6 +123,9 @@ def rand_augment(
 ) -> Union[tf.Tensor, Tuple[tf.Tensor, tf.Tensor]]:
     """RandAugment on the 31-bin (m ∈ {0…30}, B=30) scale.
 
+    ``cutout_const`` is retained for compatibility and has no effect because
+    Cutout is outside the fixed operation pool.
+
     Physical mappings per the spec:
     - Rotate:    (m/B) * rotate_max * s          default ±30°
     - Translate: (m/B) * translate_const * s
@@ -173,11 +169,8 @@ def rand_augment(
         level = _randomly_negate_tensor(level, seed)
         return (level,)
 
-    def _mult_to_arg(level, multiplier=1.0):
-        return (tf.cast((level / _B) * multiplier, tf.int32),)
-
     def level_to_arg(name, level, seed):
-        if name in ["Identity", "AutoContrast", "Equalize", "Invert", "Grayscale"]:
+        if name in ["Identity", "AutoContrast", "Equalize"]:
             return ()
         if name == "Posterize":
             # 8 - round(m / (B / MaxBits)) = 8 - round(m * MaxBits / B)
@@ -189,10 +182,6 @@ def rand_augment(
             # Inverts pixels >= threshold; threshold decreases with magnitude
             threshold = tf.cast(255.0 * (1.0 - level / _B), tf.int32)
             return (threshold,)
-        if name == "SolarizeAdd":
-            return _mult_to_arg(level, 110)
-        if name == "Cutout":
-            return _mult_to_arg(level, cutout_const)
         if name in ["Color", "Contrast", "Brightness", "Sharpness"]:
             return _enhance_level_to_arg(level, seed)
         if name in ["ShearX", "ShearY", "ShearX_BBox", "ShearY_BBox"]:
@@ -210,14 +199,12 @@ def rand_augment(
 
     def wrap_func(func, name):
         needs_bbox = "BBox" in name
-        needs_seed = name == "Cutout"
         is_replace = name in [
             "Rotate",
             "TranslateX",
             "ShearX",
             "ShearY",
             "TranslateY",
-            "Cutout",
             "Rotate_BBox",
             "ShearX_BBox",
             "ShearY_BBox",
@@ -225,7 +212,7 @@ def rand_augment(
             "TranslateY_BBox",
         ]
 
-        def wrapped(img, boxes, args, seed):
+        def wrapped(img, boxes, args):
             if segmentation_mask is not None and name in RAND_AUGMENT_SPATIAL_OPS:
                 return _apply_segmentation_geometric_op(
                     img,
@@ -242,8 +229,6 @@ def rand_augment(
             call_args.extend(list(args))
             if is_replace:
                 call_args.append(replace_value)
-            if needs_seed:
-                call_args.append(seed)
 
             res = func(*call_args)
             if needs_bbox:
@@ -256,11 +241,9 @@ def rand_augment(
         "Identity": _identity,
         "AutoContrast": _autocontrast,
         "Equalize": _equalize,
-        "Invert": _invert,
         "Rotate": _rotate,
         "Posterize": _posterize,
         "Solarize": _solarize_val,
-        "SolarizeAdd": _solarize_add,
         "Color": _color,
         "Contrast": _contrast,
         "Brightness": _brightness,
@@ -269,8 +252,6 @@ def rand_augment(
         "ShearY": _shear_y,
         "TranslateX": _translate_x,
         "TranslateY": _translate_y,
-        "Cutout": _cutout,
-        "Grayscale": _grayscale,
         "Rotate_BBox": _rotate_with_bboxes,
         "ShearX_BBox": lambda i, b, lvl, r: _shear_with_bboxes(
             i, b, lvl, r, shear_horizontal=True
@@ -336,7 +317,7 @@ def rand_augment(
             def create_branch_fn(f, seed_val, name, im=aug_image, bx=aug_bboxes):
                 def branch_fn():
                     ar = level_to_arg(name, level, seed_val)
-                    return f(im, bx, ar, seed_val)
+                    return f(im, bx, ar)
 
                 return branch_fn
 
@@ -389,11 +370,6 @@ def trivial_augment(
     if translate_const is None:
         translate_const = tf.cast(tf.shape(image)[1], tf.float32) * (150.0 / 331.0)
 
-    # Strict 14-op RA space: exclude ops not in the pool
-    ta_exclude = list(_NON_RA_OPS)
-    if exclude_ops:
-        ta_exclude = ta_exclude + [op for op in exclude_ops if op not in ta_exclude]
-
     return rand_augment(
         image=image,
         seed=seeds[1],
@@ -401,7 +377,7 @@ def trivial_augment(
         num_layers=1,
         magnitude=magnitude,
         translate_const=translate_const,
-        exclude_ops=ta_exclude,
+        exclude_ops=exclude_ops,
         segmentation_mask=segmentation_mask,
         segmentation_fill_value=segmentation_fill_value,
     )
@@ -438,10 +414,6 @@ def trivial_augment_wide(
         tf.float32,
     )
 
-    ta_exclude = list(_NON_RA_OPS)
-    if exclude_ops:
-        ta_exclude = ta_exclude + [op for op in exclude_ops if op not in ta_exclude]
-
     return rand_augment(
         image=image,
         seed=seeds[1],
@@ -453,7 +425,7 @@ def trivial_augment_wide(
         shear_max=0.99,  # Wide: ±0.99
         enhance_max=0.99,  # Wide: MaxDelta=0.99
         posterize_max_bits=6,  # Wide: min 2 bits kept (8 − 6 = 2)
-        exclude_ops=ta_exclude,
+        exclude_ops=exclude_ops,
         segmentation_mask=segmentation_mask,
         segmentation_fill_value=segmentation_fill_value,
     )

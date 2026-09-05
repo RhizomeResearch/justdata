@@ -73,20 +73,7 @@ def _torchaudio_mel_weight_matrix(config: MelConfig, stft: STFTConfig) -> tf.Ten
             "The TensorFlow torchaudio-compatible mel path supports HTK scale "
             "without normalization"
         )
-    num_bins = stft.n_fft // 2 + 1
-    f_max = _f_max(config, stft.sample_rate)
-    low_mel = _kaldi_hz_to_mel(tf.constant(float(config.f_min), tf.float32))
-    high_mel = _kaldi_hz_to_mel(tf.constant(f_max, tf.float32))
-    mel_points = tf.linspace(low_mel, high_mel, config.n_mels + 2)
-    hz_points = _kaldi_mel_to_hz(mel_points)
-    frequencies = tf.linspace(0.0, float(stft.sample_rate) / 2.0, num_bins)
-    frequencies = tf.expand_dims(frequencies, 1)
-    lower = hz_points[:-2]
-    center = hz_points[1:-1]
-    upper = hz_points[2:]
-    lower_slope = (frequencies - lower) / tf.maximum(center - lower, 1e-12)
-    upper_slope = (upper - frequencies) / tf.maximum(upper - center, 1e-12)
-    return tf.maximum(0.0, tf.minimum(lower_slope, upper_slope))
+    return _kaldi_mel_weight_matrix(config, stft)
 
 
 def mel_weight_matrix(config: FrontendConfig | dict) -> tf.Tensor:

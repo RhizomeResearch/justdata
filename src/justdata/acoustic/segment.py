@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tensorflow as tf
 
+from justdata.acoustic._random import _seed_tensor
 from justdata.acoustic.configs import SegmentStrategyConfig
 from justdata.acoustic.registry import register_audio_segment_strategy
 from justdata.acoustic.schema import AUDIO, METADATA
@@ -14,18 +15,6 @@ def _target_samples(
         tf.cast(config.clip_duration, tf.float32) * tf.cast(sample_rate, tf.float32)
     )
     return tf.maximum(tf.cast(target, tf.int32), 1)
-
-
-def _seed_tensor(seed: tf.Tensor | int | None) -> tf.Tensor:
-    if seed is None:
-        return tf.constant([0, 0], dtype=tf.int32)
-
-    seed = tf.cast(tf.convert_to_tensor(seed), tf.int32)
-    if seed.shape.rank == 0:
-        return tf.stack([seed, tf.constant(0, dtype=tf.int32)])
-    if seed.shape.rank == 1 and seed.shape[0] == 1:
-        return tf.stack([seed[0], tf.constant(0, dtype=tf.int32)])
-    return seed[:2]
 
 
 def _padding_counts(

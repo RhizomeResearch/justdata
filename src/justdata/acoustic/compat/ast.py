@@ -4,6 +4,7 @@ from typing import Any, Mapping
 
 import tensorflow as tf
 
+from justdata.acoustic._random import _seed_tensor
 from justdata.acoustic.configs import (
     AudioPreprocessConfig,
     AudioPreset,
@@ -62,18 +63,6 @@ AST_RECIPE_CONFIGS = {
         "num_classes": 35,
     },
 }
-
-
-def _seed_tensor(seed: tf.Tensor | int | None) -> tf.Tensor:
-    if seed is None:
-        return tf.constant([0, 0], dtype=tf.int32)
-
-    seed = tf.cast(tf.convert_to_tensor(seed), tf.int32)
-    if seed.shape.rank == 0:
-        return tf.stack([seed, tf.constant(0, dtype=tf.int32)])
-    if seed.shape.rank == 1 and seed.shape[0] == 1:
-        return tf.stack([seed[0], tf.constant(0, dtype=tf.int32)])
-    return seed[:2]
 
 
 def _uniform_int(

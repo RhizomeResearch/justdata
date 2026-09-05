@@ -19,6 +19,27 @@ def _seed_for_index(seed: tf.Tensor, index: tf.Tensor) -> tf.Tensor:
     )
 
 
+def _pad_nested(value, pad_size, *, metadata_mode: str = "full"):
+    """Pad the first dimension of tensors in nested dictionaries."""
+    if isinstance(value, dict):
+        padded = {}
+        for key, child in value.items():
+            child = _pad_nested(child, pad_size, metadata_mode=metadata_mode)
+            if child is not None:
+                padded[key] = child
+        return padded
+
+    if metadata_mode != "full" and value.dtype == tf.string:
+        return None
+
+    pad_shape = tf.concat([[pad_size], tf.shape(value)[1:]], axis=0)
+    if value.dtype == tf.string:
+        fill = tf.fill(pad_shape, tf.constant("", dtype=tf.string))
+    else:
+        fill = tf.zeros(pad_shape, dtype=value.dtype)
+    return tf.concat([value, fill], axis=0)
+
+
 def _pad_dataset(
     ds: tf.data.Dataset, batch_size: int, *, map_parallel_calls: int = tf.data.AUTOTUNE
 ) -> tf.data.Dataset:
@@ -38,21 +59,10 @@ def _pad_dataset(
                 return tf.shape(tensor)[0]
         return tf.constant(0, dtype=tf.int32)
 
-    def pad_value(value, pad_size):
-        if isinstance(value, dict):
-            return {key: pad_value(child, pad_size) for key, child in value.items()}
-
-        pad_shape = tf.concat([[pad_size], tf.shape(value)[1:]], axis=0)
-        if value.dtype == tf.string:
-            fill = tf.fill(pad_shape, tf.constant("", dtype=tf.string))
-        else:
-            fill = tf.zeros(pad_shape, dtype=value.dtype)
-        return tf.concat([value, fill], axis=0)
-
     def pad_batch(batch):
         current_size = get_batch_dim(batch)
         pad_size = batch_size - current_size
-        padded = {key: pad_value(value, pad_size) for key, value in batch.items()}
+        padded = {key: _pad_nested(value, pad_size) for key, value in batch.items()}
         padded["padding_mask"] = tf.concat(
             [
                 tf.ones((current_size,), dtype=tf.bool),

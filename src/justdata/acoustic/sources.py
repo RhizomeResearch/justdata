@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import csv
-import json
 import os
 from pathlib import Path
 from typing import Literal, Union
@@ -10,6 +8,7 @@ import numpy as np
 import tensorflow as tf
 from loguru import logger
 
+from justdata.acoustic._manifests import _read_manifest
 from justdata.acoustic.adapters import (
     standardize_waveform_layout,
     to_float32_waveform,
@@ -53,9 +52,9 @@ def _strip_prefix(dataset_name: str, prefix: str) -> str:
 
 def _resolve_manifest_path(
     dataset_name: str,
-    prefix: str,
     data_dir: Union[None, str, os.PathLike],
 ) -> Path:
+    prefix = "local_audio:"
     spec = _strip_prefix(dataset_name, prefix)
     if not spec:
         if data_dir is None:
@@ -83,32 +82,6 @@ def _resolve_manifest_path(
         )
 
     return path
-
-
-def _read_manifest(path: Path) -> tuple[list[dict[str, str]], set[str]]:
-    suffix = path.suffix.lower()
-    if suffix == ".jsonl":
-        rows = []
-        columns = set()
-        with path.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                row = json.loads(line)
-                row = {str(k): "" if v is None else str(v) for k, v in row.items()}
-                rows.append(row)
-                columns.update(row)
-        return rows, columns
-
-    with path.open("r", encoding="utf-8", newline="") as f:
-        dialect = csv.excel_tab if suffix in {".tsv", ".tab"} else csv.excel
-        reader = csv.DictReader(f, dialect=dialect)
-        rows = [
-            {str(k): "" if v is None else str(v) for k, v in row.items()}
-            for row in reader
-        ]
-        return rows, set(reader.fieldnames or [])
 
 
 def _coalesce(row: dict[str, str], *keys: str, default: str = "") -> str:
@@ -162,7 +135,6 @@ def _manifest_records(
     *,
     data_dir: Union[None, str, os.PathLike],
     dataset: str,
-    require_local_columns: bool,
 ) -> list[dict]:
     records = []
     for row in rows:
@@ -175,7 +147,7 @@ def _manifest_records(
             raise ValueError("Acoustic manifest rows must contain a path or filename.")
 
         label_value = _coalesce(row, LABEL, "scene_label", "event_label", "target")
-        if require_local_columns and label_value == "":
+        if label_value == "":
             raise ValueError("Local acoustic manifest rows must contain a label.")
 
         audio_path = _resolve_audio_path(audio_path_value, manifest_path, data_dir)
@@ -236,24 +208,21 @@ def _records_to_dataset(records: list[dict]) -> tf.data.Dataset:
     return ds
 
 
-def _load_manifest_splits(
+@register_source_loader("local_audio:")
+def load_local_audio_manifest_splits(
     dataset_name: str,
     splits: list[str],
-    data_dir: Union[None, str, os.PathLike],
-    *,
-    prefix: str,
-    require_local_columns: bool,
+    data_dir: Union[None, str, os.PathLike] = None,
 ) -> list[tf.data.Dataset]:
-    manifest_path = _resolve_manifest_path(dataset_name, prefix, data_dir)
+    manifest_path = _resolve_manifest_path(dataset_name, data_dir)
     rows, columns = _read_manifest(manifest_path)
 
-    if require_local_columns:
-        missing = _LOCAL_REQUIRED_COLUMNS - columns
-        if missing:
-            missing_cols = ", ".join(sorted(missing))
-            raise ValueError(
-                f"Local acoustic manifest is missing required columns: {missing_cols}."
-            )
+    missing = _LOCAL_REQUIRED_COLUMNS - columns
+    if missing:
+        missing_cols = ", ".join(sorted(missing))
+        raise ValueError(
+            f"Local acoustic manifest is missing required columns: {missing_cols}."
+        )
 
     dataset = manifest_path.stem
     return [
@@ -264,26 +233,10 @@ def _load_manifest_splits(
                 split,
                 data_dir=data_dir,
                 dataset=dataset,
-                require_local_columns=require_local_columns,
             )
         )
         for split in splits
     ]
-
-
-@register_source_loader("local_audio:")
-def load_local_audio_manifest_splits(
-    dataset_name: str,
-    splits: list[str],
-    data_dir: Union[None, str, os.PathLike] = None,
-) -> list[tf.data.Dataset]:
-    return _load_manifest_splits(
-        dataset_name,
-        splits,
-        data_dir,
-        prefix="local_audio:",
-        require_local_columns=True,
-    )
 
 
 @register_source_loader("dcase2025:")

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import csv
-import json
 import os
 import re
 import warnings
@@ -12,6 +10,8 @@ import numpy as np
 import tensorflow as tf
 from loguru import logger
 
+from justdata.acoustic._dcase import DCASE_CLASSES as _DCASE_CLASSES
+from justdata.acoustic._manifests import _read_manifest
 from justdata.acoustic.adapters import adapt_acoustic_sample
 from justdata.acoustic.configs import AudioPreset
 from justdata.acoustic.presets import register_preset
@@ -314,18 +314,7 @@ def _field_or_parse(sample: dict, key: str, parser) -> Any:
 
 class DCASE2025Task1Adapter:
     dataset_name = "dcase2025_task1"
-    class_names = (
-        "airport",
-        "shopping_mall",
-        "metro_station",
-        "street_pedestrian",
-        "public_square",
-        "street_traffic",
-        "tram",
-        "bus",
-        "metro",
-        "park",
-    )
+    class_names = _DCASE_CLASSES
 
     allow_stats_on_split = allow_stats_on_split
 
@@ -483,34 +472,6 @@ def _register_presets() -> None:
 
 
 _register_presets()
-
-
-def _read_manifest(path: Path) -> list[dict[str, str]]:
-    suffix = path.suffix.lower()
-    if suffix == ".jsonl":
-        rows = []
-        with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if line:
-                    rows.append(
-                        {
-                            str(key): "" if value is None else str(value)
-                            for key, value in json.loads(line).items()
-                        }
-                    )
-        return rows
-
-    dialect = csv.excel_tab if suffix in {".tsv", ".tab"} else csv.excel
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle, dialect=dialect)
-        return [
-            {
-                str(key): "" if value is None else str(value)
-                for key, value in row.items()
-            }
-            for row in reader
-        ]
 
 
 def _resolve_manifest_path(
@@ -675,7 +636,7 @@ def load_dcase2025_task1_splits(
     data_dir: Union[None, str, os.PathLike] = None,
 ) -> list[tf.data.Dataset]:
     manifest_path = _resolve_manifest_path(dataset_name, data_dir)
-    rows = _read_manifest(manifest_path)
+    rows, _columns = _read_manifest(manifest_path)
     datasets = []
     for split in splits:
         split_rows = [

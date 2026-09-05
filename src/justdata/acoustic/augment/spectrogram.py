@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-import dataclasses
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import tensorflow as tf
 
+from justdata.acoustic._random import (
+    _maybe_apply,
+    _seed_tensor,
+    _uniform_float,
+    _uniform_int,
+)
+from justdata.acoustic.augment._common import _config_data as _merge_config
+from justdata.acoustic.augment._common import _normalize_augment_specs
 from justdata.acoustic.registry import (
     get_audio_spectrogram_augment,
     register_audio_spectrogram_augment,
@@ -19,77 +26,13 @@ BatchSpectrogramLayout = Literal["tf", "tfc", "cft", "btf", "btfc", "bcft"]
 _EPS = tf.constant(1e-6, dtype=tf.float32)
 
 
-def _seed_tensor(seed: tf.Tensor | int | None) -> tf.Tensor:
-    if seed is None:
-        return tf.constant([0, 0], dtype=tf.int32)
-
-    seed = tf.cast(tf.convert_to_tensor(seed), tf.int32)
-    if seed.shape.rank == 0:
-        return tf.stack([seed, tf.constant(0, dtype=tf.int32)])
-    if seed.shape.rank == 1 and seed.shape[0] == 1:
-        return tf.stack([seed[0], tf.constant(0, dtype=tf.int32)])
-    return seed[:2]
-
-
 def _enabled(is_training: bool, augment_eval: bool) -> bool:
     return bool(is_training or augment_eval)
-
-
-def _uniform_int(seed: tf.Tensor, minval: tf.Tensor, maxval: tf.Tensor) -> tf.Tensor:
-    minval = tf.cast(minval, tf.int32)
-    maxval = tf.cast(maxval, tf.int32)
-    return tf.cond(
-        tf.equal(minval, maxval),
-        lambda: minval,
-        lambda: tf.random.stateless_uniform(
-            [],
-            seed=seed,
-            minval=minval,
-            maxval=maxval + 1,
-            dtype=tf.int32,
-        ),
-    )
-
-
-def _uniform_float(seed: tf.Tensor, minval: float, maxval: float) -> tf.Tensor:
-    if minval == maxval:
-        return tf.constant(minval, dtype=tf.float32)
-    return tf.random.stateless_uniform(
-        [],
-        seed=seed,
-        minval=tf.cast(minval, tf.float32),
-        maxval=tf.cast(maxval, tf.float32),
-        dtype=tf.float32,
-    )
 
 
 def _stateless_shuffled_range(size: tf.Tensor, seed: tf.Tensor) -> tf.Tensor:
     random_values = tf.random.stateless_uniform(tf.reshape(size, [1]), seed=seed)
     return tf.argsort(random_values, stable=True)
-
-
-def _maybe_apply(x: tf.Tensor, prob: float, seed: tf.Tensor, apply_fn) -> tf.Tensor:
-    if prob <= 0.0:
-        return x
-    if prob >= 1.0:
-        return apply_fn()
-    should_apply = tf.random.stateless_uniform([], seed=seed) < tf.cast(
-        prob, tf.float32
-    )
-    return tf.cond(should_apply, apply_fn, lambda: x)
-
-
-def _merge_config(config: Any, overrides: Mapping[str, Any]) -> dict[str, Any]:
-    data: dict[str, Any] = {}
-    if config is not None:
-        if dataclasses.is_dataclass(config):
-            data.update(dataclasses.asdict(config))
-        elif isinstance(config, Mapping):
-            data.update(config)
-        else:
-            raise TypeError("config must be a dataclass, mapping, or None")
-    data.update({key: value for key, value in overrides.items() if value is not None})
-    return data
 
 
 def _resolve_layout(
@@ -688,33 +631,10 @@ def random_eq(
 def normalize_spectrogram_augment_specs(
     augmentations: Mapping[str, Any] | Sequence[Any] | str | None,
 ) -> list[dict[str, Any]]:
-    if augmentations is None:
-        return []
-    if isinstance(augmentations, str):
-        return [{"name": augmentations}]
-    if isinstance(augmentations, Mapping):
-        if "name" in augmentations:
-            spec = dict(augmentations)
-            spec["name"] = str(spec["name"])
-            return [spec]
-
-        specs = []
-        for name, value in augmentations.items():
-            if value is None or value is False:
-                continue
-            registered_name = "passt_patchout" if name == "patchout" else str(name)
-            if value is True:
-                specs.append({"name": registered_name})
-            elif isinstance(value, Mapping):
-                specs.append({"name": registered_name, **dict(value)})
-            else:
-                specs.append({"name": registered_name, "config": value})
-        return specs
-
-    specs = []
-    for value in augmentations:
-        specs.extend(normalize_spectrogram_augment_specs(value))
-    return specs
+    return _normalize_augment_specs(
+        augmentations,
+        mapping_name=lambda name: "passt_patchout" if name == "patchout" else str(name),
+    )
 
 
 def apply_spectrogram_augmentations(

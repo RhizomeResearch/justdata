@@ -375,16 +375,10 @@ are fixed by design and cannot be overridden via kwargs; to use custom bounds, c
 
 ### 6. Non-RA Operations
 
-The following internal primitives exist in the implementation but are **excluded from the fixed 14-op RA pool** and
-cannot be selected through RandAugment, TrivialAugment, or TrivialAugmentWide. The public `exclude_ops` parameter can
-remove operations from the pool; it cannot add these primitives.
-
-| Operation     | Notes                                                                                                          |
-| :------------ | :------------------------------------------------------------------------------------------------------------- |
-| `Invert`      | Inverts all pixel values: $p' = 255 - p$.                                                                      |
-| `Cutout`      | Erases a random square patch (fill with constant). Superseded by the `random_erasing` late-augmentation stage. |
-| `SolarizeAdd` | Additive solarization variant.                                                                                 |
-| `Grayscale`   | Converts to single-channel luminance and broadcasts to RGB.                                                    |
+`Invert`, `Cutout`, `SolarizeAdd`, and `Grayscale` are outside the fixed 14-op pool and cannot be selected through
+RandAugment, TrivialAugment, or TrivialAugmentWide. The public `exclude_ops` parameter only removes operations from
+the pool; listing these names has no effect. The `cutout_const` argument remains accepted for compatibility and
+has no effect. Random erasing is available through the `random_erasing` late-augmentation stage.
 
 ______________________________________________________________________
 

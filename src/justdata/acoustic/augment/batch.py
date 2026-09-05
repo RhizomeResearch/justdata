@@ -6,6 +6,12 @@ from typing import Any, Literal
 
 import tensorflow as tf
 
+from justdata.acoustic._random import (
+    _maybe_apply as _maybe_apply_tensor,
+    _seed_tensor,
+    _uniform_int,
+)
+from justdata.acoustic.augment._common import _config_data, _normalize_augment_specs
 from justdata.acoustic.augment.configs import (
     AudioBatchMixStyleConfig,
     AudioCutMixSpecConfig,
@@ -38,18 +44,6 @@ _ALIASES = {
 _LABEL_MIXING_AUGMENTS = {"mixup", "cutmix_spec", "wavmix"}
 
 
-def _seed_tensor(seed: tf.Tensor | int | None) -> tf.Tensor:
-    if seed is None:
-        return tf.constant([0, 0], dtype=tf.int32)
-
-    seed = tf.cast(tf.convert_to_tensor(seed), tf.int32)
-    if seed.shape.rank == 0:
-        return tf.stack([seed, tf.constant(0, dtype=tf.int32)])
-    if seed.shape.rank == 1 and seed.shape[0] == 1:
-        return tf.stack([seed[0], tf.constant(0, dtype=tf.int32)])
-    return seed[:2]
-
-
 def _enabled(is_training: bool, augment_eval: bool) -> bool:
     return bool(is_training or augment_eval)
 
@@ -60,18 +54,9 @@ def _merge_config(
     defaults: Mapping[str, Any],
     overrides: Mapping[str, Any],
 ):
-    data = dict(defaults)
-    if config is not None:
-        if isinstance(config, config_cls):
-            data.update(dataclasses.asdict(config))
-        elif dataclasses.is_dataclass(config):
-            data.update(dataclasses.asdict(config))
-        elif isinstance(config, Mapping):
-            data.update(config)
-        else:
-            raise TypeError(f"config must be a {config_cls.__name__}, mapping, or None")
-    data.update({key: value for key, value in overrides.items() if value is not None})
-    return config_cls(**data)
+    return config_cls(
+        **_config_data(config, overrides, defaults=defaults, config_cls=config_cls)
+    )
 
 
 def _sample_beta(
@@ -109,22 +94,6 @@ def _stateless_shuffled_range(size: tf.Tensor, seed: tf.Tensor) -> tf.Tensor:
     )
 
 
-def _uniform_int(seed: tf.Tensor, minval: tf.Tensor, maxval: tf.Tensor) -> tf.Tensor:
-    minval = tf.cast(minval, tf.int32)
-    maxval = tf.cast(maxval, tf.int32)
-    return tf.cond(
-        tf.equal(minval, maxval),
-        lambda: minval,
-        lambda: tf.random.stateless_uniform(
-            [],
-            seed=seed,
-            minval=minval,
-            maxval=maxval + 1,
-            dtype=tf.int32,
-        ),
-    )
-
-
 def _mix_tensor(x: tf.Tensor, partner: tf.Tensor, lam: tf.Tensor) -> tf.Tensor:
     dtype = x.dtype
     mixed = tf.cast(lam, tf.float32) * tf.cast(x, tf.float32)
@@ -148,22 +117,6 @@ def _maybe_apply_pair(
         prob, tf.float32
     )
     return tf.cond(should_apply, apply_fn, skip_fn)
-
-
-def _maybe_apply_tensor(
-    x: tf.Tensor,
-    prob: float,
-    seed: tf.Tensor,
-    apply_fn,
-) -> tf.Tensor:
-    if prob <= 0.0:
-        return x
-    if prob >= 1.0:
-        return apply_fn()
-    should_apply = tf.random.stateless_uniform([], seed=seed) < tf.cast(
-        prob, tf.float32
-    )
-    return tf.cond(should_apply, apply_fn, lambda: x)
 
 
 @register_audio_batch_augment("mixup", requires_labels=True)
@@ -546,33 +499,7 @@ def _canonical_name(name: str) -> str:
 def normalize_batch_augment_specs(
     augmentations: Mapping[str, Any] | Sequence[Any] | str | None,
 ) -> list[dict[str, Any]]:
-    if augmentations is None:
-        return []
-    if isinstance(augmentations, str):
-        return [{"name": _canonical_name(augmentations)}]
-    if isinstance(augmentations, Mapping):
-        if "name" in augmentations:
-            spec = dict(augmentations)
-            spec["name"] = _canonical_name(str(spec["name"]))
-            return [spec]
-
-        specs = []
-        for name, value in augmentations.items():
-            if value is None or value is False:
-                continue
-            canonical = _canonical_name(str(name))
-            if value is True:
-                specs.append({"name": canonical})
-            elif isinstance(value, Mapping):
-                specs.append({"name": canonical, **dict(value)})
-            else:
-                specs.append({"name": canonical, "config": value})
-        return specs
-
-    specs = []
-    for value in augmentations:
-        specs.extend(normalize_batch_augment_specs(value))
-    return specs
+    return _normalize_augment_specs(augmentations, canonical_name=_canonical_name)
 
 
 def _label_transform_data(label_transform: Any) -> Mapping[str, Any] | None:

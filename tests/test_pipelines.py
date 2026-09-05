@@ -38,6 +38,28 @@ from justdata.vision.tasks.segmentation import (
 from justdata.vision.transforms import pad_to_patch_multiple
 
 
+@pytest.mark.parametrize(
+    "strategy", ["rand_augment", "trivial_augment", "trivial_augment_wide"]
+)
+def test_excluding_operations_outside_fixed_pool_has_no_effect(
+    strategy, cifar_image, seed
+):
+    augment = get_augment_strategy(strategy)
+    expected = augment(cifar_image, seed)
+    actual = augment(
+        cifar_image,
+        seed,
+        exclude_ops=["Invert", "Cutout", "SolarizeAdd", "Grayscale"],
+    )
+    np.testing.assert_array_equal(actual, expected)
+
+
+def test_randaugment_cutout_constant_remains_a_compatibility_noop(cifar_image, seed):
+    expected = rand_augment(cifar_image, seed, cutout_const=0.0)
+    actual = rand_augment(cifar_image, seed, cutout_const=1000.0)
+    np.testing.assert_array_equal(actual, expected)
+
+
 @pytest.fixture
 def seed():
     return tf.constant([42, 0], dtype=tf.int32)
@@ -156,8 +178,6 @@ class TestAutoAugmentStrategies:
 
     def test_ra_14_op_pool(self):
         """Default RA pool is the strict 14-op RA space (no Invert/Cutout/SolarizeAdd)."""
-        from justdata.vision.augmentations.auto import _NON_RA_OPS
-
         ra_14_ops = {
             "Identity",
             "AutoContrast",
@@ -174,13 +194,18 @@ class TestAutoAugmentStrategies:
             "Posterize",
             "Solarize",
         }
-        assert set(_NON_RA_OPS).isdisjoint(ra_14_ops)
+        assert set(RAND_AUGMENT_OPS) == ra_14_ops
+        assert {"Invert", "Cutout", "SolarizeAdd", "Grayscale"}.isdisjoint(ra_14_ops)
 
     def test_ta_excludes_non_ra_ops(self, cifar_image, seed):
         """TA passes non-RA ops to exclude; result must still be valid."""
-        from justdata.vision.augmentations.auto import trivial_augment, _NON_RA_OPS
+        from justdata.vision.augmentations.auto import trivial_augment
 
-        result = trivial_augment(cifar_image, seed=seed, exclude_ops=_NON_RA_OPS)
+        result = trivial_augment(
+            cifar_image,
+            seed=seed,
+            exclude_ops=["Invert", "Cutout", "SolarizeAdd", "Grayscale"],
+        )
         assert result.shape == (32, 32, 3)
 
     def test_taw_wide_bounds_run_without_error(self, imagenet_image, seed):

@@ -2,6 +2,7 @@ from collections.abc import Mapping
 
 import tensorflow as tf
 
+from justdata.acoustic._random import _seed_tensor as _normalize_seed
 from justdata.acoustic.registry import (
     list_audio_spectrogram_augments,
     list_audio_waveform_augments,
@@ -34,14 +35,7 @@ def _identity_batch(batch, num_classes=None, seed=None, **kwargs):
 
 
 def _seed_tensor(seed):
-    if seed is None:
-        return None
-    seed = tf.cast(tf.convert_to_tensor(seed), tf.int32)
-    if seed.shape.rank == 0:
-        return tf.stack([seed, tf.constant(0, dtype=tf.int32)])
-    if seed.shape.rank == 1 and seed.shape[0] == 1:
-        return tf.stack([seed[0], tf.constant(0, dtype=tf.int32)])
-    return seed[:2]
+    return None if seed is None else _normalize_seed(seed)
 
 
 @register_audio_decoder("identity")

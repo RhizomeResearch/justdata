@@ -1,12 +1,20 @@
 from __future__ import annotations
 
-import dataclasses
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 import tensorflow as tf
 
+from justdata.acoustic._random import _maybe_apply, _seed_tensor, _uniform_float
+from justdata.acoustic._signal import (
+    _add_at_snr,
+    _convolve_channels,
+    _fit_length,
+    _normalize_noise,
+    _pink_noise,
+)
 from justdata.acoustic.adapters import infer_duration
+from justdata.acoustic.augment._common import _config_data, _normalize_augment_specs
 from justdata.acoustic.augment.configs import (
     AdditiveNoiseConfig,
     CodecSimulationConfig,
@@ -25,18 +33,6 @@ from justdata.acoustic.schema import DURATION, SAMPLE_RATE, WAVEFORM
 
 
 _EPS = tf.constant(1e-8, dtype=tf.float32)
-
-
-def _seed_tensor(seed: tf.Tensor | int | None) -> tf.Tensor:
-    if seed is None:
-        return tf.constant([0, 0], dtype=tf.int32)
-
-    seed = tf.cast(tf.convert_to_tensor(seed), tf.int32)
-    if seed.shape.rank == 0:
-        return tf.stack([seed, tf.constant(0, dtype=tf.int32)])
-    if seed.shape.rank == 1 and seed.shape[0] == 1:
-        return tf.stack([seed[0], tf.constant(0, dtype=tf.int32)])
-    return seed[:2]
 
 
 def _as_waveform_tc(waveform: tf.Tensor) -> tuple[tf.Tensor, int | None]:
@@ -60,34 +56,11 @@ def _config_from(
     config_cls: type,
     overrides: Mapping[str, Any],
 ) -> Any:
-    data = {}
-    if config is not None:
-        if isinstance(config, config_cls):
-            data.update(dataclasses.asdict(config))
-        elif dataclasses.is_dataclass(config):
-            data.update(dataclasses.asdict(config))
-        elif isinstance(config, Mapping):
-            data.update(config)
-        else:
-            raise TypeError(f"config must be a {config_cls.__name__}, mapping, or None")
-    data.update({key: value for key, value in overrides.items() if value is not None})
-    return config_cls(**data)
+    return config_cls(**_config_data(config, overrides, config_cls=config_cls))
 
 
 def _enabled(is_training: bool, augment_eval: bool) -> bool:
     return bool(is_training or augment_eval)
-
-
-def _uniform_float(seed: tf.Tensor, minval: float, maxval: float) -> tf.Tensor:
-    if minval == maxval:
-        return tf.constant(minval, dtype=tf.float32)
-    return tf.random.stateless_uniform(
-        [],
-        seed=seed,
-        minval=tf.cast(minval, tf.float32),
-        maxval=tf.cast(maxval, tf.float32),
-        dtype=tf.float32,
-    )
 
 
 def _uniform_int(seed: tf.Tensor, minval: tf.Tensor, maxval: tf.Tensor) -> tf.Tensor:
@@ -102,29 +75,6 @@ def _uniform_int(seed: tf.Tensor, minval: tf.Tensor, maxval: tf.Tensor) -> tf.Te
             dtype=tf.int32,
         ),
     )
-
-
-def _maybe_apply(
-    waveform: tf.Tensor,
-    prob: float,
-    seed: tf.Tensor,
-    apply_fn,
-) -> tf.Tensor:
-    if prob <= 0.0:
-        return waveform
-    if prob >= 1.0:
-        return apply_fn()
-    should_apply = tf.random.stateless_uniform([], seed=seed) < tf.cast(
-        prob, tf.float32
-    )
-    return tf.cond(should_apply, apply_fn, lambda: waveform)
-
-
-def _fit_length(audio: tf.Tensor, target_length: tf.Tensor) -> tf.Tensor:
-    target_length = tf.cast(tf.maximum(target_length, 1), tf.int32)
-    audio = audio[:target_length]
-    pad = tf.maximum(target_length - tf.shape(audio)[0], 0)
-    return tf.pad(audio, [[0, pad], [0, 0]])
 
 
 def _sample_target_length(
@@ -163,24 +113,7 @@ def make_colored_noise(
     if kind != "pink":
         raise ValueError("noise kind must be one of 'white', 'pink', or 'brown'")
 
-    time = tf.shape(audio)[0]
-    channels_first = tf.transpose(audio, [1, 0])
-    spectrum = tf.signal.rfft(channels_first, fft_length=[time])
-    num_bins = tf.shape(spectrum)[-1]
-    freqs = tf.cast(tf.range(num_bins), tf.float32)
-    weights = tf.where(freqs > 0.0, tf.math.rsqrt(freqs), tf.zeros_like(freqs))
-    spectrum = spectrum * tf.cast(weights[tf.newaxis, :], spectrum.dtype)
-    pink = tf.signal.irfft(spectrum, fft_length=[time])
-    pink = tf.transpose(pink, [1, 0])
-    return _restore_rank(_normalize_noise(pink), rank)
-
-
-def _normalize_noise(noise: tf.Tensor) -> tf.Tensor:
-    noise = tf.cast(noise, tf.float32)
-    axes = tf.range(tf.rank(noise))
-    noise = noise - tf.reduce_mean(noise, axis=axes, keepdims=True)
-    rms = tf.sqrt(tf.reduce_mean(tf.square(noise), axis=axes, keepdims=True))
-    return tf.math.divide_no_nan(noise, tf.maximum(rms, _EPS))
+    return _restore_rank(_pink_noise(audio), rank)
 
 
 @register_audio_waveform_augment("random_gain")
@@ -364,12 +297,8 @@ def additive_noise(
 
     def apply() -> tf.Tensor:
         noise = make_colored_noise(tf.shape(audio), noise_seed, cfg.noise_kind)
-        signal_power = tf.reduce_mean(tf.square(audio))
-        noise_power = tf.reduce_mean(tf.square(noise))
         snr_db = _uniform_float(snr_seed, cfg.snr_db_min, cfg.snr_db_max)
-        target = tf.pow(tf.constant(10.0, dtype=tf.float32), snr_db / 10.0)
-        scale = tf.sqrt(tf.math.divide_no_nan(signal_power, noise_power * target))
-        return tf.cast(audio + noise * scale, input_dtype)
+        return tf.cast(_add_at_snr(audio, noise, snr_db), input_dtype)
 
     return _maybe_apply(tf.convert_to_tensor(waveform), cfg.prob, gate_seed, apply)
 
@@ -585,35 +514,6 @@ def _prepare_rir(
     return ir
 
 
-def _convolve_channels(
-    audio: tf.Tensor, ir: tf.Tensor, compensate_delay: bool
-) -> tf.Tensor:
-    time = tf.shape(audio)[0]
-    kernel = tf.reverse(ir, axis=[0])[:, tf.newaxis, tf.newaxis]
-    kernel_length = tf.shape(kernel)[0]
-    start = (
-        tf.argmax(tf.abs(ir), output_type=tf.int32)
-        if compensate_delay
-        else (kernel_length - 1) // 2
-    )
-
-    def convolve_channel(channel: tf.Tensor) -> tf.Tensor:
-        signal = channel[tf.newaxis, :, tf.newaxis]
-        padded = tf.pad(
-            signal, [[0, 0], [kernel_length - 1, kernel_length - 1], [0, 0]]
-        )
-        full = tf.nn.conv1d(padded, kernel, stride=1, padding="VALID")[0, :, 0]
-        return _fit_length(full[start:, tf.newaxis], time)[:, 0]
-
-    channels_first = tf.transpose(audio, [1, 0])
-    convolved = tf.map_fn(
-        convolve_channel,
-        channels_first,
-        fn_output_signature=tf.float32,
-    )
-    return tf.transpose(convolved, [1, 0])
-
-
 @register_audio_waveform_augment("speed_perturb")
 def speed_perturb(
     waveform: tf.Tensor,
@@ -770,32 +670,7 @@ def _mp3_proxy(audio: tf.Tensor, bitrate: int | None) -> tf.Tensor:
 def normalize_waveform_augment_specs(
     augmentations: Mapping[str, Any] | Sequence[Any] | str | None,
 ) -> list[dict[str, Any]]:
-    if augmentations is None:
-        return []
-    if isinstance(augmentations, str):
-        return [{"name": augmentations}]
-    if isinstance(augmentations, Mapping):
-        if "name" in augmentations:
-            spec = dict(augmentations)
-            spec["name"] = str(spec["name"])
-            return [spec]
-
-        specs = []
-        for name, value in augmentations.items():
-            if value is None or value is False:
-                continue
-            if value is True:
-                specs.append({"name": str(name)})
-            elif isinstance(value, Mapping):
-                specs.append({"name": str(name), **dict(value)})
-            else:
-                specs.append({"name": str(name), "config": value})
-        return specs
-
-    specs = []
-    for value in augmentations:
-        specs.extend(normalize_waveform_augment_specs(value))
-    return specs
+    return _normalize_augment_specs(augmentations)
 
 
 def apply_waveform_augmentations(

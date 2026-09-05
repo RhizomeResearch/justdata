@@ -77,76 +77,48 @@ _IMAGENET_NORM = (_IMAGENET_MEAN, _IMAGENET_STD)
 _CIFAR10_NORM = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
 _CIFAR100_NORM = ((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
 
+
 # CIFAR-10 / CIFAR-100
 # Modern branch: TrivialAugment, zero-padding crop.
 # RandomCrop(32, padding=4, padding_mode='zeros') -> RandomHorizontalFlip
-register_preset(
-    "cifar100",
-    {
-        "preproc_kwargs": {},
-        "aug_kwargs": {
-            "image_size": 32,
-            "crop_type": "random_pad",
-            "padding": 4,
-            "pad_mode": "CONSTANT",
-            "augment_type": "trivial_augment_wide",
-            "ra_kwargs": {
-                "num_layers": 2,
-                "magnitude": 9.0,
-                "cutout_const": 14.0,
-                "translate_const": 14.0,
+def _register_cifar_preset(name: str, normalization_params):
+    register_preset(
+        name,
+        {
+            "preproc_kwargs": {},
+            "aug_kwargs": {
+                "image_size": 32,
+                "crop_type": "random_pad",
+                "padding": 4,
+                "pad_mode": "CONSTANT",
+                "augment_type": "trivial_augment_wide",
+                "ra_kwargs": {
+                    "num_layers": 2,
+                    "magnitude": 9.0,
+                    "cutout_const": 14.0,
+                    "translate_const": 14.0,
+                },
+                "gc_kwargs": {"size": 32, "scale": (0.32, 1.0)},
+                "lc_kwargs": {"size": 16, "scale": (0.05, 0.32)},
             },
-            "gc_kwargs": {"size": 32, "scale": (0.32, 1.0)},
-            "lc_kwargs": {"size": 16, "scale": (0.05, 0.32)},
+            "laug_kwargs": {
+                "mixup_alpha": 0.8,
+                "cutmix_alpha": 1.0,
+                "prob": 1.0,
+                "switch_prob": 0.5,
+                "random_erasing_prob": 0.25,
+            },
+            "postproc_kwargs": {
+                "image_size": 32,
+                "val_resize_size": None,
+                "normalization_params": normalization_params,
+            },
         },
-        "laug_kwargs": {
-            "mixup_alpha": 0.8,
-            "cutmix_alpha": 1.0,
-            "prob": 1.0,
-            "switch_prob": 0.5,
-            "random_erasing_prob": 0.25,
-        },
-        "postproc_kwargs": {
-            "image_size": 32,
-            "val_resize_size": None,
-            "normalization_params": _CIFAR100_NORM,
-        },
-    },
-)
+    )
 
-register_preset(
-    "cifar",
-    {
-        "preproc_kwargs": {},
-        "aug_kwargs": {
-            "image_size": 32,
-            "crop_type": "random_pad",
-            "padding": 4,
-            "pad_mode": "CONSTANT",
-            "augment_type": "trivial_augment_wide",
-            "ra_kwargs": {
-                "num_layers": 2,
-                "magnitude": 9.0,
-                "cutout_const": 14.0,
-                "translate_const": 14.0,
-            },
-            "gc_kwargs": {"size": 32, "scale": (0.32, 1.0)},
-            "lc_kwargs": {"size": 16, "scale": (0.05, 0.32)},
-        },
-        "laug_kwargs": {
-            "mixup_alpha": 0.8,
-            "cutmix_alpha": 1.0,
-            "prob": 1.0,
-            "switch_prob": 0.5,
-            "random_erasing_prob": 0.25,
-        },
-        "postproc_kwargs": {
-            "image_size": 32,
-            "val_resize_size": None,
-            "normalization_params": _CIFAR10_NORM,
-        },
-    },
-)
+
+_register_cifar_preset("cifar100", _CIFAR100_NORM)
+_register_cifar_preset("cifar", _CIFAR10_NORM)
 
 # KITTI road segmentation. Keep this separate from the ImageNet classification
 # default because segmentation augmentation accepts a deliberately smaller API.

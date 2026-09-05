@@ -56,13 +56,6 @@ def _get_gaussian_kernel(sigma: tf.Tensor, filter_size: tf.Tensor) -> tf.Tensor:
     return x
 
 
-def _get_gaussian_kernel_2d(
-    gaussian_filter_x: tf.Tensor, gaussian_filter_y: tf.Tensor
-) -> tf.Tensor:
-    """Computes 2D Gaussian kernel given 1D kernels."""
-    return tf.matmul(gaussian_filter_y[:, tf.newaxis], gaussian_filter_x[tf.newaxis, :])
-
-
 def _convert_translation_to_transform(translations: tf.Tensor) -> tf.Tensor:
     translations = tf.convert_to_tensor(translations, dtype=tf.float32)
     if translations.shape.rank == 1:
@@ -216,81 +209,10 @@ def _blend(image1: tf.Tensor, image2: tf.Tensor, factor) -> tf.Tensor:
     return tf.cast(blended, tf.uint8)
 
 
-def _fill_rectangle(
-    image, center_width, center_height, half_width, half_height, replace=None, seed=None
-):
-    image_height = tf.shape(image)[0]
-    image_width = tf.shape(image)[1]
-
-    lower_pad = tf.maximum(0, center_height - half_height)
-    upper_pad = tf.maximum(0, image_height - center_height - half_height)
-    left_pad = tf.maximum(0, center_width - half_width)
-    right_pad = tf.maximum(0, image_width - center_width - half_width)
-
-    cutout_shape = [
-        image_height - (lower_pad + upper_pad),
-        image_width - (left_pad + right_pad),
-    ]
-    padding_dims = [[lower_pad, upper_pad], [left_pad, right_pad]]
-    mask = tf.pad(
-        tf.zeros(cutout_shape, dtype=image.dtype), padding_dims, constant_values=1
-    )
-    mask = tf.expand_dims(mask, -1)
-    num_channels = tf.shape(image)[-1]
-    mask = tf.tile(mask, [1, 1, num_channels])
-
-    if replace is None:
-        fill_seed = seed if seed is not None else tf.constant([0, 0], dtype=tf.int32)
-        fill = tf.random.stateless_normal(
-            tf.shape(image), seed=fill_seed, dtype=image.dtype
-        )
-    elif isinstance(replace, tf.Tensor):
-        fill = replace
-    else:
-        fill = tf.ones_like(image, dtype=image.dtype) * replace
-    return tf.where(tf.equal(mask, 0), fill, image)
-
-
-def _cutout(
-    image: tf.Tensor, pad_size: int, replace: int, seed: tf.Tensor
-) -> tf.Tensor:
-    image_height = tf.shape(image)[0]
-    image_width = tf.shape(image)[1]
-
-    seeds = tf.random.split(seed, 3)
-    cutout_center_height = tf.random.stateless_uniform(
-        [], minval=0, maxval=image_height, dtype=tf.int32, seed=seeds[0]
-    )
-    cutout_center_width = tf.random.stateless_uniform(
-        [], minval=0, maxval=image_width, dtype=tf.int32, seed=seeds[1]
-    )
-
-    return _fill_rectangle(
-        image,
-        cutout_center_width,
-        cutout_center_height,
-        pad_size,
-        pad_size,
-        replace=replace,
-        seed=seeds[2],
-    )
-
-
 def _solarize_val(image: tf.Tensor, threshold: int = 128) -> tf.Tensor:
     threshold = tf.cast(threshold, image.dtype)
     max_val = tf.cast(255, image.dtype)
     return tf.where(image < threshold, image, max_val - image)
-
-
-def _solarize_add(
-    image: tf.Tensor, addition: int = 0, threshold: int = 128
-) -> tf.Tensor:
-    threshold = tf.cast(threshold, image.dtype)
-
-    added_image = tf.cast(image, tf.int64) + tf.cast(addition, tf.int64)
-    added_image = tf.cast(tf.clip_by_value(added_image, 0, 255), image.dtype)
-
-    return tf.where(image < threshold, added_image, image)
 
 
 def _posterize(image: tf.Tensor, bits: int) -> tf.Tensor:
@@ -367,10 +289,6 @@ def _equalize(image: tf.Tensor) -> tf.Tensor:
     s2 = scale_channel(image, 1)
     s3 = scale_channel(image, 2)
     return tf.stack([s1, s2, s3], -1)
-
-
-def _invert(image: tf.Tensor) -> tf.Tensor:
-    return tf.cast(255, image.dtype) - image
 
 
 def _translate_x(image: tf.Tensor, pixels: int, replace: int) -> tf.Tensor:
@@ -649,15 +567,8 @@ def gaussian_filter2d(
         # Convert inputs to tensors
         image = tf.convert_to_tensor(image)
 
-        # Handle filter_shape
-        filter_h = filter_w = filter_shape
-
-        # Handle sigma
-        sigma_h = sigma_w = sigma
-
         # Input validation
-        tf.debugging.assert_greater_equal(sigma_h, 0.0, "sigma_h must be >= 0")
-        tf.debugging.assert_greater_equal(sigma_w, 0.0, "sigma_w must be >= 0")
+        tf.debugging.assert_greater_equal(sigma, 0.0, "sigma_h must be >= 0")
 
         # Convert image to 4D
         original_ndims = tf.rank(image)
@@ -671,29 +582,21 @@ def gaussian_filter2d(
         # Get number of channels
         channels = tf.shape(image)[3]
 
-        # Create gaussian kernels
-        sigma_t = tf.convert_to_tensor([sigma_h, sigma_w], dtype=image.dtype)
-
-        gaussian_kernel_x = _get_gaussian_kernel(
-            sigma_t[1], tf.cast(filter_w, tf.int32)
+        # Both axes use the same Gaussian kernel.
+        sigma_t = tf.convert_to_tensor([sigma], dtype=image.dtype)[0]
+        gaussian_kernel = _get_gaussian_kernel(sigma_t, tf.cast(filter_shape, tf.int32))
+        gaussian_kernel_2d = tf.matmul(
+            gaussian_kernel[:, tf.newaxis], gaussian_kernel[tf.newaxis, :]
         )
-        gaussian_kernel_y = _get_gaussian_kernel(
-            sigma_t[0], tf.cast(filter_h, tf.int32)
+        gaussian_kernel_2d = tf.reshape(
+            gaussian_kernel_2d, [filter_shape, filter_shape, 1, 1]
         )
-
-        # Create 2D kernel
-        gaussian_kernel_2d = _get_gaussian_kernel_2d(
-            gaussian_kernel_x, gaussian_kernel_y
-        )
-
-        # Reshape kernel for depthwise conv
-        gaussian_kernel_2d = tf.reshape(gaussian_kernel_2d, [filter_h, filter_w, 1, 1])
         gaussian_kernel_2d = tf.tile(gaussian_kernel_2d, [1, 1, channels, 1])
 
         # Pad image
         image = _pad(
             image,
-            [filter_h, filter_w],
+            [filter_shape, filter_shape],
             pad_mode=padding,
             constant_values=constant_values,
         )

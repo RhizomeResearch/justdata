@@ -18,10 +18,6 @@ def _kaldi_hz_to_mel(frequencies: tf.Tensor) -> tf.Tensor:
     return 1127.0 * tf.math.log1p(frequencies / 700.0)
 
 
-def _kaldi_mel_to_hz(mels: tf.Tensor) -> tf.Tensor:
-    return 700.0 * (tf.exp(mels / 1127.0) - 1.0)
-
-
 def _ast_mel_banks(
     *,
     num_mel_bins: int,

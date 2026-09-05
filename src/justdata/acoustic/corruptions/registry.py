@@ -5,6 +5,9 @@ from typing import Any
 
 import tensorflow as tf
 
+from justdata.acoustic._random import _seed_tensor
+from justdata.acoustic._signal import _convolve_channels
+from justdata.acoustic._signal import _fit_length as _fit_length
 from justdata.acoustic.registry import (
     get_audio_corruption,
     has_audio_corruption,
@@ -83,17 +86,6 @@ def _severity_value(
     return tf.gather(tf.constant(values, dtype=dtype), _severity_index(severity))
 
 
-def _seed_tensor(seed: tf.Tensor | int | None) -> tf.Tensor:
-    if seed is None:
-        return tf.constant([0, 0], dtype=tf.int32)
-    seed = tf.cast(tf.convert_to_tensor(seed), tf.int32)
-    if seed.shape.rank == 0:
-        return tf.stack([seed, tf.constant(0, dtype=tf.int32)])
-    if seed.shape.rank == 1 and seed.shape[0] == 1:
-        return tf.stack([seed[0], tf.constant(0, dtype=tf.int32)])
-    return seed[:2]
-
-
 def _split_seed(seed: tf.Tensor | int | None, count: int) -> tf.Tensor:
     return tf.random.split(_seed_tensor(seed), count)
 
@@ -122,13 +114,6 @@ def _restore_rank(x: tf.Tensor, rank: int | None) -> tf.Tensor:
     if rank == 1:
         return tf.squeeze(x, axis=-1)
     return x
-
-
-def _fit_length(x: tf.Tensor, target_length: tf.Tensor) -> tf.Tensor:
-    target_length = tf.cast(tf.maximum(target_length, 1), tf.int32)
-    x = x[:target_length]
-    pad = tf.maximum(target_length - tf.shape(x)[0], 0)
-    return tf.pad(x, [[0, pad], [0, 0]])
 
 
 def _resize_time(x: tf.Tensor, target_length: tf.Tensor) -> tf.Tensor:
@@ -176,32 +161,9 @@ def _convolve_waveform(
     compensate_delay: bool = False,
 ) -> tf.Tensor:
     audio, rank = _as_tc(x)
-    time = tf.shape(audio)[0]
     ir = tf.reshape(tf.cast(ir, tf.float32), [-1])
     ir = tf.cond(tf.shape(ir)[0] > 0, lambda: ir, lambda: tf.ones([1], tf.float32))
-    kernel = tf.reverse(ir, axis=[0])[:, tf.newaxis, tf.newaxis]
-    kernel_length = tf.shape(kernel)[0]
-    start = (
-        tf.argmax(tf.abs(ir), output_type=tf.int32)
-        if compensate_delay
-        else (kernel_length - 1) // 2
-    )
-
-    def convolve_channel(channel: tf.Tensor) -> tf.Tensor:
-        signal = channel[tf.newaxis, :, tf.newaxis]
-        padded = tf.pad(
-            signal, [[0, 0], [kernel_length - 1, kernel_length - 1], [0, 0]]
-        )
-        full = tf.nn.conv1d(padded, kernel, stride=1, padding="VALID")[0, :, 0]
-        return _fit_length(full[start:, tf.newaxis], time)[:, 0]
-
-    channels_first = tf.transpose(audio, [1, 0])
-    convolved = tf.map_fn(
-        convolve_channel,
-        channels_first,
-        fn_output_signature=tf.float32,
-    )
-    return _restore_rank(tf.transpose(convolved, [1, 0]), rank)
+    return _restore_rank(_convolve_channels(audio, ir, compensate_delay), rank)
 
 
 def _metadata_with_corruption(

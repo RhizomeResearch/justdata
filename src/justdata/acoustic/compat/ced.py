@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from justdata.acoustic.compat.efficientat import DCASE_CLASSES
+from justdata.acoustic._dcase import DCASE_CLASSES as DCASE_CLASSES
+from justdata.acoustic._dcase import _dcase_label_transform
 from justdata.acoustic.configs import (
     AudioPreprocessConfig,
     AudioPreset,
@@ -60,14 +61,6 @@ def _metadata(model_size: str, *, source_duration: float | None = None) -> dict:
 
 def _audioset_label_transform() -> LabelTransformConfig:
     return LabelTransformConfig(mode="multi_hot", num_classes=527)
-
-
-def _dcase_label_transform() -> LabelTransformConfig:
-    return LabelTransformConfig(
-        mode="index",
-        num_classes=len(DCASE_CLASSES),
-        class_names=DCASE_CLASSES,
-    )
 
 
 def _preset(

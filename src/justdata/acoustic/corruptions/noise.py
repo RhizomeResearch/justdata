@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import tensorflow as tf
 
+from justdata.acoustic._signal import _add_at_snr, _normalize_noise, _pink_noise
 from justdata.acoustic.corruptions.registry import (
-    _EPS,
     _as_tc,
     _restore_rank,
     _severity_value,
@@ -18,14 +18,6 @@ BROWN_NOISE_SNR_DB = {1: 30, 2: 20, 3: 10, 4: 5, 5: 0}
 BACKGROUND_NOISE_SNR_DB = {1: 25, 2: 18, 3: 12, 4: 6, 5: 0}
 
 
-def _normalize_noise(noise: tf.Tensor) -> tf.Tensor:
-    noise = tf.cast(noise, tf.float32)
-    axes = tf.range(tf.rank(noise))
-    noise = noise - tf.reduce_mean(noise, axis=axes, keepdims=True)
-    rms = tf.sqrt(tf.reduce_mean(tf.square(noise), axis=axes, keepdims=True))
-    return tf.math.divide_no_nan(noise, tf.maximum(rms, _EPS))
-
-
 def _colored_noise(shape: tf.Tensor, seed: tf.Tensor, kind: str) -> tf.Tensor:
     noise = tf.random.stateless_normal(shape, seed=seed, dtype=tf.float32)
     if kind == "white":
@@ -37,29 +29,7 @@ def _colored_noise(shape: tf.Tensor, seed: tf.Tensor, kind: str) -> tf.Tensor:
     if kind != "pink":
         raise ValueError("noise kind must be one of 'white', 'pink', or 'brown'.")
 
-    time = tf.shape(audio)[0]
-    channels_first = tf.transpose(audio, [1, 0])
-    spectrum = tf.signal.rfft(channels_first, fft_length=[time])
-    num_bins = tf.shape(spectrum)[-1]
-    freqs = tf.cast(tf.range(num_bins), tf.float32)
-    weights = tf.where(freqs > 0.0, tf.math.rsqrt(freqs), tf.zeros_like(freqs))
-    pink = tf.signal.irfft(
-        spectrum * tf.cast(weights[tf.newaxis, :], spectrum.dtype),
-        fft_length=[time],
-    )
-    return _restore_rank(_normalize_noise(tf.transpose(pink, [1, 0])), rank)
-
-
-def _add_at_snr(
-    audio_or_features: tf.Tensor, noise: tf.Tensor, snr_db: tf.Tensor
-) -> tf.Tensor:
-    x = tf.cast(audio_or_features, tf.float32)
-    noise = tf.cast(noise, tf.float32)
-    signal_power = tf.reduce_mean(tf.square(x))
-    noise_power = tf.reduce_mean(tf.square(noise))
-    target_ratio = tf.pow(tf.constant(10.0, dtype=tf.float32), snr_db / 10.0)
-    scale = tf.sqrt(tf.math.divide_no_nan(signal_power, noise_power * target_ratio))
-    return x + noise * scale
+    return _restore_rank(_pink_noise(audio), rank)
 
 
 def _add_colored_noise(

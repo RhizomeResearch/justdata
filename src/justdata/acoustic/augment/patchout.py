@@ -5,12 +5,12 @@ from typing import Any
 
 import tensorflow as tf
 
+from justdata.acoustic._random import _seed_tensor
+from justdata.acoustic.augment._common import _config_data as _merge_config
 from justdata.acoustic.augment.spectrogram import (
     SpectrogramLayout,
     _as_tfc,
-    _merge_config,
     _restore_from_tfc,
-    _seed_tensor,
     _stateless_shuffled_range,
 )
 from justdata.acoustic.registry import register_audio_spectrogram_augment

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import tensorflow as tf
 
+from justdata.acoustic._dcase import DCASE_CLASSES as DCASE_CLASSES
+from justdata.acoustic._dcase import _dcase_label_transform
 from justdata.acoustic.configs import (
     AudioPreprocessConfig,
     AudioPreset,
@@ -18,20 +20,6 @@ from justdata.acoustic.frontends.mel import mel_weight_matrix
 from justdata.acoustic.frontends.stft import stft_power_spectrogram
 from justdata.acoustic.normalization import apply_feature_normalization
 from justdata.acoustic.registry import register_audio_frontend
-
-
-DCASE_CLASSES = (
-    "airport",
-    "shopping_mall",
-    "metro_station",
-    "street_pedestrian",
-    "public_square",
-    "street_traffic",
-    "tram",
-    "bus",
-    "metro",
-    "park",
-)
 
 
 def efficientat_frontend() -> FrontendConfig:
@@ -99,14 +87,6 @@ def _metadata(model_family: str, *, source_duration: float | None = None) -> dic
 
 def _audioset_label_transform() -> LabelTransformConfig:
     return LabelTransformConfig(mode="multi_hot", num_classes=527)
-
-
-def _dcase_label_transform() -> LabelTransformConfig:
-    return LabelTransformConfig(
-        mode="index",
-        num_classes=len(DCASE_CLASSES),
-        class_names=DCASE_CLASSES,
-    )
 
 
 def _preset(

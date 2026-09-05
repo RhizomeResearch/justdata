@@ -174,7 +174,7 @@ def _translate(
         image,
         transforms=transforms,
         interpolation=interpolation,
-        fill_value=float(replace),
+        fill_value=tf.cast(replace, tf.float32),
         fill_mode="CONSTANT",
     )
 
@@ -201,7 +201,7 @@ def _rotate(
         transforms=transforms,
         interpolation=interpolation,
         fill_mode="CONSTANT",
-        fill_value=float(replace),
+        fill_value=tf.cast(replace, tf.float32),
     )
     return from_4d(image, original_ndims)
 
@@ -373,60 +373,30 @@ def _invert(image: tf.Tensor) -> tf.Tensor:
     return tf.cast(255, image.dtype) - image
 
 
-def _wrap(image: tf.Tensor) -> tf.Tensor:
-    shape = tf.shape(image)
-    extended_channel = tf.expand_dims(tf.ones(shape[:-1], image.dtype), -1)
-    return tf.concat([image, extended_channel], axis=-1)
-
-
-def _unwrap(image: tf.Tensor, replace: int) -> tf.Tensor:
-    image_shape = tf.shape(image)
-    flattened_image = tf.reshape(image, [-1, image_shape[-1]])
-    alpha_channel = tf.expand_dims(flattened_image[..., 3], axis=-1)
-
-    if isinstance(replace, int):
-        replace_t = tf.fill([3], tf.cast(replace, image.dtype))
-    else:
-        replace_t = tf.cast(replace, image.dtype)
-
-    replace_t = tf.concat([replace_t, tf.ones([1], image.dtype)], 0)
-
-    flattened_image = tf.where(
-        tf.equal(alpha_channel, 0),
-        tf.ones_like(flattened_image, dtype=image.dtype) * replace_t,
-        flattened_image,
-    )
-    image = tf.reshape(flattened_image, image_shape)
-    return image[..., :3]
-
-
-def _wrapped_rotate(image: tf.Tensor, degrees: float, replace: int) -> tf.Tensor:
-    image = _rotate(_wrap(image), degrees=degrees)
-    return _unwrap(image, replace)
-
-
 def _translate_x(image: tf.Tensor, pixels: int, replace: int) -> tf.Tensor:
-    image = _translate(_wrap(image), [-pixels, 0])
-    return _unwrap(image, replace)
+    return _translate(image, [-pixels, 0], replace=replace)
 
 
 def _translate_y(image: tf.Tensor, pixels: int, replace: int) -> tf.Tensor:
-    image = _translate(_wrap(image), [0, -pixels])
-    return _unwrap(image, replace)
+    return _translate(image, [0, -pixels], replace=replace)
 
 
 def _shear_x(image: tf.Tensor, level: float, replace: int) -> tf.Tensor:
-    image = _transform(
-        image=_wrap(image), transforms=[1.0, level, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+    return _transform(
+        image,
+        transforms=[1.0, level, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+        fill_mode="CONSTANT",
+        fill_value=tf.cast(replace, tf.float32),
     )
-    return _unwrap(image, replace)
 
 
 def _shear_y(image: tf.Tensor, level: float, replace: int) -> tf.Tensor:
-    image = _transform(
-        image=_wrap(image), transforms=[1.0, 0.0, 0.0, level, 1.0, 0.0, 0.0, 0.0]
+    return _transform(
+        image,
+        transforms=[1.0, 0.0, 0.0, level, 1.0, 0.0, 0.0, 0.0],
+        fill_mode="CONSTANT",
+        fill_value=tf.cast(replace, tf.float32),
     )
-    return _unwrap(image, replace)
 
 
 def _grayscale(image: tf.Tensor) -> tf.Tensor:
@@ -520,7 +490,7 @@ def _rotate_bbox(bbox, image_height, image_width, degrees):
 
 
 def _rotate_with_bboxes(image, bboxes, degrees, replace):
-    image = _wrapped_rotate(image, degrees, replace)
+    image = _rotate(image, degrees, replace)
     image_height = tf.shape(image)[0]
     image_width = tf.shape(image)[1]
 

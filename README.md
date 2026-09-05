@@ -1065,3 +1065,23 @@ See [Performance checks](benchmarks/README.md) for reproducible CPU benchmarks a
 
 GitLab runs `sh tests/doctor/test_lint.sh` in a pinned Debian-based uv image. This installs only the `lint` dependency
 group and provides the standard Linux dynamic loader required by Ruff's PyPI executable, which the Nix image lacks.
+
+### Releases
+
+GitLab builds a wheel and source distribution after lint, the default test suite,
+and all Python 3.11–3.13 package-support jobs pass. Build artifacts are retained
+for one week. Tag pipelines publish those artifacts to
+[PyPI](https://pypi.org/project/justdata/) after the existing manual `golden` job
+also passes; start that job in GitLab to complete a release.
+
+Before tagging, update `pyproject.toml`, `src/justdata/__init__.py`, and
+`CHANGELOG.md`, then run `uv lock`. Push a tag matching the package version, with
+an optional `v` prefix (for example, `v1.1.0` or `1.1.0`). Publishing rejects tags
+that disagree with either version declaration. Branch pipelines build artifacts
+without publishing.
+
+Configure a [PyPI GitLab trusted publisher](https://docs.pypi.org/trusted-publishers/adding-a-publisher/)
+for the `justdata` project with namespace `rhizome-labs/public`, project
+`justdata`, pipeline path `.gitlab-ci.yml`, and environment `release`. The
+`publish` job requests a GitLab ID token with audience `pypi` and requires trusted
+publishing; no stored PyPI API token is needed.

@@ -1,5 +1,7 @@
 stages:
   - test
+  - build
+  - publish
 
 test:
   stage: test
@@ -52,3 +54,38 @@ golden:
     - devenv shell uv sync --extra golden
     - devenv shell uv run pytest -o addopts= -m golden --junitxml=golden.xml
     - devenv shell python tests/acoustic/golden/check_report.py golden.xml --expected 23
+
+build:distribution:
+  stage: build
+  image: ghcr.io/astral-sh/uv:0.11.16-python3.12-trixie-slim@sha256:438bad5bb636f6cc60765ed25f294c74dd896e6d14b2093c3467a37b5d03a78a
+  needs:
+    - test
+    - lint
+    - package-support
+  script:
+    - uv build --clear --no-sources
+  artifacts:
+    paths:
+      - dist/*.whl
+      - dist/*.tar.gz
+    expire_in: 1 week
+
+publish:
+  stage: publish
+  image: ghcr.io/astral-sh/uv:0.11.16-python3.12-trixie-slim@sha256:438bad5bb636f6cc60765ed25f294c74dd896e6d14b2093c3467a37b5d03a78a
+  needs:
+    - job: build:distribution
+      artifacts: true
+    - job: golden
+      artifacts: false
+  rules:
+    - if: '$CI_COMMIT_TAG'
+  id_tokens:
+    PYPI_ID_TOKEN:
+      aud: pypi
+  environment:
+    name: release
+    url: https://pypi.org/project/justdata/
+  script:
+    - python tests/doctor/check_release_version.py
+    - uv publish --trusted-publishing always dist/*.whl dist/*.tar.gz

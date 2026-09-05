@@ -223,7 +223,16 @@ def make_late_augmentations(**kwargs):
         spectrogram_layout=batch_spectrogram_layout,
     )
 
-    def mapped_output_signature(batch):
+    def patchout_debug_enabled(spec):
+        config = spec.get("config")
+        config_debug = (
+            config.get("debug", False) if isinstance(config, Mapping) else False
+        )
+        return spec["name"] == "passt_patchout" and bool(
+            spec.get("debug", config_debug)
+        )
+
+    def mapped_output_signature(batch, patchout_debug):
         signature = tf.nest.map_structure(
             lambda value: tf.TensorSpec(value.shape[1:], value.dtype), batch
         )
@@ -231,17 +240,6 @@ def make_late_augmentations(**kwargs):
         signature[spectrogram_key] = tf.TensorSpec(
             [None] * (feature.shape.rank - 1), feature.dtype
         )
-
-        def patchout_debug_enabled(spec):
-            config = spec.get("config")
-            config_debug = (
-                config.get("debug", False) if isinstance(config, Mapping) else False
-            )
-            return spec["name"] == "passt_patchout" and bool(
-                spec.get("debug", config_debug)
-            )
-
-        patchout_debug = any(map(patchout_debug_enabled, spectrogram_specs))
         if patchout_debug:
             metadata_signature = dict(signature.get(METADATA, {}))
             metadata_signature["patchout"] = {
@@ -270,11 +268,47 @@ def make_late_augmentations(**kwargs):
             row_seeds = tf.random.split(
                 spectrogram_seed, tf.shape(batch[spectrogram_key])[0]
             )
-            result = tf.map_fn(
-                lambda values: spectrogram_stage(values[0], seed=values[1]),
-                (batch, row_seeds),
-                fn_output_signature=mapped_output_signature(batch),
+            patchout_debug = any(map(patchout_debug_enabled, spectrogram_specs))
+            signature = mapped_output_signature(batch, patchout_debug)
+            # Explicit debug=None can defer to config inside patchout; retain
+            # the original full-map signature validation for that case too.
+            config_debug = any(
+                spec["name"] == "passt_patchout"
+                and isinstance(spec.get("config"), Mapping)
+                and spec["config"].get("debug", False)
+                for spec in spectrogram_specs
             )
+            if patchout_debug or config_debug:
+                result = tf.map_fn(
+                    lambda values: spectrogram_stage(values[0], seed=values[1]),
+                    (batch, row_seeds),
+                    fn_output_signature=signature,
+                )
+            else:
+                # Validate all rows as map_fn did, without unstacking and copying
+                # waveforms, labels, and metadata that this stage leaves intact.
+                result = tf.nest.map_structure(tf.convert_to_tensor, batch)
+                features = result[spectrogram_key]
+                batch_dim = features.shape[:1]
+                checks = []
+                for value in tf.nest.flatten(result):
+                    value.shape.with_rank_at_least(1)
+                    batch_dim = batch_dim.merge_with(value.shape[:1])
+                    if value.shape[0] is None or features.shape[0] is None:
+                        checks.append(
+                            tf.debugging.assert_equal(
+                                tf.shape(value)[0], tf.shape(features)[0]
+                            )
+                        )
+                with tf.control_dependencies(checks):
+                    features = tf.identity(features)
+                result[spectrogram_key] = tf.map_fn(
+                    lambda values: spectrogram_stage(
+                        {spectrogram_key: values[0]}, seed=values[1]
+                    )[spectrogram_key],
+                    (features, row_seeds),
+                    fn_output_signature=signature[spectrogram_key],
+                )
         else:
             batch_seed = seed
 

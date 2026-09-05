@@ -1,7 +1,11 @@
 import numpy as np
+import pytest
 import tensorflow as tf
 
 from justdata.vision.stages import (
+    EvalViewConfig,
+    _resize_for_eval_view,
+    _vision_crop_boxes,
     apply_eval_views,
     normalize_image_format,
     resize_and_normalize,
@@ -167,3 +171,53 @@ def test_vision_eval_views_add_metadata_and_flip_views():
     assert result["view_metadata"]["crop_box"].shape == (10, 4)
     assert result["view_metadata"]["flip"].shape == (10,)
     assert result["view_metadata"]["view_index"].numpy().tolist() == list(range(10))
+
+
+@pytest.mark.parametrize(
+    "mode,count",
+    [("center_crop", 3), ("resize_crop", 1), ("multi_crop", 1), ("multi_crop", 5)],
+)
+@pytest.mark.parametrize("include_flip", [False, True])
+@pytest.mark.parametrize("shape", [(20, 28, 3), (45, 51, 3)])
+def test_eval_views_exactly_match_mapped_crops(mode, count, include_flip, shape):
+    config = EvalViewConfig(
+        image_size=32, mode=mode, num_crops=count, include_flip=include_flip
+    )
+    image = tf.reshape(tf.cast(tf.range(np.prod(shape)), tf.uint8), shape)
+
+    def reference(image):
+        resized, scale = _resize_for_eval_view(image, config)
+        boxes = _vision_crop_boxes(resized, config)
+        crops = tf.map_fn(
+            lambda box: tf.image.crop_to_bounding_box(resized, *tf.unstack(box)),
+            boxes,
+            fn_output_signature=resized.dtype,
+        )
+        flip = tf.zeros([tf.shape(crops)[0]], tf.bool)
+        if include_flip:
+            crops = tf.concat([crops, tf.image.flip_left_right(crops)], axis=0)
+            boxes = tf.concat([boxes, boxes], axis=0)
+            flip = tf.concat([flip, tf.ones_like(flip)], axis=0)
+        views = tf.shape(crops)[0]
+        return {
+            "image": crops,
+            "view_metadata": {
+                "crop_box": boxes,
+                "scale": tf.fill([views], scale),
+                "flip": flip,
+                "view_index": tf.range(views),
+            },
+        }
+
+    def actual(image):
+        return apply_eval_views({"image": image}, config=config)
+
+    signature = [tf.TensorSpec([None, None, 3], tf.uint8)]
+    for wrap in (lambda fn: fn, lambda fn: tf.function(fn, input_signature=signature)):
+        expected = wrap(reference)(image)
+        result = wrap(actual)(image)
+        tf.nest.assert_same_structure(result, expected)
+        for left, right in zip(tf.nest.flatten(result), tf.nest.flatten(expected)):
+            assert left.shape == right.shape
+            assert left.dtype == right.dtype
+            assert left.numpy().tobytes() == right.numpy().tobytes()

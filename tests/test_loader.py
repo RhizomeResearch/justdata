@@ -466,6 +466,107 @@ def test_finalize_epoch_is_addressable_reiterable_and_supports_numpy():
     assert list(numpy_iterator) == []
 
 
+@pytest.mark.parametrize("parallel_calls", [None, 1, 4])
+def test_finalize_epoch_parallel_stateless_augmentation_preserves_exact_epochs(
+    parallel_calls,
+):
+    def augment(sample, seed=None):
+        return sample | {"augmentation": tf.random.stateless_uniform([3], seed=seed)}
+
+    def late_augment(batch, num_classes=None, seed=None):
+        return batch | {
+            "late_augmentation": tf.random.stateless_uniform(
+                tf.shape(batch["x"]), seed=seed
+            )
+        }
+
+    with patch("justdata.core.loader.fetch_ds", return_value=_range_dataset(23)):
+        raw_ds, tools = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="train",
+            dataset_type="train",
+            batch_size=4,
+            seed=0,
+            preprocess_fn=_identity,
+            augment_fn=augment,
+            late_augment_fn=late_augment,
+            postprocess_fn=_identity,
+            shuffle_buffer=23,
+            deterministic=True,
+            return_raw_ds=True,
+            map_parallel_calls=parallel_calls,
+            private_threadpool_size=4,
+        )
+
+    serial, _ = tools["finalize_epoch"](raw_ds, seed=19)
+    parallel, n_batches = tools["finalize_epoch"](
+        raw_ds, seed=19, augment_is_stateless=True
+    )
+    assert n_batches == 6
+    assert serial.element_spec == parallel.element_spec
+    expected = list(serial.as_numpy_iterator())
+    next(iter(parallel))
+    for actual in [
+        list(parallel.as_numpy_iterator()),
+        list(parallel.as_numpy_iterator()),
+    ]:
+        for a, b in zip(tf.nest.flatten(actual), tf.nest.flatten(expected)):
+            np.testing.assert_array_equal(a, b)
+    numpy_iterator, _ = tools["finalize_epoch"](
+        raw_ds, seed=19, augment_is_stateless=True, as_numpy=True
+    )
+    for a, b in zip(tf.nest.flatten(list(numpy_iterator)), tf.nest.flatten(expected)):
+        np.testing.assert_array_equal(a, b)
+
+    def augmentation_parallelism(dataset):
+        graph = tf.compat.v1.GraphDef()
+        graph.ParseFromString(dataset._as_serialized_graph().numpy())
+        nodes = {node.name: node for node in graph.node}
+        # Standard augmentation is the first map immediately after enumeration.
+        node = next(
+            node
+            for node in graph.node
+            if node.op == "ParallelMapDatasetV2"
+            and nodes[node.input[0]].op == "ZipDataset"
+        )
+        return int(tf.make_ndarray(nodes[node.input[-1]].attr["value"].tensor))
+
+    assert augmentation_parallelism(serial) == 1
+    assert augmentation_parallelism(parallel) == (
+        tf.data.AUTOTUNE if parallel_calls is None else parallel_calls
+    )
+
+
+def test_finalize_epoch_keeps_stateful_callbacks_serial_by_default():
+    counter = tf.Variable(0, dtype=tf.int64)
+
+    def augment(sample, seed=None):
+        return sample | {"counter": counter.assign_add(1)}
+
+    with patch("justdata.core.loader.fetch_ds", return_value=_range_dataset(7)):
+        raw_ds, tools = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="train",
+            dataset_type="train",
+            batch_size=3,
+            seed=0,
+            preprocess_fn=_identity,
+            augment_fn=augment,
+            late_augment_fn=_identity,
+            postprocess_fn=_identity,
+            shuffle_buffer=None,
+            deterministic=True,
+            return_raw_ds=True,
+            map_parallel_calls=4,
+        )
+    epoch, _ = tools["finalize_epoch"](raw_ds, seed=3)
+    batches = list(epoch)
+    np.testing.assert_array_equal(
+        np.concatenate([batch["counter"] for batch in batches]),
+        [1, 2, 3, 4, 5, 6, 7, 0, 0],
+    )
+
+
 def test_finalize_epoch_validation_order_does_not_depend_on_seed():
     with patch(
         "justdata.core.loader.fetch_ds",

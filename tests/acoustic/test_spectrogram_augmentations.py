@@ -7,6 +7,8 @@ from augmentation_harness import (
     assert_same_seed_same_output,
 )
 from justdata.acoustic.augment import (
+    make_batch_augmentation_stage,
+    make_spectrogram_augmentation_stage,
     frequency_mask,
     frequency_mixstyle,
     mel_bin_shift,
@@ -308,3 +310,103 @@ def test_late_spectrogram_augmentation_is_eval_opt_in():
     assert np.any(
         enabled(batch, seed=[29, 4])[FEATURES].numpy() != batch[FEATURES].numpy()
     )
+
+
+@pytest.mark.parametrize(
+    "layout,shape", [("tf", (3, 12, 8)), ("tfc", (3, 12, 8, 1)), ("cft", (3, 1, 8, 12))]
+)
+@pytest.mark.parametrize("patchout", [False, True])
+def test_late_spectrogram_matches_full_batch_mapping(layout, shape, patchout):
+    feature_key = "custom_features"
+    specs = {"time_mask": {"max_width": 5, "fill_value": "zero"}}
+    if patchout:
+        specs["passt_patchout"] = {"structured_time": 2, "structured_frequency": 1}
+    batch = {
+        feature_key: tf.reshape(tf.range(np.prod(shape), dtype=tf.float32), shape),
+        "waveform": tf.reshape(tf.range(3 * 256, dtype=tf.float32), [3, 256, 1]),
+        LABEL: tf.constant([0, 2, 1]),
+        METADATA: {
+            "id": tf.constant(["a", "b", "c"]),
+            "nested": {"weight": tf.constant([0.1, 0.2, 0.3])},
+        },
+    }
+    seed = tf.constant([19, 31], tf.int64)
+    per_sample = make_spectrogram_augmentation_stage(
+        specs, feature_key=feature_key, layout=layout
+    )
+    signature = tf.nest.map_structure(
+        lambda value: tf.TensorSpec(value.shape[1:], value.dtype), batch
+    )
+    signature[feature_key] = tf.TensorSpec([None] * (len(shape) - 1), tf.float32)
+    spec_seed, batch_seed = tf.unstack(tf.random.split(tf.cast(seed, tf.int32), 2))
+    expected = tf.map_fn(
+        lambda values: per_sample(values[0], seed=values[1]),
+        (batch, tf.random.split(spec_seed, 3)),
+        fn_output_signature=signature,
+    )
+    # Batch mixing must still receive the same labels, waveform, and second seed.
+    batch_specs = {"mixup": {"alpha": 0.4}}
+    batch_stage = make_batch_augmentation_stage(
+        batch_specs, input_key=feature_key, label_mode="single_label"
+    )
+    expected = batch_stage(expected, num_classes=3, seed=batch_seed)
+    stage = make_late_augmentations(
+        spectrogram_augmentations=specs,
+        spectrogram_key=feature_key,
+        spectrogram_layout=layout,
+        batch_augmentations=batch_specs,
+        input_key=feature_key,
+        label_mode="single_label",
+    )
+    actual = tf.function(stage)(batch, num_classes=3, seed=seed)
+    tf.nest.assert_same_structure(actual, expected)
+    for left, right in zip(tf.nest.flatten(actual), tf.nest.flatten(expected)):
+        np.testing.assert_array_equal(left, right)
+
+
+def test_late_spectrogram_preserves_tensor_metadata():
+    batch = {FEATURES: tf.ones([2, 12, 8]), METADATA: tf.constant(["a", "b"])}
+    stage = make_late_augmentations(
+        spectrogram_augmentations={"time_mask": {}}, model_layout="btf"
+    )
+    result = stage(batch, seed=[5, 1])
+    np.testing.assert_array_equal(result[METADATA], batch[METADATA])
+
+
+@pytest.mark.parametrize("invalid", [tf.ones([2, 16]), tf.constant(1.0)])
+def test_late_spectrogram_rejects_invalid_passthrough_batch_shapes(invalid):
+    stage = make_late_augmentations(
+        spectrogram_augmentations={"time_mask": {}}, model_layout="btf"
+    )
+    with pytest.raises(ValueError):
+        stage({FEATURES: tf.ones([3, 12, 8]), "waveform": invalid}, seed=[5, 1])
+
+
+def test_late_spectrogram_checks_dynamic_passthrough_batch_size():
+    stage = make_late_augmentations(
+        spectrogram_augmentations={"time_mask": {}}, model_layout="btf"
+    )
+
+    @tf.function(
+        input_signature=[
+            tf.TensorSpec([None, 12, 8], tf.float32),
+            tf.TensorSpec([None, 16], tf.float32),
+        ]
+    )
+    def run(features, waveform):
+        return stage({FEATURES: features, "waveform": waveform}, seed=[5, 1])
+
+    run(tf.ones([3, 12, 8]), tf.ones([3, 16]))
+    with pytest.raises(tf.errors.InvalidArgumentError):
+        run(tf.ones([3, 12, 8]), tf.ones([2, 16]))
+
+
+def test_late_patchout_retains_signature_validation_for_deferred_debug():
+    stage = make_late_augmentations(
+        spectrogram_augmentations={
+            "patchout": {"config": {"debug": True}, "debug": None}
+        },
+        model_layout="btf",
+    )
+    with pytest.raises(ValueError):
+        stage({FEATURES: tf.ones([2, 12, 8])}, seed=[5, 1])

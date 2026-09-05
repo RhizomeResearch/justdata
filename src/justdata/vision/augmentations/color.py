@@ -153,9 +153,14 @@ def solarize(
 
     max_value_t = tf.cast(max_value, image.dtype)
     threshold_t = tf.cast(threshold, image.dtype)
-    solarized = tf.where(image < threshold_t, image, max_value_t - image)
 
-    return tf.cond(should_solarize, lambda: solarized, lambda: image)
+    def apply_solarize():
+        return tf.where(image < threshold_t, image, max_value_t - image)
+
+    if isinstance(p, (int, float)) and p >= 1.0:
+        solarized = apply_solarize()
+        return tf.cond(should_solarize, lambda: solarized, lambda: image)
+    return tf.cond(should_solarize, apply_solarize, lambda: image)
 
 
 @register_augment_strategy("color_jitter")

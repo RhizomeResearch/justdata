@@ -7,7 +7,8 @@ from justdata.vision.augmentations.composed import (
     create_local_crops,
 )
 from justdata.vision.augmentations.mixing import (
-    mixup_cutmix,
+    _mixup_cutmix,
+    mixup_cutmix as mixup_cutmix,
     random_erasing,
 )
 from justdata.vision.augmentations.registry import (
@@ -191,8 +192,12 @@ def make_late_augmentations(
             tf.shape(images)[1] <= 4,
             tf.shape(images)[-1] > 4,
         )
+        # Erasing operates on HWC images; mixing can keep either input layout.
+        mix_in_nchw = tf.logical_and(input_is_nchw, random_erasing_prob <= 0)
         images = tf.cond(
-            input_is_nchw, lambda: tf.transpose(images, [0, 2, 3, 1]), lambda: images
+            tf.logical_and(input_is_nchw, tf.logical_not(mix_in_nchw)),
+            lambda: tf.transpose(images, [0, 2, 3, 1]),
+            lambda: images,
         )
 
         # Random erasing is applied per-sample before batch mixing (tensor domain)
@@ -202,22 +207,30 @@ def make_late_augmentations(
         if mixup_alpha > 0 or cutmix_alpha > 0:
             if num_classes is None:
                 raise ValueError("`num_classes` must be provided for mixup/cutmix.")
-            images, labels = mixup_cutmix(
-                images=images,
-                labels=labels,
-                seed=seeds[1],
-                num_classes=num_classes,
-                mixup_alpha=mixup_alpha,
-                cutmix_alpha=cutmix_alpha,
-                prob=prob,
-                switch_prob=switch_prob,
-                label_smoothing=label_smoothing,
-                bce_target=bce_target,
-                label_mode=label_mode,
+
+            def mix_images(channels_first):
+                return _mixup_cutmix(
+                    images=images,
+                    labels=labels,
+                    seed=seeds[1],
+                    num_classes=num_classes,
+                    mixup_alpha=mixup_alpha,
+                    cutmix_alpha=cutmix_alpha,
+                    prob=prob,
+                    switch_prob=switch_prob,
+                    label_smoothing=label_smoothing,
+                    bce_target=bce_target,
+                    label_mode=label_mode,
+                    channels_first=channels_first,
+                )
+
+            images, labels = tf.cond(
+                mix_in_nchw, lambda: mix_images(True), lambda: mix_images(False)
             )
 
         should_permute = tf.constant(permute_image)
         should_permute = tf.logical_or(should_permute, input_is_nchw)
+        should_permute = tf.logical_and(should_permute, tf.logical_not(mix_in_nchw))
         images = tf.cond(should_permute, lambda: nhwc_to_nchw(images), lambda: images)
 
         result = {k: v for k, v in sample.items() if k not in ("image", "label")}

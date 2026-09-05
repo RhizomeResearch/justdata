@@ -157,3 +157,39 @@ def test_compute_feature_stats_merges_once_per_feature_chunk(monkeypatch):
     )
 
     assert merge_calls == 1
+
+
+@pytest.mark.parametrize(
+    "layout", ["contiguous", "strided", "fortran", "empty", "constant"]
+)
+def test_statistics_exact_parity_and_input_ownership(monkeypatch, layout):
+    features = np.random.default_rng(12).normal(size=(60, 8)) + 1e6
+    if layout == "strided":
+        features = features[::3, ::2]
+    elif layout == "fortran":
+        features = np.asfortranarray(features)
+    elif layout == "empty":
+        features = features[:0]
+    elif layout == "constant":
+        features.fill(7.0)
+    before = features.tobytes()
+    features.flags.writeable = False
+
+    def reference(observations):
+        count = int(observations.shape[0])
+        if count == 0:
+            return 0, None, None
+        mean = np.mean(observations, axis=0, dtype=np.float64)
+        centered = observations - mean
+        m2 = np.sum(centered * centered, axis=0, dtype=np.float64)
+        return count, mean, m2
+
+    dataset = [{"inputs": features[:30]}, {"inputs": features[30:]}]
+    result = compute_feature_stats(dataset, groupby=None)["all"]
+    with monkeypatch.context() as patch:
+        patch.setattr(core_stats, "_partial_state", reference)
+        expected = compute_feature_stats(dataset, groupby=None)["all"]
+    for key in ("mean", "std"):
+        assert result[key].numpy().tobytes() == expected[key].numpy().tobytes()
+    assert result["count"] == expected["count"]
+    assert features.tobytes() == before

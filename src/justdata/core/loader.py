@@ -238,7 +238,9 @@ def load_ds(
             ``finalize_fn``, ``finalize_epoch``, ``postprocess_fn``, and ``rng``.
             ``finalize_epoch(ds, seed=...)`` applies the complete remaining pipeline
             with addressable stateless augmentation seeds
-            and a fixed shuffle for that epoch.
+            and a fixed shuffle for that epoch. Its optional
+            ``augment_is_stateless=True`` permits parallel standard augmentation
+            when the callback depends only on the sample and supplied seed.
         deterministic: If false, sacrifices determinism for performance.
         as_numpy: If True, returns an iterator yielding NumPy arrays.
         metadata_mode: Controls metadata in output batches.
@@ -254,7 +256,8 @@ def load_ds(
             it may only reference fields exposed by the source loader.
         map_parallel_calls: Parallel-call count for loader-owned dataset maps.
             When omitted, uses ``tf.data.AUTOTUNE``.
-            Deterministic stochastic augmentation remains serial.
+            Deterministic stochastic augmentation remains serial unless explicitly
+            declared stateless in ``finalize_epoch``.
         private_threadpool_size: Optional private tf.data thread-pool size.
         max_intra_op_parallelism: Optional maximum intra-op parallelism
             for the dataset pipeline.
@@ -412,7 +415,15 @@ def load_ds(
         *,
         seed: int,
         as_numpy: bool | None = None,
+        augment_is_stateless: bool = False,
     ):
+        """Build an addressable epoch with optional stateless augmentation parallelism.
+
+        ``augment_is_stateless=True`` asserts that ``augment_fn`` depends only
+        on its sample and supplied seed, without stateful RNG or side effects.
+        It uses the loader's map parallelism while retaining deterministic output
+        order when requested. The default preserves serial callback execution.
+        """
         if cache_model_inputs and apply_augmentation:
             raise ValueError(
                 "finalize_epoch does not support cache_model_inputs when "
@@ -434,7 +445,9 @@ def load_ds(
                     sample,
                     seed=_seed_for_index(augment_seed, index),
                 ),
-                num_parallel_calls=1 if deterministic else parallel_calls,
+                num_parallel_calls=(
+                    1 if deterministic and not augment_is_stateless else parallel_calls
+                ),
                 deterministic=deterministic,
             )
 

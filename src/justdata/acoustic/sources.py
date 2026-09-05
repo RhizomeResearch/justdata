@@ -28,7 +28,11 @@ from justdata.acoustic.schema import (
     START_TIME,
     WAVEFORM,
 )
-from justdata.core.sources import register_source_loader, source_cache_dir
+from justdata.core.sources import (
+    _dataset_from_materialized_records,
+    register_source_loader,
+    source_cache_dir,
+)
 
 
 _LOCAL_REQUIRED_COLUMNS = {
@@ -184,7 +188,7 @@ def _records_to_dataset(records: list[dict]) -> tf.data.Dataset:
                 item[LABEL] = np.int64(item[LABEL])
             yield item
 
-    ds = tf.data.Dataset.from_generator(
+    ds = _dataset_from_materialized_records(
         gen,
         output_signature={
             PATH: tf.TensorSpec(shape=(), dtype=tf.string),
@@ -346,7 +350,7 @@ def _as_waveform_np(audio_value, *, decode_mode: str, fallback_sample_rate: int 
     tensor = tf.convert_to_tensor(array)
     tensor = to_float32_waveform(tensor, input_dtype=tensor.dtype)
     tensor = standardize_waveform_layout(tensor, layout_hint=layout_hint)
-    return tensor.numpy().astype(np.float32), np.int32(sample_rate), path
+    return tensor.numpy().astype(np.float32, copy=False), np.int32(sample_rate), path
 
 
 @register_source_loader("hf_audio:")

@@ -32,7 +32,10 @@ from justdata.core.adapters import register_adapter
 from justdata.core.filters import metadata_filter_predicate
 from justdata.core.loader import load_ds
 from justdata.core.registry import get_pipeline
-from justdata.core.sources import register_source_loader
+from justdata.core.sources import (
+    _dataset_from_materialized_records,
+    register_source_loader,
+)
 
 
 class SplitLeakageError(ValueError):
@@ -626,7 +629,7 @@ def _records_to_dataset(records: list[dict]) -> tf.data.Dataset:
     if has_label:
         signature[LABEL] = tf.TensorSpec(shape=(), dtype=tf.int64)
 
-    ds = tf.data.Dataset.from_generator(gen, output_signature=signature)
+    ds = _dataset_from_materialized_records(gen, output_signature=signature)
     return ds.apply(tf.data.experimental.assert_cardinality(len(records)))
 
 

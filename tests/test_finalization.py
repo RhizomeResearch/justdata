@@ -229,3 +229,101 @@ def test_sidecar_joins_survive_shuffle_model_cache_and_reiteration(tmp_path):
         12: {"source": "b"},
         13: {"source": "c"},
     }
+
+
+@pytest.mark.parametrize("metadata_mode", ["numeric_only", "none"])
+@pytest.mark.parametrize("cache_model_inputs", [False, True])
+def test_metadata_fusion_preserves_postprocess_outputs_and_cache(
+    metadata_mode, cache_model_inputs
+):
+    calls = Mock()
+
+    def postprocess(sample, num_classes=None):
+        def record(source):
+            calls()
+            return source
+
+        source = tf.py_function(record, [sample["metadata"]["source"]], Tout=tf.string)
+        source.set_shape([])
+        return sample | {
+            "x": sample["x"] * 2,
+            "metadata": {"id": sample["metadata"]["example_id"], "source": source},
+        }
+
+    ds, n_batches = finalize_dataset(
+        _dataset(),
+        postprocess_fn=postprocess,
+        num_classes=None,
+        batch_size=2,
+        metadata_mode=metadata_mode,
+        cache_model_inputs=cache_model_inputs,
+    )
+    assert n_batches == 2
+    for _ in range(2):
+        first, final = list(ds)
+        np.testing.assert_array_equal(first["x"], [2, 4])
+        np.testing.assert_array_equal(final["x"], [6, 0])
+        np.testing.assert_array_equal(final["padding_mask"], [True, False])
+        if metadata_mode == "numeric_only":
+            assert set(first["metadata"]) == {"id"}
+            np.testing.assert_array_equal(final["metadata"]["id"], [13, 0])
+        else:
+            assert "metadata" not in first
+    assert calls.call_count == (3 if cache_model_inputs else 6)
+
+
+@pytest.mark.parametrize("metadata_mode", ["numeric_only", "none"])
+def test_metadata_fusion_preserves_errors_in_discarded_outputs(metadata_mode):
+    def postprocess(sample, num_classes=None):
+        # This tensor is pure, but evaluating it must still raise before stripping.
+        invalid = tf.strings.as_string(
+            tf.strings.to_number(sample["metadata"]["source"])
+        )
+        return sample | {"metadata": {"invalid": invalid}}
+
+    ds, _ = finalize_dataset(
+        _dataset(),
+        postprocess_fn=postprocess,
+        num_classes=None,
+        batch_size=2,
+        metadata_mode=metadata_mode,
+    )
+    with pytest.raises(tf.errors.InvalidArgumentError):
+        list(ds)
+
+
+@pytest.mark.parametrize("metadata_mode", ["numeric_only", "none"])
+def test_metadata_projection_stays_after_postprocess_transform(metadata_mode):
+    def after_postprocess(dataset):
+        return dataset.map(
+            lambda sample: (
+                sample
+                | {"source_length": tf.strings.length(sample["metadata"]["source"])}
+            )
+        )
+
+    ds, _ = finalize_dataset(
+        _dataset(),
+        postprocess_fn=_identity,
+        post_postprocess_transform=after_postprocess,
+        num_classes=None,
+        batch_size=2,
+        metadata_mode=metadata_mode,
+    )
+    np.testing.assert_array_equal(next(iter(ds))["source_length"], [1, 1])
+
+
+@pytest.mark.parametrize("metadata_mode", ["numeric_only", "none"])
+def test_passthrough_metadata_projection_avoids_an_extra_map(metadata_mode):
+    kwargs = dict(
+        postprocess_fn=_identity, num_classes=None, batch_size=2, prefetch=False
+    )
+    full, _ = finalize_dataset(_dataset(), metadata_mode="full", **kwargs)
+    projected, _ = finalize_dataset(_dataset(), metadata_mode=metadata_mode, **kwargs)
+
+    def map_count(dataset):
+        graph = tf.compat.v1.GraphDef()
+        graph.ParseFromString(dataset._as_serialized_graph().numpy())
+        return sum(node.op == "ParallelMapDatasetV2" for node in graph.node)
+
+    assert map_count(projected) == map_count(full)

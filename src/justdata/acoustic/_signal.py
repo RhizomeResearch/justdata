@@ -33,6 +33,9 @@ def _convolve_channels(
         full = tf.nn.conv1d(padded, kernel, stride=1, padding="VALID")[0, :, 0]
         return _fit_length(full[start:, tf.newaxis], time)[:, 0]
 
+    if audio.shape.rank == 2 and audio.shape[1] == 1:
+        return convolve_channel(audio[:, 0])[:, tf.newaxis]
+
     channels_first = tf.transpose(audio, [1, 0])
     convolved = tf.map_fn(
         convolve_channel,

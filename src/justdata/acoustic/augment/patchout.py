@@ -39,15 +39,34 @@ def _drop_axis(
     count: int | tf.Tensor,
     seed: tf.Tensor,
 ) -> tuple[tf.Tensor, tf.Tensor]:
+    static_count = tf.get_static_value(count)
+    static_size = x.shape[axis]
     count = tf.cast(count, tf.int32)
     size = tf.shape(x)[axis]
     count = tf.minimum(tf.maximum(count, 0), size)
     dropped = tf.sort(_stateless_shuffled_range(size, seed)[:count])
-    positions = tf.range(size)
-    keep_mask = ~tf.reduce_any(
-        tf.equal(positions[:, tf.newaxis], dropped[tf.newaxis, :]),
-        axis=1,
-    )
+
+    def compare_positions():
+        positions = tf.range(size)
+        return ~tf.reduce_any(
+            tf.equal(positions[:, tf.newaxis], dropped[tf.newaxis, :]),
+            axis=1,
+        )
+
+    def scatter_positions():
+        return tf.tensor_scatter_nd_update(
+            tf.ones([size], tf.bool),
+            dropped[:, tf.newaxis],
+            tf.zeros(tf.shape(dropped), tf.bool),
+        )
+
+    # Keep the cheaper small-grid path, but bound the pairwise mask to 64 KiB.
+    if static_size is not None and static_count is not None:
+        comparisons = static_size * min(max(int(static_count), 0), static_size)
+        keep_mask = scatter_positions() if comparisons > 65536 else compare_positions()
+    else:
+        comparisons = tf.cast(size, tf.int64) * tf.cast(count, tf.int64)
+        keep_mask = tf.cond(comparisons > 65536, scatter_positions, compare_positions)
     keep = tf.reshape(tf.where(keep_mask), [-1])
     return tf.gather(x, keep, axis=axis), dropped
 

@@ -23,6 +23,37 @@ def mixup_cutmix(
     bce_target: bool = False,
     label_mode: LabelMixMode = "single_label",
 ) -> Tuple[tf.Tensor, tf.Tensor]:
+    return _mixup_cutmix(
+        images,
+        labels,
+        seed,
+        num_classes,
+        mixup_alpha=mixup_alpha,
+        cutmix_alpha=cutmix_alpha,
+        prob=prob,
+        switch_prob=switch_prob,
+        label_smoothing=label_smoothing,
+        bce_target=bce_target,
+        label_mode=label_mode,
+    )
+
+
+@tf.function
+def _mixup_cutmix(
+    images: tf.Tensor,
+    labels: tf.Tensor,
+    seed: tf.Tensor,
+    num_classes: int,
+    mixup_alpha: float = 0.8,
+    cutmix_alpha: float = 1.0,
+    prob: float = 1.0,
+    switch_prob: float = 0.5,
+    label_smoothing: float = 0.1,
+    bce_target: bool = False,
+    label_mode: LabelMixMode = "single_label",
+    *,
+    channels_first: bool = False,
+) -> Tuple[tf.Tensor, tf.Tensor]:
     if mixup_alpha > 0 and cutmix_alpha == 0:
         switch_prob = -1.0
     elif mixup_alpha == 0 and cutmix_alpha > 0:
@@ -76,8 +107,8 @@ def mixup_cutmix(
 
     def _cutmix(imgs, lbls):
         lam = _sample_from_beta(cutmix_alpha, [batch_size], seeds[2])
-        image_height = tf.cast(tf.shape(imgs)[1], tf.float32)
-        image_width = tf.cast(tf.shape(imgs)[2], tf.float32)
+        image_height = tf.cast(tf.shape(imgs)[2 if channels_first else 1], tf.float32)
+        image_width = tf.cast(tf.shape(imgs)[3 if channels_first else 2], tf.float32)
 
         ratio = tf.math.sqrt(1 - lam)
         cut_height = tf.cast(ratio * image_height, tf.int32)
@@ -126,7 +157,10 @@ def mixup_cutmix(
             dtype=tf.float32,
         )
 
-        mask = mask[..., tf.newaxis]
+        if channels_first:
+            mask = mask[:, tf.newaxis, :, :]
+        else:
+            mask = mask[..., tf.newaxis]
         imgs_f = tf.cast(imgs, tf.float32)
         shuffled_f = tf.cast(gather_shuffled(imgs), tf.float32)
         mixed_imgs = mask * imgs_f + (1.0 - mask) * shuffled_f
@@ -217,7 +251,7 @@ def random_erasing(
                 seed=s_parts[4],
             )
 
-            mask = tf.ones((h, w, tf.shape(img)[-1]), dtype=img.dtype)
+            mask = tf.ones((h, w, 1), dtype=img.dtype)
             paddings = [
                 [y, tf.cast(height, tf.int32) - (y + h)],
                 [x, tf.cast(width, tf.int32) - (x + w)],

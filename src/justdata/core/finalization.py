@@ -132,9 +132,38 @@ def finalize_dataset(
 
     map_deterministic = deterministic if is_training else None
 
+    may_fuse_metadata = (
+        metadata_mode != "full"
+        and post_postprocess_transform is None
+        and sidecar_metadata_path is None
+    )
+    # Dataset.map traces synchronously to establish its output structure.
+    metadata_fused = [False]
+
+    def postprocess(sample):
+        result = postprocess_fn(sample, num_classes=num_classes)
+        if may_fuse_metadata:
+            projected = apply_metadata_mode(result, metadata_mode)
+            live_values = {
+                id(value)
+                for value in tf.nest.flatten(
+                    (sample, projected), expand_composites=True
+                )
+            }
+            # Computed discarded outputs need their original map boundary:
+            # Grappler can prune even control dependencies on pure operations,
+            # suppressing errors such as invalid string-to-number conversions.
+            metadata_fused[0] = all(
+                id(value) in live_values
+                for value in tf.nest.flatten(result, expand_composites=True)
+            )
+            if metadata_fused[0]:
+                return projected
+        return result
+
     def apply_postprocessing(dataset):
         dataset = dataset.map(
-            lambda sample: postprocess_fn(sample, num_classes=num_classes),
+            postprocess,
             num_parallel_calls=parallel_calls,
             deterministic=map_deterministic,
         )
@@ -149,7 +178,7 @@ def finalize_dataset(
                 sidecar_metadata_path,
                 map_parallel_calls=parallel_calls,
             )
-        if metadata_mode != "full":
+        if metadata_mode != "full" and not metadata_fused[0]:
             dataset = dataset.map(
                 lambda sample: apply_metadata_mode(sample, metadata_mode),
                 num_parallel_calls=parallel_calls,

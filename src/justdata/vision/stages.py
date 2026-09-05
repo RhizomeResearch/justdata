@@ -135,7 +135,10 @@ def apply_eval_views(
             box[3],
         )
 
-    crops = tf.map_fn(_crop, crop_boxes, fn_output_signature=image.dtype)
+    if config.mode != "multi_crop" or config.num_crops == 1:
+        crops = _crop(crop_boxes[0])[tf.newaxis, ...]
+    else:
+        crops = tf.map_fn(_crop, crop_boxes, fn_output_signature=image.dtype)
     flip = tf.zeros([tf.shape(crops)[0]], dtype=tf.bool)
 
     if config.include_flip:

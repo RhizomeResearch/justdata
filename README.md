@@ -888,6 +888,25 @@ dataset. With `deterministic=True`, repeating a seed therefore reproduces the
 epoch independently of previous iterator creation or consumption, including
 when the returned TensorFlow dataset is iterated more than once.
 
+For an augmentation callback that depends only on its input sample and supplied
+seed, pass `augment_is_stateless=True` to `finalize_epoch` to run standard
+augmentation concurrently using `map_parallel_calls` (or `AUTOTUNE`). With
+`deterministic=True`, sample order and indexed RNG seeds remain unchanged:
+
+```python
+train_iterator, n_batches = tools["finalize_epoch"](
+    prepared_train,
+    seed=derive_epoch_seed(epoch),
+    augment_is_stateless=True,
+    as_numpy=True,
+)
+```
+
+This flag is the caller's assertion that the augmentation callback uses no
+stateful RNG, mutable state, or side effects. It defaults to `False`, preserving
+serial standard augmentation for deterministic epochs. It does not change the
+one-shot `load_ds` or `finalize_fn` seed scheduling.
+
 With `cache_dataset=False`, source samples, preprocessing, and filters still run
 on every iteration; only loader and graph preparation are reused. A fresh NumPy
 iterator is created by each `finalize_epoch(..., as_numpy=True)` call.
@@ -1041,6 +1060,8 @@ uv run pytest tests/path/to/test_file.py::test_name  # run a single test
 ```
 
 The project targets Python 3.12 (see `.python-version`). `LD_LIBRARY_PATH` is configured by devenv for native libraries.
+
+See [Performance checks](benchmarks/README.md) for reproducible CPU benchmarks and the performance audit results.
 
 GitLab runs `sh tests/doctor/test_lint.sh` in a pinned Debian-based uv image. This installs only the `lint` dependency
 group and provides the standard Linux dynamic loader required by Ruff's PyPI executable, which the Nix image lacks.

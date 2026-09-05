@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import tensorflow as tf
 
-from justdata.acoustic.sources import load_huggingface_audio_splits
+from justdata.acoustic.sources import _as_waveform_np, load_huggingface_audio_splits
 
 
 class FakeHFDataset:
@@ -37,6 +37,37 @@ class FakeAudioDecoder:
         if key == "sampling_rate":
             return self.sampling_rate
         raise KeyError(key)
+
+
+@pytest.mark.parametrize(
+    "dtype", [np.int16, np.int32, np.uint8, np.float32, np.float64]
+)
+def test_waveform_numpy_conversion_keeps_values_and_ownership(dtype):
+    from justdata.acoustic.adapters import (
+        standardize_waveform_layout,
+        to_float32_waveform,
+    )
+
+    original = np.arange(24, dtype=dtype).reshape(2, 12)
+    value = FakeAudioDecoder(original, 16000)
+    result, sample_rate, path = _as_waveform_np(
+        value, decode_mode="hf_native", fallback_sample_rate=None
+    )
+    tensor = tf.convert_to_tensor(original)
+    expected = (
+        standardize_waveform_layout(
+            to_float32_waveform(tensor, input_dtype=tensor.dtype), layout_hint="ct"
+        )
+        .numpy()
+        .astype(np.float32)
+    )
+    assert result.dtype == np.float32
+    assert result.shape == (12, 2)
+    assert result.tobytes() == expected.tobytes()
+    assert sample_rate == 16000
+    assert path is None
+    result[0, 0] = -99.0
+    assert original[0, 0] == 0
 
 
 def _wav_bytes(samples, sample_rate=8000):

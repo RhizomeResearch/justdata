@@ -159,7 +159,8 @@ def _partial_state(
 
     mean = np.mean(observations, axis=0, dtype=np.float64)
     centered = observations - mean
-    m2 = np.sum(centered * centered, axis=0, dtype=np.float64)
+    np.multiply(centered, centered, out=centered)
+    m2 = np.sum(centered, axis=0, dtype=np.float64)
     return count, mean, m2
 
 

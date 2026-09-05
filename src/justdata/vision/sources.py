@@ -21,7 +21,11 @@ import numpy as np
 import tensorflow as tf
 from loguru import logger
 
-from justdata.core.sources import register_source_loader, source_cache_dir
+from justdata.core.sources import (
+    _dataset_from_materialized_records,
+    register_source_loader,
+    source_cache_dir,
+)
 
 _ZENODO_PREFIX = "zenodo:"
 _ZENODO_QUERY_PARAMS = {"file"}
@@ -676,7 +680,7 @@ def _records_to_vision_dataset(records: list[dict[str, Any]]) -> tf.data.Dataset
     def gen():
         yield from records
 
-    ds = tf.data.Dataset.from_generator(
+    ds = _dataset_from_materialized_records(
         gen,
         output_signature={
             "_path": tf.TensorSpec(shape=(), dtype=tf.string),

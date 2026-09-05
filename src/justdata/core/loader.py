@@ -30,6 +30,7 @@ def fetch_ds(
     data_dir: Union[None, str, os.PathLike] = None,
     *,
     source_filter_fn=None,
+    map_parallel_calls: int | None = None,
 ) -> Optional[tf.data.Dataset]:
     """
     Loads and concatenates multiple TensorFlow Datasets and their splits.
@@ -79,6 +80,13 @@ def fetch_ds(
           and that dataset is skipped. The function will attempt to proceed
           with other dataset names.
     """
+    if map_parallel_calls is not None and map_parallel_calls <= 0:
+        raise ValueError("map_parallel_calls must be positive when provided")
+
+    parallel_calls = (
+        tf.data.AUTOTUNE if map_parallel_calls is None else map_parallel_calls
+    )
+
     if not dataset_names:
         logger.info("Empty 'dataset_names' list provided. Nothing to load.")
         return None
@@ -138,7 +146,8 @@ def fetch_ds(
                 concatenated_splits = concatenated_splits.filter(source_filter_fn)
             adapter = get_adapter(dataset_name)
             concatenated_splits = concatenated_splits.map(
-                adapter, num_parallel_calls=tf.data.AUTOTUNE
+                adapter,
+                num_parallel_calls=parallel_calls,
             )
             datasets_with_splits.append(concatenated_splits)
 
@@ -180,6 +189,9 @@ def load_ds(
     filter_fn=None,
     *,
     source_filter_fn=None,
+    map_parallel_calls: int | None = None,
+    private_threadpool_size: int | None = None,
+    max_intra_op_parallelism: int | None = None,
 ):
     """
     Loads, preprocesses, and batches HuggingFace or TensorFlow Datasets.
@@ -193,12 +205,12 @@ def load_ds(
             - If Dict[str, List[str]] (e.g., {"cifar10": ["train"]}): Specifies
               splits per dataset. See `fetch_ds` for details.
         dataset_type: Type of dataset, typically "train", "validation", or "test".
-                      Affects caching, shuffling, and augmentation.
+            Affects caching, shuffling, and augmentation.
         batch_size: The batch size for the output dataset.
         seed: Random seed for shuffling and augmentations.
         num_classes: Number of classes (needed for one-hot encoding/mixup).
         pipeline: A `DataPipeline` object from `justdata.core.registry`. If provided,
-                  it builds the necessary functions based on `dataset_type`.
+            it builds the necessary functions based on `dataset_type`.
         preprocess_fn: Preprocessing function (fallback if `pipeline` is None).
         augment_fn: Augmentation function (fallback if `pipeline` is None).
         late_augment_fn: Late augmentation function (fallback if `pipeline` is None).
@@ -220,26 +232,32 @@ def load_ds(
         drop_remainder: Choose to drop or pad batches without the correct size,
         data_dir: Optional path to the TFDS data directory.
         return_raw_ds: If True, returns the dataset immediately after
-                       preprocessing (and caching) but BEFORE standard
-                       augmentation, postprocessing, or batching.
-                       Returns (ds, tools_dict) where tools_dict contains
-                       ``finalize_fn``, ``finalize_epoch``, ``postprocess_fn``,
-                       and ``rng``. ``finalize_epoch(ds, seed=...)`` applies the
-                       complete remaining pipeline with addressable stateless
-                       augmentation seeds and a fixed shuffle for that epoch.
+            preprocessing (and caching) but BEFORE standard
+            augmentation, postprocessing, or batching.
+            Returns (ds, tools_dict) where tools_dict contains
+            ``finalize_fn``, ``finalize_epoch``, ``postprocess_fn``, and ``rng``.
+            ``finalize_epoch(ds, seed=...)`` applies the complete remaining pipeline
+            with addressable stateless augmentation seeds
+            and a fixed shuffle for that epoch.
         deterministic: If false, sacrifices determinism for performance.
         as_numpy: If True, returns an iterator yielding NumPy arrays.
-        metadata_mode: Controls metadata in output batches. When omitted, uses
-                       ``pipeline.kwargs["metadata_mode"]`` if present, then
-                       defaults to ``full``. ``numeric_only`` drops strings
-                       from batches and ``none`` removes metadata.
-        sidecar_metadata_path: JSONL path for string metadata when
-                               ``metadata_mode="numeric_only"``.
+        metadata_mode: Controls metadata in output batches.
+            When omitted, uses ``pipeline.kwargs["metadata_mode"]`` if present,
+            then defaults to ``full``.
+            ``numeric_only`` drops strings from batches and ``none`` removes metadata.
+        sidecar_metadata_path: JSONL path for string metadata
+            when ``metadata_mode="numeric_only"``.
         filter_fn: Optional predicate applied after preprocessing and caching,
-                   before augmentation, postprocessing, and batching.
-        source_filter_fn: Optional predicate applied to raw source records before
-                          adapter mapping. Unlike ``filter_fn``, it may reference
-                          only fields exposed by the source loader.
+            before augmentation, postprocessing, and batching.
+        source_filter_fn: Optional predicate applied to raw source records
+            before adapter mapping. Unlike ``filter_fn``,
+            it may only reference fields exposed by the source loader.
+        map_parallel_calls: Parallel-call count for loader-owned dataset maps.
+            When omitted, uses ``tf.data.AUTOTUNE``.
+            Deterministic stochastic augmentation remains serial.
+        private_threadpool_size: Optional private tf.data thread-pool size.
+        max_intra_op_parallelism: Optional maximum intra-op parallelism
+            for the dataset pipeline.
     Returns:
         ``(dataset, n_batches)`` where ``dataset`` is a batched
         ``tf.data.Dataset`` or NumPy iterator and ``n_batches`` is an integer
@@ -261,6 +279,14 @@ def load_ds(
         raise ValueError(
             "metadata_mode must be one of 'full', 'numeric_only', or 'none'."
         )
+
+    for name, value in (
+        ("map_parallel_calls", map_parallel_calls),
+        ("private_threadpool_size", private_threadpool_size),
+        ("max_intra_op_parallelism", max_intra_op_parallelism),
+    ):
+        if value is not None and value <= 0:
+            raise ValueError(f"{name} must be positive when provided")
 
     dataset_names: list[str]
     if isinstance(dataset_names_arg, str):
@@ -302,21 +328,29 @@ def load_ds(
                 "both cache stages are enabled."
             )
 
-    if source_filter_fn is None:
-        ds = fetch_ds(dataset_names, splits, data_dir)
-    else:
-        ds = fetch_ds(
-            dataset_names,
-            splits,
-            data_dir,
-            source_filter_fn=source_filter_fn,
-        )
+    ds = fetch_ds(
+        dataset_names,
+        splits,
+        data_dir,
+        source_filter_fn=source_filter_fn,
+        map_parallel_calls=map_parallel_calls,
+    )
 
     if ds is None:
         raise ValueError(
             "Dataset loading failed (fetch_ds returned None). "
             "Check logs for details on dataset names, splits, or data issues."
         )
+
+    options = tf.data.Options()
+
+    if private_threadpool_size is not None:
+        options.threading.private_threadpool_size = private_threadpool_size
+
+    if max_intra_op_parallelism is not None:
+        options.threading.max_intra_op_parallelism = max_intra_op_parallelism
+
+    ds = ds.with_options(options)
 
     if pipeline is not None:
         preprocess_fn, augment_fn, late_augment_fn, postprocess_fn = pipeline.build(
@@ -327,9 +361,13 @@ def load_ds(
         seed = rng.make_seeds(1)[:, 0]
         return augment_fn(sample, seed=seed)
 
+    parallel_calls = (
+        tf.data.AUTOTUNE if map_parallel_calls is None else map_parallel_calls
+    )
+
     ds = ds.map(
         preprocess_fn,
-        num_parallel_calls=tf.data.AUTOTUNE,
+        num_parallel_calls=parallel_calls,
         deterministic=deterministic if is_training else None,
     )
 
@@ -364,6 +402,7 @@ def load_ds(
         shuffle_buffer=shuffle_buffer if is_training else None,
         shuffle_seed=seed,
         as_numpy=as_numpy,
+        map_parallel_calls=map_parallel_calls,
     )
 
     default_as_numpy = as_numpy
@@ -395,7 +434,7 @@ def load_ds(
                     sample,
                     seed=_seed_for_index(augment_seed, index),
                 ),
-                num_parallel_calls=1 if deterministic else tf.data.AUTOTUNE,
+                num_parallel_calls=1 if deterministic else parallel_calls,
                 deterministic=deterministic,
             )
 
@@ -423,7 +462,7 @@ def load_ds(
     if apply_augmentation:
         ds = ds.map(
             seeded_augment,
-            num_parallel_calls=1 if deterministic else tf.data.AUTOTUNE,
+            num_parallel_calls=1 if deterministic else parallel_calls,
             deterministic=deterministic,
         )
 

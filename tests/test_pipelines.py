@@ -14,6 +14,7 @@ import tensorflow as tf
 
 from justdata.core.registry import get_pipeline_for_dataset
 from justdata.vision.augmentations import geometric
+from justdata.vision.augmentations.auto import RAND_AUGMENT_OPS, rand_augment
 from justdata.vision.augmentations.color import color_jitter
 from justdata.vision.augmentations.composed import (
     create_global_crops,
@@ -96,6 +97,27 @@ class TestAutoAugmentStrategies:
         aug_fn = get_augment_strategy("rand_augment")
         result = aug_fn(cifar_image, seed=seed)
         assert result.dtype == tf.uint8
+
+    @pytest.mark.parametrize(
+        "operation",
+        ["Rotate", "TranslateX", "TranslateY", "ShearX", "ShearY"],
+    )
+    def test_randaugment_geometric_ops_use_constant_fill(self, operation):
+        image = tf.fill((15, 15, 3), tf.constant(7, dtype=tf.uint8))
+        exclude_ops = [op for op in RAND_AUGMENT_OPS if op != operation]
+
+        result = rand_augment(
+            image,
+            seed=tf.constant([3, 5]),
+            num_layers=1,
+            magnitude=30.0,
+            translate_const=4,
+            exclude_ops=exclude_ops,
+        )
+
+        assert result.shape == image.shape
+        assert result.dtype == image.dtype
+        np.testing.assert_array_equal(np.unique(result.numpy()), [7, 128])
 
     def test_trivial_augment_shape_preserved(self, cifar_image, seed):
         aug_fn = get_augment_strategy("trivial_augment")

@@ -216,6 +216,61 @@ def test_fetch_ds_source_filter_is_optional(monkeypatch):
     assert [int(sample["x"].numpy()) for sample in ds] == [1, 2]
 
 
+def test_load_ds_applies_execution_controls():
+    with patch(
+        "justdata.core.loader.fetch_ds",
+        return_value=_range_dataset(4),
+    ):
+        ds, n_batches = load_ds(
+            dataset_names_arg="mock",
+            splits_arg="validation",
+            dataset_type="validation",
+            batch_size=2,
+            seed=0,
+            preprocess_fn=_identity,
+            augment_fn=_identity,
+            late_augment_fn=_identity,
+            postprocess_fn=_identity,
+            map_parallel_calls=2,
+            private_threadpool_size=3,
+            max_intra_op_parallelism=1,
+        )
+
+    options = ds.options()
+
+    assert n_batches == 2
+    assert options.threading.private_threadpool_size == 3
+    assert options.threading.max_intra_op_parallelism == 1
+    np.testing.assert_array_equal(
+        next(iter(ds))["x"].numpy(),
+        [0, 1],
+    )
+
+
+@pytest.mark.parametrize(
+    "keyword",
+    [
+        "map_parallel_calls",
+        "private_threadpool_size",
+        "max_intra_op_parallelism",
+    ],
+)
+def test_load_ds_rejects_nonpositive_execution_controls(keyword):
+    with pytest.raises(ValueError, match=keyword):
+        load_ds(
+            dataset_names_arg="mock",
+            splits_arg="train",
+            dataset_type="train",
+            batch_size=2,
+            seed=0,
+            preprocess_fn=_identity,
+            augment_fn=_identity,
+            late_augment_fn=_identity,
+            postprocess_fn=_identity,
+            **{keyword: 0},
+        )
+
+
 def _counting_postprocess(counter):
     def postprocess(sample, num_classes=None):
         del num_classes
@@ -333,7 +388,13 @@ def test_finalize_epoch_reuses_preparation_and_rereads_uncached_source():
         epoch_ds, _n = tools["finalize_epoch"](raw_ds, seed=epoch_seed)
         list(epoch_ds)
 
-    fetch.assert_called_once_with(["mock"], ["train"], None)
+    fetch.assert_called_once_with(
+        ["mock"],
+        ["train"],
+        None,
+        source_filter_fn=None,
+        map_parallel_calls=None,
+    )
     assert counter == {"source": 6, "preprocess": 6, "build": 1}
 
 
@@ -467,7 +528,13 @@ def test_loader_disk_cache_is_separate_from_source_cache(tmp_path):
 
     assert _iterate_x_twice(ds) == [[0, 2, 4], [0, 2, 4]]
     assert counter == {"source": 3, "preprocess": 3}
-    fetch.assert_called_once_with(["mock"], ["validation"], source_cache_root)
+    fetch.assert_called_once_with(
+        ["mock"],
+        ["validation"],
+        source_cache_root,
+        source_filter_fn=None,
+        map_parallel_calls=None,
+    )
     assert list(decoded_cache_path.parent.glob("validation*"))
     assert not source_cache_root.exists()
 

@@ -27,7 +27,6 @@ from justdata.vision.utils import (
     _translate,
     _translate_x,
     _translate_y,
-    _wrapped_rotate,
 )
 
 # 31-bin scale: magnitude m ∈ {0, …, 30}, B = max index = 30
@@ -100,7 +99,7 @@ def _apply_segmentation_geometric_op(
                 transforms=transforms,
                 interpolation=interpolation,
                 fill_mode="CONSTANT",
-                fill_value=float(replace),
+                fill_value=tf.cast(replace, tf.float32),
             )
         raise ValueError(f"Unsupported segmentation geometric operation: {name}")
 
@@ -258,7 +257,7 @@ def rand_augment(
         "AutoContrast": _autocontrast,
         "Equalize": _equalize,
         "Invert": _invert,
-        "Rotate": _wrapped_rotate,
+        "Rotate": _rotate,
         "Posterize": _posterize,
         "Solarize": _solarize_val,
         "SolarizeAdd": _solarize_add,

@@ -19,7 +19,9 @@ def _seed_for_index(seed: tf.Tensor, index: tf.Tensor) -> tf.Tensor:
     )
 
 
-def _pad_dataset(ds: tf.data.Dataset, batch_size: int) -> tf.data.Dataset:
+def _pad_dataset(
+    ds: tf.data.Dataset, batch_size: int, *, map_parallel_calls: int = tf.data.AUTOTUNE
+) -> tf.data.Dataset:
     def first_tensor(value):
         if isinstance(value, dict):
             for child in value.values():
@@ -66,7 +68,7 @@ def _pad_dataset(ds: tf.data.Dataset, batch_size: int) -> tf.data.Dataset:
             lambda: pad_batch(batch),
             lambda: batch | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)},
         ),
-        num_parallel_calls=tf.data.AUTOTUNE,
+        num_parallel_calls=map_parallel_calls,
     )
 
 
@@ -93,6 +95,7 @@ def finalize_dataset(
     reshuffle_each_iteration: bool = True,
     prefetch: bool = True,
     as_numpy: bool = False,
+    map_parallel_calls: int | None = None,
 ) -> tuple[Any, int | None]:
     """Finalize preprocessed samples into padded, model-ready batches."""
     if metadata_mode not in {"full", "numeric_only", "none"}:
@@ -110,13 +113,19 @@ def finalize_dataset(
         raise ValueError(
             "rng or late_augment_seed is required when late augmentation is enabled."
         )
+    if map_parallel_calls is not None and map_parallel_calls <= 0:
+        raise ValueError("map_parallel_calls must be positive when provided")
+
+    parallel_calls = (
+        tf.data.AUTOTUNE if map_parallel_calls is None else map_parallel_calls
+    )
 
     map_deterministic = deterministic if is_training else None
 
     def apply_postprocessing(dataset):
         dataset = dataset.map(
             lambda sample: postprocess_fn(sample, num_classes=num_classes),
-            num_parallel_calls=tf.data.AUTOTUNE,
+            num_parallel_calls=parallel_calls,
             deterministic=map_deterministic,
         )
         if post_postprocess_transform is not None:
@@ -129,7 +138,7 @@ def finalize_dataset(
         if metadata_mode != "full":
             dataset = dataset.map(
                 lambda sample: apply_metadata_mode(sample, metadata_mode),
-                num_parallel_calls=tf.data.AUTOTUNE,
+                num_parallel_calls=parallel_calls,
                 deterministic=map_deterministic,
             )
         return dataset
@@ -171,7 +180,7 @@ def finalize_dataset(
                     num_classes=num_classes,
                     seed=_seed_for_index(late_augment_seed, index),
                 ),
-                num_parallel_calls=tf.data.AUTOTUNE,
+                num_parallel_calls=parallel_calls,
                 deterministic=deterministic,
             )
         else:
@@ -181,7 +190,7 @@ def finalize_dataset(
                     num_classes=num_classes,
                     seed=rng.make_seeds(1)[:, 0],
                 ),
-                num_parallel_calls=tf.data.AUTOTUNE,
+                num_parallel_calls=parallel_calls,
                 deterministic=deterministic,
             )
 
@@ -190,11 +199,15 @@ def finalize_dataset(
             lambda batch: (
                 batch | {"padding_mask": tf.ones((batch_size,), dtype=tf.bool)}
             ),
-            num_parallel_calls=tf.data.AUTOTUNE,
+            num_parallel_calls=parallel_calls,
             deterministic=map_deterministic,
         )
     else:
-        ds = _pad_dataset(ds, batch_size)
+        ds = _pad_dataset(
+            ds,
+            batch_size,
+            map_parallel_calls=parallel_calls,
+        )
 
     if prefetch:
         ds = ds.prefetch(tf.data.AUTOTUNE)

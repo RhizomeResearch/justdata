@@ -63,6 +63,12 @@ conversion and normalization; and batch-level operations (Mixup, CutMix, random 
 GPU. An optional model-input cache can be inserted after deterministic postprocessing and before batching; for training
 it must be explicitly opted in and is placed before shuffle so epoch order is not frozen.
 
+### TensorFlow execution controls
+
+`load_ds` uses `tf.data.AUTOTUNE` for loader-owned maps by default. Advanced callers may set
+`map_parallel_calls`, `private_threadpool_size`, and `max_intra_op_parallelism` to bound TensorFlow input-pipeline
+concurrency. Omitting these arguments preserves the default TensorFlow behavior.
+
 ### Core Public API
 
 | Function                                                              | Description                                                                                                    |

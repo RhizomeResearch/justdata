@@ -86,6 +86,43 @@ def test_finalize_dataset_preserves_stage_order_and_writes_sidecar(tmp_path):
     assert sidecar.records[11]["source"] == "a"
 
 
+@pytest.mark.parametrize("map_parallel_calls", [None, 1, 2])
+@pytest.mark.parametrize("cache_model_inputs", [False, True])
+def test_sidecar_respects_map_parallelism(
+    tmp_path, map_parallel_calls, cache_model_inputs
+):
+    sidecar_path = tmp_path / "metadata.jsonl"
+    ds, _n = finalize_dataset(
+        _dataset(),
+        postprocess_fn=_identity,
+        num_classes=None,
+        batch_size=2,
+        metadata_mode="numeric_only",
+        sidecar_metadata_path=str(sidecar_path),
+        cache_model_inputs=cache_model_inputs,
+        map_parallel_calls=map_parallel_calls,
+        prefetch=False,
+    )
+
+    graph = tf.compat.v1.GraphDef()
+    graph.ParseFromString(ds._as_serialized_graph().numpy())
+    nodes = {node.name: node for node in graph.node}
+    parallel_calls = {
+        int(tf.make_ndarray(nodes[node.input[-1]].attr["value"].tensor))
+        for node in graph.node
+        if node.op == "ParallelMapDatasetV2"
+    }
+    expected = tf.data.AUTOTUNE if map_parallel_calls is None else map_parallel_calls
+    assert parallel_calls == {expected}
+
+    list(ds)
+    assert MetadataSidecar.read_jsonl(str(sidecar_path)).records == {
+        11: {"source": "a"},
+        12: {"source": "b"},
+        13: {"source": "c"},
+    }
+
+
 def test_finalize_dataset_drop_remainder_and_numpy_conversion():
     iterator, n_batches = finalize_dataset(
         _dataset(),

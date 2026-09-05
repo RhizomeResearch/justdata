@@ -996,6 +996,9 @@ dev = [
     { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
     { name = "torchcodec" },
 ]
+lint = [
+    { name = "ruff" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1044,6 +1047,7 @@ dev = [
     { name = "torch", specifier = "==2.10.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchcodec", specifier = "==0.10.0" },
 ]
+lint = [{ name = "ruff", specifier = "==0.15.20" }]
 
 [[package]]
 name = "keras"

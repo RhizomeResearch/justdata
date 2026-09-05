@@ -173,7 +173,12 @@ class MetadataSidecar:
         return sidecar
 
 
-def attach_sidecar_writer(ds: tf.data.Dataset, path: str) -> tf.data.Dataset:
+def attach_sidecar_writer(
+    ds: tf.data.Dataset,
+    path: str,
+    *,
+    map_parallel_calls: int = tf.data.AUTOTUNE,
+) -> tf.data.Dataset:
     output = Path(path)
     if output.parent != Path("."):
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -235,7 +240,7 @@ def attach_sidecar_writer(ds: tf.data.Dataset, path: str) -> tf.data.Dataset:
         with tf.control_dependencies([marker]):
             return _identity_structure(sample)
 
-    return ds.map(add_writer, num_parallel_calls=tf.data.AUTOTUNE)
+    return ds.map(add_writer, num_parallel_calls=map_parallel_calls)
 
 
 __all__ = [

@@ -134,7 +134,11 @@ def finalize_dataset(
 
     def apply_metadata(dataset):
         if metadata_mode == "numeric_only" and sidecar_metadata_path is not None:
-            dataset = attach_sidecar_writer(dataset, sidecar_metadata_path)
+            dataset = attach_sidecar_writer(
+                dataset,
+                sidecar_metadata_path,
+                map_parallel_calls=parallel_calls,
+            )
         if metadata_mode != "full":
             dataset = dataset.map(
                 lambda sample: apply_metadata_mode(sample, metadata_mode),

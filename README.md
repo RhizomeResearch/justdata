@@ -68,6 +68,7 @@ it must be explicitly opted in and is placed before shuffle so epoch order is no
 `load_ds` uses `tf.data.AUTOTUNE` for loader-owned maps by default. Advanced callers may set
 `map_parallel_calls`, `private_threadpool_size`, and `max_intra_op_parallelism` to bound TensorFlow input-pipeline
 concurrency. Omitting these arguments preserves the default TensorFlow behavior.
+The map limit also applies to metadata sidecar writing when enabled.
 
 ### Core Public API
 
@@ -1046,3 +1047,6 @@ uv run pytest tests/path/to/test_file.py::test_name  # run a single test
 ```
 
 The project targets Python 3.12 (see `.python-version`). `LD_LIBRARY_PATH` is configured by devenv for native libraries.
+
+GitLab runs `sh tests/doctor/test_lint.sh` in a pinned Debian-based uv image. This installs only the `lint` dependency
+group and provides the standard Linux dynamic loader required by Ruff's PyPI executable, which the Nix image lacks.

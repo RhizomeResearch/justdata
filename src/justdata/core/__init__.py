@@ -5,6 +5,7 @@ from justdata.core.filters import (
     metadata_filter_predicate,
 )
 from justdata.core.finalization import finalize_dataset
+from justdata.core.executed_config import ExecutedConfig, canonical_config_json
 from justdata.core.loader import fetch_ds, load_ds
 from justdata.core.inventory import (
     AdmittedInventory,
@@ -53,6 +54,7 @@ __all__ = [
     "AdmittedInventory",
     "DataPipeline",
     "DatasetInfo",
+    "ExecutedConfig",
     "InventoryAsset",
     "InventoryFilter",
     "InventoryLoadError",
@@ -62,6 +64,7 @@ __all__ = [
     "ResolvedPreset",
     "admit_inventory",
     "apply_metadata_mode",
+    "canonical_config_json",
     "compute_feature_stats",
     "filter_by_metadata",
     "finalize_dataset",

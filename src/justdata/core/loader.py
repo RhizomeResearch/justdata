@@ -1,3 +1,4 @@
+import copy
 import os
 from functools import partial
 from typing import Any, Dict, Literal, Optional, Union
@@ -6,6 +7,7 @@ import tensorflow as tf
 from loguru import logger
 
 from justdata.core.adapters import get_adapter
+from justdata.core.executed_config import ExecutedConfig
 from justdata.core.finalization import _seed_for_index, finalize_dataset
 from justdata.core.sources import get_source_loader
 
@@ -182,6 +184,7 @@ def load_ds(
     drop_remainder: bool = False,
     data_dir: Union[None, str, os.PathLike] = None,
     return_raw_ds: bool = False,
+    return_config: bool = False,
     deterministic: bool = False,
     as_numpy: bool = False,
     metadata_mode: Literal["full", "numeric_only", "none"] | None = None,
@@ -241,6 +244,8 @@ def load_ds(
             and a fixed shuffle for that epoch. Its optional
             ``augment_is_stateless=True`` permits parallel standard augmentation
             when the callback depends only on the sample and supplied seed.
+        return_config: If True, append an immutable ``ExecutedConfig`` snapshot
+            to the normal or raw return tuple.
         deterministic: If false, sacrifices determinism for performance.
         as_numpy: If True, returns an iterator yielding NumPy arrays.
         metadata_mode: Controls metadata in output batches.
@@ -266,6 +271,8 @@ def load_ds(
         ``tf.data.Dataset`` or NumPy iterator and ``n_batches`` is an integer
         when cardinality is known, otherwise ``None``. With
         ``return_raw_ds=True``, returns ``(dataset, tools_dict)`` instead.
+        With ``return_config=True``, the corresponding tuples contain a third
+        ``ExecutedConfig`` item.
 
     Raises:
         ValueError: If dataset loading fails and `fetch_ds` returns None.
@@ -290,6 +297,11 @@ def load_ds(
         raise TypeError(
             "splits_arg must be a string, a list of strings, or a "
             "dictionary mapping dataset names to lists of strings."
+        )
+
+    if return_config and source_filter_fn is not None:
+        raise ValueError(
+            "return_config does not support opaque source_filter_fn callbacks"
         )
 
     return _prepare_ds(
@@ -318,6 +330,7 @@ def load_ds(
         allow_train_model_input_cache=allow_train_model_input_cache,
         drop_remainder=drop_remainder,
         return_raw_ds=return_raw_ds,
+        return_config=return_config,
         deterministic=deterministic,
         as_numpy=as_numpy,
         metadata_mode=metadata_mode,
@@ -349,6 +362,7 @@ def _prepare_ds(
     allow_train_model_input_cache: bool = False,
     drop_remainder: bool = False,
     return_raw_ds: bool = False,
+    return_config: bool = False,
     deterministic: bool = False,
     as_numpy: bool = False,
     metadata_mode: Literal["full", "numeric_only", "none"] | None = None,
@@ -371,6 +385,23 @@ def _prepare_ds(
             "metadata_mode must be one of 'full', 'numeric_only', or 'none'."
         )
 
+    if (
+        isinstance(batch_size, bool)
+        or not isinstance(batch_size, int)
+        or batch_size <= 0
+    ):
+        raise ValueError("batch_size must be a positive integer")
+    if num_classes is not None and (
+        isinstance(num_classes, bool)
+        or not isinstance(num_classes, int)
+        or num_classes <= 0
+    ):
+        raise ValueError("num_classes must be a positive integer when provided")
+    is_training = dataset_type == "train"
+    if is_training:
+        if shuffle_buffer is not None and shuffle_buffer <= 0:
+            raise ValueError("shuffle_buffer must be positive for training")
+
     for name, value in (
         ("map_parallel_calls", map_parallel_calls),
         ("private_threadpool_size", private_threadpool_size),
@@ -379,7 +410,6 @@ def _prepare_ds(
         if value is not None and value <= 0:
             raise ValueError(f"{name} must be positive when provided")
 
-    is_training = dataset_type == "train"
     augment_eval = bool(
         pipeline is not None and pipeline.kwargs.get("augment_eval", False)
     )
@@ -398,6 +428,47 @@ def _prepare_ds(
                 "both cache stages are enabled."
             )
 
+    if return_config and filter_fn is not None:
+        raise ValueError("return_config does not support opaque filter_fn callbacks")
+    if return_config and pipeline is None:
+        raise ValueError(
+            "return_config requires a registered DataPipeline with a config_resolver"
+        )
+
+    resolved_pipeline = None
+    if pipeline is not None and (
+        return_config or getattr(pipeline, "_strict_config", False)
+    ):
+        if not hasattr(pipeline, "resolve_config"):
+            raise ValueError(
+                "Strict configuration requires a DataPipeline with a config_resolver"
+            )
+        resolved_pipeline = pipeline.resolve_config(is_training)
+        if (
+            resolved_pipeline.get("requirements", {}).get("num_classes", False)
+            and num_classes is None
+        ):
+            raise ValueError(
+                "num_classes is required by the resolved pipeline configuration"
+            )
+        postprocess_config = (
+            resolved_pipeline.get("stages", {}).get("postprocess", {}).get("config", {})
+        )
+        if num_classes is not None and "num_classes" in postprocess_config:
+            postprocess_config["num_classes"] = num_classes
+        if return_config:
+            ExecutedConfig.from_dict({"schema_version": 1, **resolved_pipeline})
+
+    if pipeline is not None:
+        preprocess_fn, augment_fn, late_augment_fn, postprocess_fn = pipeline.build(
+            is_training=is_training
+        )
+
+    if preprocess_fn is None or postprocess_fn is None:
+        raise ValueError("preprocess_fn and postprocess_fn must both be configured")
+    if apply_augmentation and augment_fn is None:
+        raise ValueError("augment_fn must be configured when augmentation is active")
+
     ds = source_factory()
 
     if ds is None:
@@ -415,11 +486,6 @@ def _prepare_ds(
         options.threading.max_intra_op_parallelism = max_intra_op_parallelism
 
     ds = ds.with_options(options)
-
-    if pipeline is not None:
-        preprocess_fn, augment_fn, late_augment_fn, postprocess_fn = pipeline.build(
-            is_training=is_training
-        )
 
     def seeded_augment(sample):
         seed = rng.make_seeds(1)[:, 0]
@@ -448,26 +514,241 @@ def _prepare_ds(
     if filter_fn is not None:
         ds = ds.filter(filter_fn)
 
-    finalize_fn = partial(
-        finalize_dataset,
-        postprocess_fn=postprocess_fn,
-        num_classes=num_classes,
-        batch_size=batch_size,
-        metadata_mode=metadata_mode,
-        sidecar_metadata_path=sidecar_metadata_path,
-        cache_model_inputs=cache_model_inputs,
-        model_input_cache_path=model_input_cache_path,
-        drop_remainder=drop_remainder,
-        is_training=is_training,
-        apply_late_augment=apply_augmentation,
-        late_augment_fn=late_augment_fn,
-        rng=rng,
-        deterministic=deterministic,
-        shuffle_buffer=shuffle_buffer if is_training else None,
-        shuffle_seed=seed,
-        as_numpy=as_numpy,
-        map_parallel_calls=map_parallel_calls,
-    )
+    finalize_defaults = {
+        "postprocess_fn": postprocess_fn,
+        "num_classes": num_classes,
+        "batch_size": batch_size,
+        "metadata_mode": metadata_mode,
+        "sidecar_metadata_path": sidecar_metadata_path,
+        "cache_model_inputs": cache_model_inputs,
+        "model_input_cache_path": model_input_cache_path,
+        "drop_remainder": drop_remainder,
+        "is_training": is_training,
+        "apply_late_augment": apply_augmentation,
+        "late_augment_fn": late_augment_fn,
+        "rng": rng,
+        "deterministic": deterministic,
+        "shuffle_buffer": shuffle_buffer if is_training else None,
+        "shuffle_seed": seed,
+        "as_numpy": as_numpy,
+        "map_parallel_calls": map_parallel_calls,
+    }
+
+    def pipeline_snapshot():
+        nonlocal resolved_pipeline
+        if resolved_pipeline is None:
+            if pipeline is None or not hasattr(pipeline, "resolve_config"):
+                raise ValueError(
+                    "Executed configuration export requires a registered "
+                    "DataPipeline with a config_resolver"
+                )
+            resolved_pipeline = pipeline.resolve_config(is_training)
+            if (
+                resolved_pipeline.get("requirements", {}).get("num_classes", False)
+                and num_classes is None
+            ):
+                raise ValueError(
+                    "num_classes is required by the resolved pipeline configuration"
+                )
+            postprocess_config = (
+                resolved_pipeline.get("stages", {})
+                .get("postprocess", {})
+                .get("config", {})
+            )
+            if num_classes is not None and "num_classes" in postprocess_config:
+                postprocess_config["num_classes"] = num_classes
+        return resolved_pipeline
+
+    def executed_config(
+        *,
+        preparation: str,
+        epoch_seed: int | None = None,
+        reshuffle_each_iteration: bool = True,
+        effective_as_numpy: bool | None = None,
+        augment_is_stateless: bool = False,
+        finalization_overrides: dict | None = None,
+    ) -> ExecutedConfig:
+        resolved = pipeline_snapshot()
+        supplied_finalization = finalization_overrides or {}
+        final = finalize_defaults | supplied_finalization
+        callback_overrides = {
+            "postprocess_fn",
+            "late_augment_fn",
+            "post_postprocess_transform",
+        }.intersection(supplied_finalization)
+        if callback_overrides:
+            raise ValueError(
+                "return_config does not support opaque finalization callbacks"
+            )
+        if "rng" in supplied_finalization and (
+            epoch_seed is None or supplied_finalization["rng"] is not None
+        ):
+            raise ValueError("return_config does not support a replacement rng")
+        if "late_augment_seed" in supplied_finalization:
+            raise ValueError(
+                "return_config does not support a direct late_augment_seed; "
+                "use finalize_epoch for a recorded epoch seed"
+            )
+        shuffle_seed = final.get("shuffle_seed")
+        if epoch_seed is not None:
+            shuffle_seed = epoch_seed
+        if effective_as_numpy is None:
+            effective_as_numpy = bool(final.get("as_numpy", as_numpy))
+        stages = copy.deepcopy(resolved["stages"])
+        final_num_classes = final.get("num_classes", num_classes)
+        if "num_classes" in stages["postprocess"]["config"]:
+            stages["postprocess"]["config"]["num_classes"] = final_num_classes
+        if preparation == "finalized":
+            stages["augment"]["active"] = False
+            stages["augment"]["status"] = "not_applied_by_finalize_fn"
+        stages["late_augment"]["active"] = bool(
+            stages["late_augment"]["active"]
+            and final.get("apply_late_augment", apply_augmentation)
+        )
+        selection = {
+            "name": getattr(pipeline, "pipeline_name", None),
+            "modality": getattr(pipeline, "modality", None),
+            "dataset": getattr(pipeline, "dataset_name", None),
+            "preset": getattr(pipeline, "preset_name", None),
+            "preset_request": getattr(pipeline, "preset_request", None),
+            "presets_applied": bool(getattr(pipeline, "apply_presets", False)),
+        }
+        effective_is_training = bool(final.get("is_training", is_training))
+        final_map_parallel_calls = final.get("map_parallel_calls", map_parallel_calls)
+        return ExecutedConfig.from_dict(
+            {
+                "schema_version": 1,
+                "pipeline": selection,
+                "configuration": resolved["configuration"],
+                "implementation": resolved.get("implementation", "default"),
+                "stages": stages,
+                "model_input": resolved.get("model_input"),
+                "execution": {
+                    "stage_order": [
+                        "fetch_ds",
+                        "adapter",
+                        "preprocess",
+                        "cache",
+                        "augment",
+                        "shuffle",
+                        "postprocess",
+                        "batch",
+                        "late_augment",
+                        "pad",
+                        "prefetch",
+                    ],
+                    "preparation": preparation,
+                    "pending_stages": (
+                        [
+                            "augment",
+                            "shuffle",
+                            "postprocess",
+                            "batch",
+                            "late_augment",
+                            "pad",
+                            "prefetch",
+                        ]
+                        if preparation == "raw"
+                        else []
+                    ),
+                    "dataset_type": dataset_type,
+                    "is_training": effective_is_training,
+                    "seed": seed,
+                    "rng": {
+                        "strategy": (
+                            "stateless_indexed_epoch"
+                            if epoch_seed is not None
+                            else "tensorflow_generator"
+                        ),
+                        "epoch_seed": epoch_seed,
+                        "augment_is_stateless": augment_is_stateless,
+                    },
+                    "shuffle": {
+                        "enabled": bool(
+                            effective_is_training
+                            and final.get("shuffle_buffer") is not None
+                        ),
+                        "buffer": final.get("shuffle_buffer"),
+                        "seed": shuffle_seed,
+                        "reshuffle_each_iteration": reshuffle_each_iteration,
+                    },
+                    "num_classes": final_num_classes,
+                    "batching": {
+                        "batch_size": final.get("batch_size", batch_size),
+                        "drop_remainder": bool(
+                            final.get("drop_remainder", drop_remainder)
+                        ),
+                        "partial_batch_policy": (
+                            "drop"
+                            if final.get("drop_remainder", drop_remainder)
+                            else "pad"
+                        ),
+                        "padding_mask_true_means": "real_example",
+                    },
+                    "metadata": {
+                        "mode": final.get("metadata_mode", metadata_mode),
+                        "sidecar_path": (
+                            os.fspath(final.get("sidecar_metadata_path"))
+                            if final.get("sidecar_metadata_path") is not None
+                            else None
+                        ),
+                    },
+                    "cache": {
+                        "preprocess": {
+                            "enabled": cache_dataset,
+                            "path": os.fspath(cache_path),
+                        },
+                        "model_input": {
+                            "enabled": bool(
+                                final.get("cache_model_inputs", cache_model_inputs)
+                            ),
+                            "path": os.fspath(
+                                final.get(
+                                    "model_input_cache_path", model_input_cache_path
+                                )
+                            ),
+                            "training_opt_in": allow_train_model_input_cache,
+                        },
+                    },
+                    "limits": {
+                        "map_parallel_calls": (
+                            "AUTOTUNE"
+                            if final_map_parallel_calls is None
+                            else final_map_parallel_calls
+                        ),
+                        "preparation_map_parallel_calls": (
+                            "AUTOTUNE"
+                            if map_parallel_calls is None
+                            else map_parallel_calls
+                        ),
+                        "private_threadpool_size": private_threadpool_size,
+                        "max_intra_op_parallelism": max_intra_op_parallelism,
+                        "prefetch": (
+                            "AUTOTUNE" if final.get("prefetch", True) else "disabled"
+                        ),
+                    },
+                    "deterministic": bool(final.get("deterministic", deterministic)),
+                    "preparation_deterministic": deterministic,
+                    "as_numpy": effective_as_numpy,
+                },
+            }
+        )
+
+    def finalize_fn(epoch_ds, *, return_config=False, **overrides):
+        config = None
+        if return_config:
+            config = executed_config(
+                preparation="finalized",
+                reshuffle_each_iteration=overrides.get(
+                    "reshuffle_each_iteration", True
+                ),
+                effective_as_numpy=overrides.get("as_numpy", as_numpy),
+                finalization_overrides=overrides,
+            )
+        result = finalize_dataset(epoch_ds, **(finalize_defaults | overrides))
+        if not return_config:
+            return result
+        return (*result, config)
 
     default_as_numpy = as_numpy
 
@@ -477,6 +758,7 @@ def _prepare_ds(
         seed: int,
         as_numpy: bool | None = None,
         augment_is_stateless: bool = False,
+        return_config: bool = False,
     ):
         """Build an addressable epoch with optional stateless augmentation parallelism.
 
@@ -512,7 +794,7 @@ def _prepare_ds(
                 deterministic=deterministic,
             )
 
-        return finalize_fn(
+        result = finalize_fn(
             epoch_ds,
             rng=None,
             late_augment_seed=late_augment_seed,
@@ -520,10 +802,28 @@ def _prepare_ds(
             reshuffle_each_iteration=False,
             as_numpy=default_as_numpy if as_numpy is None else as_numpy,
         )
+        if not return_config:
+            return result
+        return (
+            *result,
+            executed_config(
+                preparation="epoch",
+                epoch_seed=seed,
+                reshuffle_each_iteration=False,
+                effective_as_numpy=default_as_numpy if as_numpy is None else as_numpy,
+                augment_is_stateless=augment_is_stateless,
+                finalization_overrides={
+                    "rng": None,
+                    "shuffle_seed": seed,
+                    "reshuffle_each_iteration": False,
+                    "as_numpy": default_as_numpy if as_numpy is None else as_numpy,
+                },
+            ),
+        )
 
     if return_raw_ds:
         # Return necessary components to build custom pipelines
-        return (
+        result = (
             ds,
             {
                 "finalize_fn": finalize_fn,
@@ -532,6 +832,9 @@ def _prepare_ds(
                 "rng": rng,
             },
         )
+        if return_config:
+            return (*result, executed_config(preparation="raw"))
+        return result
 
     if apply_augmentation:
         ds = ds.map(
@@ -540,4 +843,7 @@ def _prepare_ds(
             deterministic=deterministic,
         )
 
-    return finalize_fn(ds)
+    result = finalize_fn(ds)
+    if return_config:
+        return (*result, executed_config(preparation="complete"))
+    return result

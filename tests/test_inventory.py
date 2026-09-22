@@ -652,3 +652,27 @@ def test_strict_loader_supports_both_modality_pipelines(tmp_path, modality):
         f"{modality}-1".encode(),
     ]
     np.testing.assert_array_equal(batches[-1]["padding_mask"], [True, False])
+
+
+def test_strict_inventory_loader_exports_executed_configuration(tmp_path):
+    from justdata.core.registry import get_pipeline
+    import justdata.acoustic  # noqa: F401
+
+    admitted = _admit(tmp_path)
+    pipeline = get_pipeline("acoustic/identity", apply_presets=False, overrides={})
+    _dataset, count, config = load_inventory(
+        admitted,
+        "validation",
+        2,
+        7,
+        pipeline=pipeline,
+        return_config=True,
+        map_parallel_calls=1,
+        private_threadpool_size=1,
+    )
+
+    assert count == 2
+    snapshot = config.to_dict()
+    assert snapshot["schema_version"] == 1
+    assert snapshot["pipeline"]["name"] == "acoustic/identity"
+    assert snapshot["execution"]["batching"]["batch_size"] == 2

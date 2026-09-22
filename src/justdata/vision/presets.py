@@ -1,4 +1,5 @@
 import copy
+from collections.abc import Mapping
 from typing import Any, Dict
 
 from justdata.core.presets import (
@@ -477,5 +478,12 @@ _register_wilds_preset(
 )
 
 
-def merge_with_presets(dataset: str, user_kwargs: Dict[str, Any]) -> Dict[str, Any]:
-    return _merge_with_presets(dataset, user_kwargs, modality="vision")
+def merge_with_presets(
+    dataset: str,
+    user_kwargs: Dict[str, Any],
+    *,
+    overrides: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    return _merge_with_presets(
+        dataset, user_kwargs, modality="vision", overrides=overrides
+    )

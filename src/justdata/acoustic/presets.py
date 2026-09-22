@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import Any, Dict
 
 from justdata.acoustic.compat.ast import (
@@ -63,8 +64,15 @@ def get_resolved_preset(dataset: str) -> ResolvedPreset:
     return _get_resolved_preset(dataset, modality="acoustic")
 
 
-def merge_with_presets(dataset: str, user_kwargs: Dict[str, Any]) -> Dict[str, Any]:
-    return _merge_with_presets(dataset, user_kwargs, modality="acoustic")
+def merge_with_presets(
+    dataset: str,
+    user_kwargs: Dict[str, Any],
+    *,
+    overrides: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    return _merge_with_presets(
+        dataset, user_kwargs, modality="acoustic", overrides=overrides
+    )
 
 
 def _segment(duration: float) -> SegmentStrategyConfig:

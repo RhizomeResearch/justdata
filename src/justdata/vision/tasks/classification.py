@@ -113,7 +113,7 @@ def make_augmentations(
     # Select augmentation kwargs based on strategy
     if augment_type == "rand_augment":
         _aug_kwargs = ra_kwargs
-    elif augment_type == "trivial_augment":
+    elif augment_type in {"trivial_augment", "trivial_augment_wide"}:
         _aug_kwargs = ta_kwargs
     elif augment_type == "color_jitter":
         _aug_kwargs = cj_kwargs

@@ -79,6 +79,7 @@ enabled.
 | `justdata.core.admit_inventory(...)`                                  | Strict offline validation of a resolved inventory into a disk snapshot with structured identity and failure reports. |
 | `justdata.core.open_inventory(snapshot_dir)`                          | Verify and reopen a completed inventory snapshot without original sources.                                           |
 | `justdata.core.load_inventory(admitted, ...)`                         | Apply the shared pipeline to an admitted inventory, including raw epoch finalization.                                |
+| `justdata.core.ExecutedConfig`                                        | Immutable, canonical snapshot returned by loaders when `return_config=True`.                                         |
 | `justdata.vision.minic.create_minic_datasets(...)`                    | Constructs Mini-C corruption benchmark datasets from a shared preprocessed base dataset.                             |
 | `justdata.acoustic.corruptions.create_audio_corruption_datasets(...)` | Constructs acoustic corruption benchmark datasets from a shared preprocessed base dataset.                           |
 | `justdata.acoustic.dcase2025.make_source_dataset(...)`                | Builds DCASE Task 1 source-domain datasets with split-safety checks.                                                 |
@@ -519,6 +520,12 @@ All extensible components in `justdata` use a decorator-based registry pattern w
 `get_pipeline` is the high-level resolver: it infers the task type from the dataset name, merges preset defaults with
 user-supplied kwargs (via smart merge; see below), and invokes the appropriate pipeline factory.
 
+Custom pipelines may register `@register_pipeline(name, config_resolver=resolver)` when they support strict overrides
+and executed-configuration export. The resolver receives a defensive copy of the merged configuration plus
+`is_training` and returns the resolved four-stage configuration and model-input contract. Legacy factories without a
+resolver remain buildable, but strict resolution and `return_config=True` reject them because their behavior cannot be
+described completely.
+
 **Built-in crop strategies:** `random_resized`, `random_resized_hvflip`, `random_pad`, `random_hflip`,
 `resize_random_hflip`, `random_rot90_hflip`.
 
@@ -575,6 +582,31 @@ ______________________________________________________________________
 `_default` preset values are treated as "not explicitly overridden," allowing dataset-specific preset values to take
 precedence. Only kwargs that genuinely differ from the defaults are considered intentional user overrides.
 
+For an authoritative recipe, pass `overrides=` to `get_pipeline`. Explicit values win even when they are `False`, zero,
+`None` (where supported), or equal to the modality default. Nested mappings preserve siblings from the selected preset:
+
+```python
+pipeline = get_pipeline(
+    dataset="cifar10",
+    overrides={
+        "aug_kwargs": {"enable": False, "image_size": 224},
+        "laug_kwargs": {"enable": False},
+        "postproc_kwargs": {
+            "image_size": 224,
+            "val_resize_size": None,
+            "normalization_params": (
+                (0.485, 0.456, 0.406),
+                (0.229, 0.224, 0.225),
+            ),
+        },
+    },
+)
+```
+
+Supplying `overrides={}` selects strict resolution without changing values. Built-in resolvers reject unknown nested
+keys, missing required settings, contradictory configurations, and attempts to set runtime-owned fields before a
+loader opens its source. Existing keyword arguments retain smart-merge compatibility semantics.
+
 Resolved presets are serializable and hashable across modalities. Use `get_resolved_preset(name)` from
 `justdata.vision.presets`, `justdata.acoustic.presets`, or `justdata.core.presets` to obtain an object with `.to_json()`
 and `.hash()`. Hashes use canonical JSON with sorted keys and a 16-character SHA-256 prefix.
@@ -584,6 +616,63 @@ frontends, labels, normalization, train augment settings, eval views, layout, an
 namespace is a compatibility alias for `justdata.acoustic`.
 
 See [docs/presets.md](docs/presets.md) for acoustic preset contracts, including EfficientAT/DyMN, PaSST, and CED.
+
+### Executed configuration snapshots
+
+Pass `return_config=True` to `load_ds` or `load_inventory` to receive `(dataset, n_batches, config)`. The immutable
+`ExecutedConfig` records the selected pipeline and preset, resolved four-stage configuration, derived model-input
+contract, train/evaluation mode, randomness, shuffle, batching, metadata, caches, execution limits, prefetching, and
+NumPy conversion. Its canonical versioned encoding is available as `config.to_bytes()`:
+
+```python
+import hashlib
+from pathlib import Path
+
+dataset, n_batches, config = load_ds(
+    dataset_names_arg="cifar10",
+    splits_arg="test",
+    dataset_type="validation",
+    batch_size=128,
+    seed=42,
+    pipeline=pipeline,
+    num_classes=10,
+    return_config=True,
+)
+encoded = config.to_bytes()
+Path("executed-justdata-config.json").write_bytes(encoded)
+full_digest = hashlib.sha256(encoded).hexdigest()
+```
+
+For a JD-01 offline inventory, use the same return option after verified admission:
+
+```python
+import hashlib
+from pathlib import Path
+
+from justdata.core import load_inventory, open_inventory
+
+admitted = open_inventory("/data/lars-admitted")
+dataset, n_batches, config = load_inventory(
+    admitted,
+    dataset_type="validation",
+    batch_size=8,
+    seed=42,
+    pipeline=pipeline,
+    return_config=True,
+)
+encoded = config.to_bytes()
+Path("lars-justdata-execution.json").write_bytes(encoded)
+full_digest = hashlib.sha256(encoded).hexdigest()
+```
+
+With `return_raw_ds=True`, the loader returns `(prepared, tools, config)` and marks the remaining stages as pending.
+Both `tools["finalize_fn"]` and `tools["finalize_epoch"]` accept `return_config=True` and append a snapshot of their
+actual finalization settings. Snapshot export rejects opaque callback replacements because their behavior cannot be
+represented by configuration data.
+
+The snapshot describes JustData's configured execution. A consuming product must separately bind admitted source
+inventory identities, external transformations, exact library revisions, model/checkpoint identities, and other run
+artifacts.
 
 ### Automatic preset resolution
 

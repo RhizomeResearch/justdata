@@ -34,6 +34,26 @@ def preset_hash(config: Any) -> str:
     ]
 
 
+def merge_explicit_overrides(
+    base: Mapping[str, Any], overrides: Mapping[str, Any]
+) -> Dict[str, Any]:
+    """Recursively apply authoritative overrides without truthiness semantics."""
+    if not isinstance(base, Mapping):
+        raise TypeError("base configuration must be a mapping")
+    if not isinstance(overrides, Mapping):
+        raise TypeError("overrides must be a mapping")
+
+    result = copy.deepcopy(dict(base))
+    for key, value in overrides.items():
+        if not isinstance(key, str):
+            raise TypeError(f"override keys must be strings; got {key!r}")
+        if isinstance(value, Mapping) and isinstance(result.get(key), Mapping):
+            result[key] = merge_explicit_overrides(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
+
+
 @dataclass(frozen=True)
 class ResolvedPreset(Mapping[str, Any]):
     name: str
@@ -101,7 +121,11 @@ def get_resolved_preset(dataset: str, *, modality: str = "core") -> ResolvedPres
 
 
 def merge_with_presets(
-    dataset: str, user_kwargs: Dict[str, Any], *, modality: str = "core"
+    dataset: str,
+    user_kwargs: Dict[str, Any],
+    *,
+    modality: str = "core",
+    overrides: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """
     Smartly merge user-provided kwargs with modality-specific presets.
@@ -152,4 +176,11 @@ def merge_with_presets(
                     result[k] = v
         return result
 
-    return smart_merge(dataset_presets, user_kwargs, default_presets)
+    merged = smart_merge(dataset_presets, copy.deepcopy(user_kwargs), default_presets)
+
+    if overrides is None:
+        return merged
+    if not isinstance(overrides, Mapping):
+        raise TypeError("overrides must be a mapping or None")
+
+    return merge_explicit_overrides(merged, overrides)

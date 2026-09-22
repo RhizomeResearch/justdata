@@ -40,6 +40,71 @@ print(audio_preset.hash())
 Store the hash in experiment metadata. If the hash changes, rerun compatibility
 checks because the preprocessing contract changed.
 
+The preset hash identifies the registered preset only. It does not identify
+loader settings or the complete executed pipeline.
+
+## Explicit overrides
+
+`get_pipeline(..., overrides={...})` applies an authoritative recursive overlay
+after legacy smart merging. Values remain explicit when they equal the modality
+default, are `False`, are zero, or are `None` for a field that permits it.
+Mappings preserve siblings; lists, tuples, scalars, and `None` replace the prior
+value.
+
+```python
+pipeline = get_pipeline(
+    dataset="cifar10",
+    overrides={
+        "aug_kwargs": {"enable": False, "image_size": 224},
+        "laug_kwargs": {"enable": False},
+        "postproc_kwargs": {
+            "image_size": 224,
+            "val_resize_size": None,
+        },
+    },
+)
+```
+
+Passing `overrides={}` enables strict validation while retaining the selected
+preset unchanged. Built-in pipeline resolvers validate top-level and nested
+keys, required fields, and incompatible settings before source loading. The
+legacy keyword route remains available with its existing smart-merge behavior.
+
+`is_training` is resolved from the loader's `dataset_type`; it cannot be set in
+a stage override. The `model_input` contract is derived from resolved stages and
+cannot be overridden directly.
+
+## Executed configuration
+
+Use `return_config=True` with `load_ds` or `load_inventory` to append an
+immutable `ExecutedConfig` to the return tuple. The snapshot includes all four
+pipeline stages, the derived model-input layout, dtype, shape and normalization,
+and loader execution settings such as randomness, shuffle, batching, caches,
+metadata, concurrency limits, prefetching, and NumPy conversion.
+
+`ExecutedConfig.to_json()` uses schema version 1, sorted keys, compact
+separators, preserved Unicode, finite JSON numbers, and JSON arrays for Python
+sequences. `to_bytes()` returns the exact UTF-8 encoding. Consumers that require
+a full identity should hash and store those bytes:
+
+```python
+import hashlib
+
+dataset, n_batches, config = load_ds(..., pipeline=pipeline, return_config=True)
+encoded = config.to_bytes()
+digest = hashlib.sha256(encoded).hexdigest()
+```
+
+`return_raw_ds=True` returns `(prepared, tools, config)` and records that later
+stages are pending. `finalize_fn(..., return_config=True)` and
+`finalize_epoch(..., return_config=True)` append snapshots with their actual
+finalization and epoch settings. Opaque callback replacements cannot be
+exported.
+
+The snapshot describes JustData's configured execution. Consumers separately
+bind source inventories, transformations outside JustData, exact library
+revisions, checkpoints, and other run artifacts.
+
 ## Vision contracts
 
 CIFAR presets use 32 px inputs, random padded crop, horizontal flip,

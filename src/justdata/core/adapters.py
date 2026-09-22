@@ -26,7 +26,8 @@ def register_adapter(dataset_name: str):
     return decorator
 
 
-def get_adapter(dataset_name: str) -> DatasetAdapter:
+def get_adapter(dataset_name: str, *, required: bool = False) -> DatasetAdapter:
+    """Resolve an adapter, optionally rejecting an unregistered name."""
     with _ADAPTER_LOCK:
         exact = _ADAPTERS.get(dataset_name)
         entries = tuple(_ADAPTERS.items())
@@ -38,6 +39,8 @@ def get_adapter(dataset_name: str) -> DatasetAdapter:
         if dataset_name.startswith(key):
             return adapter
 
+    if required:
+        raise ValueError(f"No adapter registered for '{dataset_name}'.")
     return _default_adapter
 
 

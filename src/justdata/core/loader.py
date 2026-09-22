@@ -271,26 +271,6 @@ def load_ds(
         ValueError: If dataset loading fails and `fetch_ds` returns None.
         TypeError: If `dataset_names_arg` or `splits_arg` have invalid types.
     """
-    rng = tf.random.Generator.from_seed(seed)
-    if metadata_mode is None:
-        metadata_mode = (
-            pipeline.kwargs.get("metadata_mode", "full")
-            if pipeline is not None
-            else "full"
-        )
-    if metadata_mode not in {"full", "numeric_only", "none"}:
-        raise ValueError(
-            "metadata_mode must be one of 'full', 'numeric_only', or 'none'."
-        )
-
-    for name, value in (
-        ("map_parallel_calls", map_parallel_calls),
-        ("private_threadpool_size", private_threadpool_size),
-        ("max_intra_op_parallelism", max_intra_op_parallelism),
-    ):
-        if value is not None and value <= 0:
-            raise ValueError(f"{name} must be positive when provided")
-
     dataset_names: list[str]
     if isinstance(dataset_names_arg, str):
         dataset_names = [dataset_names_arg]
@@ -312,6 +292,93 @@ def load_ds(
             "dictionary mapping dataset names to lists of strings."
         )
 
+    return _prepare_ds(
+        partial(
+            fetch_ds,
+            dataset_names,
+            splits,
+            data_dir,
+            source_filter_fn=source_filter_fn,
+            map_parallel_calls=map_parallel_calls,
+        ),
+        dataset_type=dataset_type,
+        batch_size=batch_size,
+        seed=seed,
+        num_classes=num_classes,
+        pipeline=pipeline,
+        preprocess_fn=preprocess_fn,
+        augment_fn=augment_fn,
+        late_augment_fn=late_augment_fn,
+        postprocess_fn=postprocess_fn,
+        shuffle_buffer=shuffle_buffer,
+        cache_dataset=cache_dataset,
+        cache_path=cache_path,
+        cache_model_inputs=cache_model_inputs,
+        model_input_cache_path=model_input_cache_path,
+        allow_train_model_input_cache=allow_train_model_input_cache,
+        drop_remainder=drop_remainder,
+        return_raw_ds=return_raw_ds,
+        deterministic=deterministic,
+        as_numpy=as_numpy,
+        metadata_mode=metadata_mode,
+        sidecar_metadata_path=sidecar_metadata_path,
+        filter_fn=filter_fn,
+        map_parallel_calls=map_parallel_calls,
+        private_threadpool_size=private_threadpool_size,
+        max_intra_op_parallelism=max_intra_op_parallelism,
+    )
+
+
+def _prepare_ds(
+    source_factory,
+    *,
+    dataset_type: str,
+    batch_size: int,
+    seed: int,
+    num_classes: Optional[int] = None,
+    pipeline: Optional[Any] = None,
+    preprocess_fn=None,
+    augment_fn=None,
+    late_augment_fn=None,
+    postprocess_fn=None,
+    shuffle_buffer: int = 10_000,
+    cache_dataset: bool = False,
+    cache_path: str = "",
+    cache_model_inputs: bool = False,
+    model_input_cache_path: str = "",
+    allow_train_model_input_cache: bool = False,
+    drop_remainder: bool = False,
+    return_raw_ds: bool = False,
+    deterministic: bool = False,
+    as_numpy: bool = False,
+    metadata_mode: Literal["full", "numeric_only", "none"] | None = None,
+    sidecar_metadata_path: str | None = None,
+    filter_fn=None,
+    map_parallel_calls: int | None = None,
+    private_threadpool_size: int | None = None,
+    max_intra_op_parallelism: int | None = None,
+):
+    """Shared pipeline, resolving its source only after validating options."""
+    rng = tf.random.Generator.from_seed(seed)
+    if metadata_mode is None:
+        metadata_mode = (
+            pipeline.kwargs.get("metadata_mode", "full")
+            if pipeline is not None
+            else "full"
+        )
+    if metadata_mode not in {"full", "numeric_only", "none"}:
+        raise ValueError(
+            "metadata_mode must be one of 'full', 'numeric_only', or 'none'."
+        )
+
+    for name, value in (
+        ("map_parallel_calls", map_parallel_calls),
+        ("private_threadpool_size", private_threadpool_size),
+        ("max_intra_op_parallelism", max_intra_op_parallelism),
+    ):
+        if value is not None and value <= 0:
+            raise ValueError(f"{name} must be positive when provided")
+
     is_training = dataset_type == "train"
     augment_eval = bool(
         pipeline is not None and pipeline.kwargs.get("augment_eval", False)
@@ -331,13 +398,7 @@ def load_ds(
                 "both cache stages are enabled."
             )
 
-    ds = fetch_ds(
-        dataset_names,
-        splits,
-        data_dir,
-        source_filter_fn=source_filter_fn,
-        map_parallel_calls=map_parallel_calls,
-    )
+    ds = source_factory()
 
     if ds is None:
         raise ValueError(

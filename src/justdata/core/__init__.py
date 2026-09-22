@@ -6,6 +6,17 @@ from justdata.core.filters import (
 )
 from justdata.core.finalization import finalize_dataset
 from justdata.core.loader import fetch_ds, load_ds
+from justdata.core.inventory import (
+    AdmittedInventory,
+    InventoryAsset,
+    InventoryFilter,
+    InventoryLoadError,
+    InventoryRecord,
+    InventorySource,
+    admit_inventory,
+    load_inventory,
+    open_inventory,
+)
 from justdata.core.metadata import (
     MetadataSidecar,
     apply_metadata_mode,
@@ -39,10 +50,17 @@ from justdata.core.sources import (
 from justdata.core.stats import compute_feature_stats, make_stats_iterator
 
 __all__ = [
+    "AdmittedInventory",
     "DataPipeline",
     "DatasetInfo",
+    "InventoryAsset",
+    "InventoryFilter",
+    "InventoryLoadError",
+    "InventoryRecord",
+    "InventorySource",
     "MetadataSidecar",
     "ResolvedPreset",
+    "admit_inventory",
     "apply_metadata_mode",
     "compute_feature_stats",
     "filter_by_metadata",
@@ -60,10 +78,12 @@ __all__ = [
     "has_pipeline",
     "list_pipelines",
     "load_ds",
+    "load_inventory",
     "make_stats_iterator",
     "merge_with_presets",
     "metadata_filter_predicate",
     "numeric_metadata",
+    "open_inventory",
     "register_adapter",
     "register_dataset",
     "register_default_source_loader",

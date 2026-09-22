@@ -65,24 +65,31 @@ it must be explicitly opted in and is placed before shuffle so epoch order is no
 
 ### TensorFlow execution controls
 
-`load_ds` uses `tf.data.AUTOTUNE` for loader-owned maps by default. Advanced callers may set
-`map_parallel_calls`, `private_threadpool_size`, and `max_intra_op_parallelism` to bound TensorFlow input-pipeline
-concurrency. Omitting these arguments preserves the default TensorFlow behavior.
-The map limit also applies to metadata sidecar writing when enabled.
+`load_ds` uses `tf.data.AUTOTUNE` for loader-owned maps by default. Advanced callers may set `map_parallel_calls`,
+`private_threadpool_size`, and `max_intra_op_parallelism` to bound TensorFlow input-pipeline concurrency. Omitting these
+arguments preserves the default TensorFlow behavior. The map limit also applies to metadata sidecar writing when
+enabled.
 
 ### Core Public API
 
-| Function                                                              | Description                                                                                                    |
-| :-------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------- |
-| `justdata.core.fetch_ds(dataset_names, splits_info, data_dir)`        | Raw dataset loading through registered source loaders. Returns a `tf.data.Dataset` in canonical schema.        |
-| `justdata.core.load_ds(...)`                                          | Full pipeline for training or evaluation. Handles caching, augmentation, shuffling, batching, and prefetching. |
-| `justdata.vision.minic.create_minic_datasets(...)`                    | Constructs Mini-C corruption benchmark datasets from a shared preprocessed base dataset.                       |
-| `justdata.acoustic.corruptions.create_audio_corruption_datasets(...)` | Constructs acoustic corruption benchmark datasets from a shared preprocessed base dataset.                     |
-| `justdata.acoustic.dcase2025.make_source_dataset(...)`                | Builds DCASE Task 1 source-domain datasets with split-safety checks.                                           |
+| Function                                                              | Description                                                                                                          |
+| :-------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------- |
+| `justdata.core.fetch_ds(dataset_names, splits_info, data_dir)`        | Raw dataset loading through registered source loaders. Returns a `tf.data.Dataset` in canonical schema.              |
+| `justdata.core.load_ds(...)`                                          | Full pipeline for training or evaluation. Handles caching, augmentation, shuffling, batching, and prefetching.       |
+| `justdata.core.admit_inventory(...)`                                  | Strict offline validation of a resolved inventory into a disk snapshot with structured identity and failure reports. |
+| `justdata.core.open_inventory(snapshot_dir)`                          | Verify and reopen a completed inventory snapshot without original sources.                                           |
+| `justdata.core.load_inventory(admitted, ...)`                         | Apply the shared pipeline to an admitted inventory, including raw epoch finalization.                                |
+| `justdata.vision.minic.create_minic_datasets(...)`                    | Constructs Mini-C corruption benchmark datasets from a shared preprocessed base dataset.                             |
+| `justdata.acoustic.corruptions.create_audio_corruption_datasets(...)` | Constructs acoustic corruption benchmark datasets from a shared preprocessed base dataset.                           |
+| `justdata.acoustic.dcase2025.make_source_dataset(...)`                | Builds DCASE Task 1 source-domain datasets with split-safety checks.                                                 |
 
 Import `justdata.vision` before resolving built-in vision datasets or pipelines. Hugging Face vision datasets are
 referenced with the `hf:` prefix (e.g., `hf:cifar10`), and WILDS image classification datasets are referenced with the
 `wilds:` prefix (e.g., `wilds:camelyon17`).
+
+Use the [strict local inventory API](docs/inventory.md) when every requested source and record must be accounted for. It
+verifies expected content digests, preserves record IDs and order, and reports declared filtering. Existing `fetch_ds`
+and `load_ds` retain their legacy source-skipping behavior and do not provide the strict admission guarantee.
 
 ______________________________________________________________________
 
@@ -376,9 +383,9 @@ are fixed by design and cannot be overridden via kwargs; to use custom bounds, c
 ### 6. Non-RA Operations
 
 `Invert`, `Cutout`, `SolarizeAdd`, and `Grayscale` are outside the fixed 14-op pool and cannot be selected through
-RandAugment, TrivialAugment, or TrivialAugmentWide. The public `exclude_ops` parameter only removes operations from
-the pool; listing these names has no effect. The `cutout_const` argument remains accepted for compatibility and
-has no effect. Random erasing is available through the `random_erasing` late-augmentation stage.
+RandAugment, TrivialAugment, or TrivialAugmentWide. The public `exclude_ops` parameter only removes operations from the
+pool; listing these names has no effect. The `cutout_const` argument remains accepted for compatibility and has no
+effect. Random erasing is available through the `random_erasing` late-augmentation stage.
 
 ______________________________________________________________________
 
@@ -853,9 +860,8 @@ train_ds, N = load_ds(
 
 ### Reusable, Explicitly Seeded Epochs
 
-Use `return_raw_ds=True` to prepare the source, pipeline, preprocessing, cache,
-and filters once, then materialize the complete remaining training pipeline for
-each epoch:
+Use `return_raw_ds=True` to prepare the source, pipeline, preprocessing, cache, and filters once, then materialize the
+complete remaining training pipeline for each epoch:
 
 ```python
 prepared_train, tools = load_ds(
@@ -880,17 +886,14 @@ for epoch in range(num_epochs):
     train_one_epoch(train_iterator)
 ```
 
-`finalize_epoch` applies standard augmentation, shuffle, postprocessing,
-batching, late augmentation, padding, and prefetching. The epoch seed is split
-into standard- and late-augmentation seeds, with source and batch indices folded
-in. Shuffle uses the epoch seed with reshuffling disabled on the materialized
-dataset. With `deterministic=True`, repeating a seed therefore reproduces the
-epoch independently of previous iterator creation or consumption, including
+`finalize_epoch` applies standard augmentation, shuffle, postprocessing, batching, late augmentation, padding, and
+prefetching. The epoch seed is split into standard- and late-augmentation seeds, with source and batch indices folded
+in. Shuffle uses the epoch seed with reshuffling disabled on the materialized dataset. With `deterministic=True`,
+repeating a seed therefore reproduces the epoch independently of previous iterator creation or consumption, including
 when the returned TensorFlow dataset is iterated more than once.
 
-For an augmentation callback that depends only on its input sample and supplied
-seed, pass `augment_is_stateless=True` to `finalize_epoch` to run standard
-augmentation concurrently using `map_parallel_calls` (or `AUTOTUNE`). With
+For an augmentation callback that depends only on its input sample and supplied seed, pass `augment_is_stateless=True`
+to `finalize_epoch` to run standard augmentation concurrently using `map_parallel_calls` (or `AUTOTUNE`). With
 `deterministic=True`, sample order and indexed RNG seeds remain unchanged:
 
 ```python
@@ -902,18 +905,15 @@ train_iterator, n_batches = tools["finalize_epoch"](
 )
 ```
 
-This flag is the caller's assertion that the augmentation callback uses no
-stateful RNG, mutable state, or side effects. It defaults to `False`, preserving
-serial standard augmentation for deterministic epochs. It does not change the
+This flag is the caller's assertion that the augmentation callback uses no stateful RNG, mutable state, or side effects.
+It defaults to `False`, preserving serial standard augmentation for deterministic epochs. It does not change the
 one-shot `load_ds` or `finalize_fn` seed scheduling.
 
-With `cache_dataset=False`, source samples, preprocessing, and filters still run
-on every iteration; only loader and graph preparation are reused. A fresh NumPy
-iterator is created by each `finalize_epoch(..., as_numpy=True)` call.
+With `cache_dataset=False`, source samples, preprocessing, and filters still run on every iteration; only loader and
+graph preparation are reused. A fresh NumPy iterator is created by each `finalize_epoch(..., as_numpy=True)` call.
 
-`finalize_epoch` rejects `cache_model_inputs=True` when training or evaluation
-augmentation is enabled because that downstream cache intentionally freezes the
-first sampled augmented views. Existing one-shot `load_ds` and `finalize_fn`
+`finalize_epoch` rejects `cache_model_inputs=True` when training or evaluation augmentation is enabled because that
+downstream cache intentionally freezes the first sampled augmented views. Existing one-shot `load_ds` and `finalize_fn`
 behavior is unchanged.
 
 ### Loading a Hugging Face Dataset
@@ -972,8 +972,8 @@ train_ds, N = load_ds(
 )
 ```
 
-FMoW source inventories can opt into authoritative sequence identity and
-acquisition time without changing the default WILDS signature:
+FMoW source inventories can opt into authoritative sequence identity and acquisition time without changing the default
+WILDS signature:
 
 ```python
 from justdata.core import fetch_ds
@@ -990,13 +990,11 @@ for sample in inventory.as_numpy_iterator():
     timestamp = source["timestamp"]      # UTF-8 bytes
 ```
 
-The option accepts only `location_id` and `timestamp`. JustData maps every
-emitted `wilds_index` through WILDS' authoritative `full_idxs` mapping:
-`location_id` is the exact original FMoW sequence-directory basename, and
-`timestamp` preserves the source timezone-aware ISO-8601 text. Invalid fields,
-target-equivalent fields, missing source columns, or unreliable mappings fail
-closed. The `wilds_source` mapping is absent without the opt-in; it is retained
-by `metadata_mode="full"` and removed by `numeric_only`.
+The option accepts only `location_id` and `timestamp`. JustData maps every emitted `wilds_index` through WILDS'
+authoritative `full_idxs` mapping: `location_id` is the exact original FMoW sequence-directory basename, and `timestamp`
+preserves the source timezone-aware ISO-8601 text. Invalid fields, target-equivalent fields, missing source columns, or
+unreliable mappings fail closed. The `wilds_source` mapping is absent without the opt-in; it is retained by
+`metadata_mode="full"` and removed by `numeric_only`.
 
 The base `wilds:fmow` preset has no stochastic per-sample training augmentation, so train model-input caching is safe
 when explicitly opted in. Do not use train model-input caching with `wilds:fmow_strong` unless freezing the first pass
@@ -1068,20 +1066,16 @@ group and provides the standard Linux dynamic loader required by Ruff's PyPI exe
 
 ### Releases
 
-GitLab builds a wheel and source distribution after lint, the default test suite,
-and all Python 3.11–3.13 package-support jobs pass. Build artifacts are retained
-for one week. Tag pipelines publish those artifacts to
-[PyPI](https://pypi.org/project/justdata/) after the existing manual `golden` job
-also passes; start that job in GitLab to complete a release.
+GitLab builds a wheel and source distribution after lint, the default test suite, and all Python 3.11–3.13
+package-support jobs pass. Build artifacts are retained for one week. Tag pipelines publish those artifacts to
+[PyPI](https://pypi.org/project/justdata/) after the existing manual `golden` job also passes; start that job in GitLab
+to complete a release.
 
-Before tagging, update `pyproject.toml`, `src/justdata/__init__.py`, and
-`CHANGELOG.md`, then run `uv lock`. Push a tag matching the package version, with
-an optional `v` prefix (for example, `v1.1.0` or `1.1.0`). Publishing rejects tags
-that disagree with either version declaration. Branch pipelines build artifacts
-without publishing.
+Before tagging, update `pyproject.toml`, `src/justdata/__init__.py`, and `CHANGELOG.md`, then run `uv lock`. Push a tag
+matching the package version, with an optional `v` prefix (for example, `v1.1.0` or `1.1.0`). Publishing rejects tags
+that disagree with either version declaration. Branch pipelines build artifacts without publishing.
 
-Configure a [PyPI GitLab trusted publisher](https://docs.pypi.org/trusted-publishers/adding-a-publisher/)
-for the `justdata` project with namespace `rhizome-labs/public`, project
-`justdata`, pipeline path `.gitlab-ci.yml`, and environment `release`. The
-`publish` job requests a GitLab ID token with audience `pypi` and requires trusted
+Configure a [PyPI GitLab trusted publisher](https://docs.pypi.org/trusted-publishers/adding-a-publisher/) for the
+`justdata` project with namespace `rhizome-labs/public`, project `justdata`, pipeline path `.gitlab-ci.yml`, and
+environment `release`. The `publish` job requests a GitLab ID token with audience `pypi` and requires trusted
 publishing; no stored PyPI API token is needed.

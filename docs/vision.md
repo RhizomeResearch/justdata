@@ -418,3 +418,179 @@ Shared guarantees are implemented in `justdata.core` where possible:
 `metadata_mode`, `as_numpy`, padding masks, seeded execution, and preset hashing.
 Modality packages own schema-specific stages, registries, corruptions, and
 frontend or transform contracts.
+
+## 12. Replayable dense segmentation
+
+`vision/segmentation` supports replayable dense geometry through an explicit
+`geometry_kwargs` mapping. Omitting it or setting it to `None` preserves the
+existing segmentation behavior and presets. To enable recorded geometry, use
+`apply_presets=False` and supply `geometry_kwargs` with the required
+`class_values`. This mode also accepts optional `color_jitter_kwargs`,
+`keep_original_mask`, and normalization/layout settings in `postproc_kwargs`.
+Nonempty legacy `preproc_kwargs`, `aug_kwargs`, and `laug_kwargs` cannot be
+combined with recorded geometry; empty mappings or `None` are accepted.
+Configure resize, crop, flip, and padding in `geometry_kwargs`, and photometric
+augmentation in `color_jitter_kwargs`. Fixed-size postprocessing options such
+as `postproc_kwargs.image_size` are rejected in this mode. Unknown or conflicting
+settings fail before source access.
+`load_ds(..., return_config=True)` includes the resolved geometry and all four
+stages in the executed configuration. This example creates an evaluation view:
+
+```python
+import tensorflow as tf
+import justdata.vision
+from justdata.core import get_pipeline
+from justdata.vision.geometry import restore_dense_predictions
+
+pipeline = get_pipeline(
+    pipeline_name="vision/segmentation",
+    apply_presets=False,
+    overrides={
+        "geometry_kwargs": {
+            "class_values": (0, 1, 2),
+            "ignore_value": 255,
+            "train_crop_size": 512,
+            "train_resize_range": (512, 1024),
+            "horizontal_flip_probability": 0.5,
+            "eval_long_side": 1024,
+            "eval_upscale": False,
+            "patch_size": 16,
+            "image_pad_mode": "CONSTANT",
+            "image_pad_value": (0.0, 0.0, 0.0),
+            "image_antialias": True,
+        },
+        "postproc_kwargs": {
+            "normalize_image": True,
+            "normalization_params": (
+                (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+            ),
+            "permute_image": True,
+        },
+    },
+)
+preprocess, augment, late_augment, postprocess = pipeline.build(is_training=False)
+source = {"image": tf.zeros([301, 601, 3], tf.uint8),
+          "mask": tf.zeros([301, 601], tf.int32)}
+view = postprocess(preprocess(source))
+grid_h, grid_w = tf.unstack(view["geometry"]["grid_size"])
+patch_logits = tf.zeros([grid_h, grid_w, 3], tf.float32)  # example model output, HWC
+predictions = restore_dense_predictions(patch_logits, view["geometry"])
+# predictions and view["original_mask"] both have shape [301, 601].
+```
+
+Training first samples an integer shorter-side target uniformly from the
+inclusive `train_resize_range`, resizes while preserving aspect ratio, pads
+to fit `train_crop_size`, and samples a square crop origin uniformly from all
+fitting integer positions. A stateless horizontal flip follows with the
+configured probability. Final patch padding is added if the crop size is not
+divisible by `patch_size`. The defaults produce a 512 × 512 training input.
+Use `pipeline.build(is_training=True)` with `augment(sample, seed)` or let
+`load_ds(..., dataset_type="train")` supply its seed. Both int32 and int64
+two-element seeds are supported. The pipeline splits geometry and color seeds;
+geometry splits again in resize, crop-top, crop-left, and flip order.
+
+Evaluation preserves the entire rectangular frame. The longer side is capped
+at `eval_long_side` (default 1024); smaller images stay at their original size
+unless `eval_upscale=True`. Each scaled dimension rounds half up, with a minimum
+of one pixel. Apart from this lower bound, each rounded dimension differs from
+its scaled value by at most half a pixel. Padding extends only the bottom and right edges to the
+next patch multiple; the padded dimension may therefore exceed the resize cap.
+There is no evaluation crop or random augmentation.
+
+RGB resizing is bilinear, with half-pixel centers and configurable antialiasing
+(default enabled). RGB values are in the `[0, 255]` domain before normalization.
+`image_pad_mode` accepts `CONSTANT`, `REFLECT`, or `SYMMETRIC`. Constant padding
+uses the three-channel `image_pad_value`; reflection can repeat across arbitrarily
+wide padding, and a singleton axis repeats its sole pixel. Padding occurs before
+normalization: with no color jitter, a constant channel `v` becomes
+`(v / 255 - mean) / (std + 1e-8)`. Disabling normalization keeps float32 values
+in the `[0, 255]` domain. `permute_image=True` produces CHW images; all masks
+remain HW. Optional training `color_jitter_kwargs` uses the existing color
+jitter function after geometry and before normalization, affecting RGB pixels
+including padding. It never changes masks, validity, or geometry. Other
+augmentation policies are not part of this route's replay contract.
+
+Categorical masks accept HW or HW1 integer tensors and return HW with the
+same dtype (`uint8`, `uint16`, `int16`, `int32`, or `int64`). All source values
+must belong to the caller's unique `class_values` or distinct `ignore_value`;
+IDs must fit int32, and the ignore value must also fit the actual mask dtype.
+Validation runs before resizing or cropping, so invalid labels cannot disappear
+through downsampling. Nearest sampling gathers integers directly with source
+index `floor((output_index + 0.5) * input_size / output_size)`, clamped to the
+last source pixel. It introduces no fractional or new class IDs. Thin regions
+can disappear under downsampling according to that exact sampling rule.
+
+Every synthetic mask pixel is filled with `ignore_value`, independently of RGB
+padding. The emitted boolean masks have separate meanings:
+
+| Output | Meaning of `True` |
+| :-- | :-- |
+| `source_valid_mask` | Pixel comes from the resized source frame, including annotation-ignore regions. |
+| `pixel_valid_mask` | Pixel has source support, a non-ignore label, and available annotation. |
+| `annotation_valid_mask` | Optional caller-supplied HW annotation availability after the paired transform. |
+| `padding_mask` | Shared loader output: this batch row is a real example. |
+
+Without a target mask, pixel supervision is entirely false. All-ignore targets
+also have no valid supervised pixels while retaining source image support.
+Combine row and pixel validity when computing losses or metrics. Geometric
+image support and annotation availability are distinct; neither is automatically
+a model's feature-exclusion mask.
+
+Preprocessing retains the canonical original target as `original_mask` and,
+when supplied, `original_annotation_valid_mask`. They undergo no geometry or
+photometric operations. `keep_original_mask=False` omits these copies for
+training when the caller retains original targets separately. Normal batching
+requires equal shapes for every stacked field: use `batch_size=1` or group
+identical original and model-input sizes for evaluation. For fixed crop training
+with mixed original sizes, retain originals outside the batches and set
+`keep_original_mask=False`. This route does not add spatial batch padding.
+
+### Numeric records and replay
+
+Each view carries `geometry` at the sample's top level, outside static metadata.
+It survives metadata filtering and becomes a nested numeric batch dictionary.
+Version 1 defines these fields:
+
+| Field | Convention |
+| :-- | :-- |
+| `version` | Scalar int32, `1`. |
+| `original_size`, `resized_size`, `model_input_size`, `grid_size` | int32 `[height, width]`; the grid uses the declared `patch_size`. |
+| `crop_box` | int32 `[top, left, height, width]` in the resized, pre-padded frame, before flipping. |
+| `pre_padding`, `post_padding` | int32 `[top, bottom, left, right]`, before crop and after flip respectively. |
+| `horizontal_flip`, `is_training`, `image_antialias` | Boolean scalars. |
+| `image_interpolation`, `mask_interpolation`, `alignment` | int32 codes: `1` = bilinear, `0` = nearest; alignment `1` = half-pixel centers. |
+| `image_pad_mode` | int32 code: `0` = constant, `1` = reflect, `2` = symmetric. |
+| `image_pad_value` | float32 RGB vector in the `[0, 255]` domain. |
+| `mask_fill_value`, `class_values`, `patch_size` | int32 ignore scalar, class vector, and positive patch scalar. |
+
+`sample_dense_geometry(original_size, DenseGeometryConfig(...), is_training=...,
+seed=...)` constructs records independently of the pipeline.
+`replay_dense_geometry(original_sample, record)` validates the record and source
+dimensions and applies the realized resize, padding, crop, and flip without an
+RNG. It returns RGB before color jitter and normalization; reproduce those
+separately if enabled. The pipeline's original-target copies are a preprocessing
+responsibility, not added by the low-level replay function. Records can be saved
+as numeric arrays using `np.savez` and loaded with `np.load(..., allow_pickle=False)`.
+Replay supports eager execution, `tf.function`, and `tf.data.Dataset.map`.
+Zero-filled batch-padding records are invalid: only replay or score rows whose
+`padding_mask` is true.
+
+### Original-coordinate scoring
+
+`restore_dense_scores(scores, record)` accepts a single floating HWC logit field,
+resizes it to the padded model-input size, removes model-input padding, then
+resizes to the original size. Both resizes use float32 bilinear interpolation,
+`align_corners=False`, `half_pixel_centers=True`, no antialiasing, and clamped
+border coordinates: `source = (destination + 0.5) * input_size / output_size - 0.5`.
+`restore_dense_predictions` applies argmax only after those steps and returns
+channel indices as int32; map them to task IDs separately when needed.
+
+For semantic scores already reduced at the padded model-input resolution,
+`restore_dense_scores(..., from_model_input=True)` checks that size and skips the
+first resize. Query classification and mask activation/reduction belong to the
+caller; passing reduced scores through this entry point preserves their order
+of operations. Training crops and unknown geometry versions have no scoring
+inverse here and are rejected. Nonfinite fields and integer predictions are
+rejected. The independent scalar reference in `tests/test_dense_geometry.py`
+checks the complete resize/unpad/resize path and detects early argmax or direct
+patch-to-original resizing.

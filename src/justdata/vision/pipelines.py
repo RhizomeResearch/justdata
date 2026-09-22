@@ -1,5 +1,6 @@
 import copy
 import dataclasses
+from collections.abc import Mapping
 
 from justdata.core.config_resolution import (
     reject_unknown_keys,
@@ -324,6 +325,12 @@ def _resolve_classification_config(config, is_training):
 
 
 def _resolve_segmentation_config(config, is_training):
+    if config.get("geometry_kwargs") is not None:
+        return _resolve_dense_segmentation_config(config, is_training)
+    for name in ("color_jitter_kwargs", "keep_original_mask"):
+        if name in config:
+            raise ValueError(f"{name} requires geometry_kwargs")
+
     from justdata.vision.augmentations.auto import (
         rand_augment,
         trivial_augment,
@@ -340,7 +347,9 @@ def _resolve_segmentation_config(config, is_training):
         make_preprocessing,
     )
 
-    reject_unknown_keys(config, _VISION_TOP_LEVEL, path="pipeline")
+    reject_unknown_keys(
+        config, _VISION_TOP_LEVEL | {"geometry_kwargs"}, path="pipeline"
+    )
     preproc = resolve_callable_config(
         make_preprocessing, config.get("preproc_kwargs"), path="preproc_kwargs"
     )
@@ -504,8 +513,25 @@ def default_segmentation_pipeline(
     aug_kwargs: dict = None,
     laug_kwargs: dict = None,
     postproc_kwargs: dict = None,
+    geometry_kwargs: dict | None = None,
     **kwargs,
 ) -> PipelineFuncs:
+    """Build segmentation stages, with optional recorded dense geometry."""
+    if geometry_kwargs is not None:
+        return _build_dense_segmentation_pipeline(
+            kwargs
+            | {
+                "geometry_kwargs": geometry_kwargs,
+                "preproc_kwargs": preproc_kwargs,
+                "aug_kwargs": aug_kwargs,
+                "laug_kwargs": laug_kwargs,
+                "postproc_kwargs": postproc_kwargs,
+            }
+        )
+    for name in ("color_jitter_kwargs", "keep_original_mask"):
+        if name in kwargs:
+            raise ValueError(f"{name} requires geometry_kwargs")
+
     preproc_kwargs = preproc_kwargs or {}
     aug_kwargs = aug_kwargs or {}
     laug_kwargs = laug_kwargs or {}
@@ -523,4 +549,150 @@ def default_segmentation_pipeline(
         make_augmentations(**aug_kwargs),
         make_late_augmentations(**laug_kwargs),
         make_postprocessing(**postproc_kwargs),
+    )
+
+
+def _resolve_dense_segmentation_config(config, is_training):
+    from justdata.vision.augmentations.color import color_jitter
+    from justdata.vision.geometry import DenseGeometryConfig
+    from justdata.vision.tasks.segmentation import make_dense_postprocessing
+
+    reject_unknown_keys(
+        config,
+        _VISION_TOP_LEVEL
+        | {
+            "geometry_kwargs",
+            "color_jitter_kwargs",
+            "keep_original_mask",
+        },
+        path="pipeline",
+    )
+    for name in ("preproc_kwargs", "aug_kwargs", "laug_kwargs"):
+        stage = config.get(name)
+        if stage is not None and not isinstance(stage, Mapping):
+            raise TypeError(f"{name} must be a mapping or None")
+        if stage:
+            raise ValueError(
+                f"{name} cannot be combined with geometry_kwargs; "
+                "configure geometry and color_jitter_kwargs explicitly"
+            )
+    if config.get("augment_eval", False):
+        raise ValueError(
+            "dense segmentation evaluation must use deterministic geometry"
+        )
+    geometry = dataclasses.asdict(
+        DenseGeometryConfig(
+            **resolve_callable_config(
+                DenseGeometryConfig,
+                config.get("geometry_kwargs"),
+                path="geometry_kwargs",
+            )
+        )
+    )
+    post = resolve_callable_config(
+        make_dense_postprocessing,
+        (config.get("postproc_kwargs") or {}) | {"is_training": is_training},
+        path="postproc_kwargs",
+        omit={"geometry"},
+    )
+    normalization = _normalization_contract(post)
+    if normalization["kind"] == "mean_std":
+        import math
+
+        if any(
+            not math.isfinite(v) for row in post["normalization_params"] for v in row
+        ) or any(v <= 0 for v in post["normalization_params"][1]):
+            raise ValueError("normalization_params must be finite with positive std")
+    for key in ("normalize_image", "permute_image"):
+        if type(post[key]) is not bool:
+            raise ValueError(f"postproc_kwargs.{key} must be boolean")
+    keep_original = config.get("keep_original_mask", True)
+    if type(keep_original) is not bool:
+        raise ValueError("keep_original_mask must be boolean")
+    jitter = config.get("color_jitter_kwargs")
+    if jitter is not None:
+        jitter = resolve_callable_config(
+            color_jitter, jitter, path="color_jitter_kwargs", omit={"image", "seed"}
+        )
+    geometry_contract = geometry | {
+        "record_version": 1,
+        "image_interpolation": "bilinear",
+        "mask_interpolation": "nearest",
+        "resize_alignment": "half_pixel",
+        "dimension_rounding": "half_up_min_one",
+        "padding_placement": "bottom_right",
+        "image_padding_domain": "rgb_0_255_before_normalization",
+        "mask_padding_value": geometry["ignore_value"],
+        "resize_policy": "uniform_integer_short_side"
+        if is_training
+        else "long_side_cap",
+    }
+    size = (
+        (geometry["train_crop_size"] + geometry["patch_size"] - 1)
+        // geometry["patch_size"]
+    ) * geometry["patch_size"]
+    shape = (
+        ([3, size, size] if post["permute_image"] else [size, size, 3])
+        if is_training
+        else None
+    )
+    return {
+        "configuration": {
+            key: copy.deepcopy(value)
+            for key, value in config.items()
+            if key != "model_input"
+        },
+        "stages": {
+            "preprocess": {
+                "active": True,
+                "config": {
+                    "class_values": geometry["class_values"],
+                    "ignore_value": geometry["ignore_value"],
+                    "keep_original_mask": keep_original,
+                },
+            },
+            "augment": {
+                "active": is_training,
+                "config": {"geometry": geometry, "color_jitter_kwargs": jitter},
+                "geometry": geometry_contract if is_training else None,
+            },
+            "late_augment": {"active": False, "config": {}},
+            "postprocess": {
+                "active": True,
+                "config": post,
+                "geometry": None if is_training else geometry_contract,
+            },
+        },
+        "model_input": {
+            "output_key": "image",
+            "layout": "bchw" if post["permute_image"] else "bhwc",
+            "dtype": "float32",
+            "static_shape": shape,
+            "normalization": normalization,
+        },
+        "requirements": {"num_classes": False},
+    }
+
+
+def _build_dense_segmentation_pipeline(config) -> PipelineFuncs:
+    """Build the recorded geometry mode of the segmentation pipeline."""
+    from justdata.vision.geometry import DenseGeometryConfig
+    from justdata.vision.tasks.segmentation import (
+        make_dense_augmentations,
+        make_dense_postprocessing,
+        make_dense_preprocessing,
+        make_late_augmentations,
+    )
+
+    is_training = (config.get("postproc_kwargs") or {}).get("is_training", False)
+    resolved = _resolve_dense_segmentation_config(config, is_training)
+    stages = resolved["stages"]
+    geometry = DenseGeometryConfig(**stages["augment"]["config"]["geometry"])
+    return (
+        make_dense_preprocessing(**stages["preprocess"]["config"]),
+        make_dense_augmentations(
+            geometry, stages["augment"]["config"]["color_jitter_kwargs"]
+        ),
+        make_late_augmentations(),
+        make_dense_postprocessing(geometry, **stages["postprocess"]["config"]),
     )

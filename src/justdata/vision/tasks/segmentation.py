@@ -192,3 +192,85 @@ def make_postprocessing(
         return sample
 
     return postprocessing
+
+
+def make_dense_preprocessing(
+    class_values,
+    ignore_value=255,
+    keep_original_mask=True,
+):
+    """Validate source labels before caching and optionally retain scoring targets."""
+    from justdata.vision.geometry import validate_dense_sample
+
+    def preprocessing(sample):
+        sample = normalize_image_format(sample)
+        sample = validate_dense_sample(sample, class_values, ignore_value)
+        if keep_original_mask:
+            for key in ("mask", "annotation_valid_mask"):
+                if key in sample:
+                    sample = sample | {f"original_{key}": sample[key]}
+        return sample
+
+    return preprocessing
+
+
+def make_dense_augmentations(geometry, color_jitter_kwargs=None):
+    """Sample paired resize/crop/flip geometry, then optional image-only jitter."""
+    from justdata.vision.augmentations.color import color_jitter
+    from justdata.vision.geometry import replay_dense_geometry, sample_dense_geometry
+
+    def augmentations(sample, seed):
+        seeds = tf.random.experimental.stateless_split(seed, 2)
+        record = sample_dense_geometry(
+            tf.shape(sample["image"])[:2], geometry, is_training=True, seed=seeds[0]
+        )
+        sample = replay_dense_geometry(sample, record)
+        if color_jitter_kwargs is not None:
+            sample = sample | {
+                "image": color_jitter(sample["image"], seeds[1], **color_jitter_kwargs)
+            }
+        return sample
+
+    return augmentations
+
+
+def make_dense_postprocessing(
+    geometry,
+    is_training=False,
+    normalize_image=True,
+    normalization_params=((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+    permute_image=True,
+):
+    """Create deterministic evaluation geometry and normalize RGB exactly once."""
+    from justdata.vision.geometry import replay_dense_geometry, sample_dense_geometry
+    from justdata.vision.transforms import nhwc_to_nchw
+
+    def postprocessing(sample, **kwargs):
+        if not is_training:
+            record = sample_dense_geometry(
+                tf.shape(sample["image"])[:2], geometry, is_training=False
+            )
+            sample = replay_dense_geometry(sample, record)
+        if is_training:
+            size = (
+                (geometry.train_crop_size + geometry.patch_size - 1)
+                // geometry.patch_size
+                * geometry.patch_size
+            )
+            sample["image"].set_shape([size, size, 3])
+            for key in (
+                "mask",
+                "source_valid_mask",
+                "pixel_valid_mask",
+                "annotation_valid_mask",
+            ):
+                if key in sample:
+                    sample[key].set_shape([size, size])
+        image = tf.cast(sample["image"], tf.float32)
+        if normalize_image:
+            image = normalize(image, *normalization_params)
+        if permute_image:
+            image = nhwc_to_nchw(image)
+        return sample | {"image": image}
+
+    return postprocessing

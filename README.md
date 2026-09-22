@@ -499,6 +499,12 @@ complex interpolation during dense evaluation, images are resized to the target 
 the bottom and right edges such that both height and width are exact multiples of the ViT patch size (e.g., 14). This is
 implemented in `justdata.vision.transforms.pad_to_patch_multiple`.
 
+For semantic segmentation with replayable geometry, select `vision/segmentation` with
+`apply_presets=False` and explicit `geometry_kwargs`. It supports paired aspect-preserving training resize and crops,
+longer-side evaluation caps, independent RGB/ignore padding, per-pixel validity, and original-coordinate score
+restoration. See [the dense geometry contract](docs/vision.md#12-replayable-dense-segmentation) for configuration,
+record fields, replay, and batching requirements.
+
 ______________________________________________________________________
 
 ## Registry System

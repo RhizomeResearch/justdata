@@ -197,6 +197,43 @@ def test_example_limit_follows_author_list_order(tmp_path):
     ]
 
 
+def test_seeded_selection_pairs_random_source_ids_across_label_modes(tmp_path):
+    images, annotations = _archives(tmp_path / "archives", train_count=12)
+    semantic_dir = tmp_path / "semantic"
+    panoptic_dir = tmp_path / "panoptic"
+    semantic = build_inventory(
+        images, annotations, "train", semantic_dir, limit=5, sample_seed=2025
+    )
+    panoptic = build_inventory(
+        images,
+        annotations,
+        "train",
+        panoptic_dir,
+        limit=5,
+        labels="panoptic",
+        sample_seed=2025,
+    )
+    semantic_ids = semantic.report["splits"][0]["retained_ids"]
+    panoptic_ids = panoptic.report["splits"][0]["retained_ids"]
+    assert semantic_ids == panoptic_ids
+    assert len(semantic_ids) == 5
+    assert semantic_ids != [f"lars/v1.0.0/train/train_{i:04d}" for i in range(1, 6)]
+    semantic_source = json.loads((semantic_dir / "source.json").read_text())
+    panoptic_source = json.loads((panoptic_dir / "source.json").read_text())
+    assert semantic_source["sample_seed"] == panoptic_source["sample_seed"] == 2025
+    assert (
+        semantic_source["selected_ids_sha256"] == panoptic_source["selected_ids_sha256"]
+    )
+
+
+def test_sample_seed_requires_a_positive_limit(tmp_path):
+    images, annotations = _archives(tmp_path / "archives")
+    with pytest.raises(ValueError, match="sample_seed requires a limit"):
+        build_inventory(
+            images, annotations, "train", tmp_path / "missing-limit", sample_seed=17
+        )
+
+
 def test_plot_shows_five_paired_views_for_each_preset(tmp_path):
     matplotlib = pytest.importorskip("matplotlib")
     matplotlib.use("Agg", force=True)
@@ -206,12 +243,20 @@ def test_plot_shows_five_paired_views_for_each_preset(tmp_path):
             / "examples/vision/lars_segmentation_presets_plot.py"
         )
     )
-    images, annotations = _archives(tmp_path / "archives", train_count=5)
+    images, annotations = _archives(tmp_path / "archives", train_count=8)
     semantic_dir = tmp_path / "semantic"
     panoptic_dir = tmp_path / "panoptic"
-    build_inventory(images, annotations, "train", semantic_dir, limit=5)
     build_inventory(
-        images, annotations, "train", panoptic_dir, limit=5, labels="panoptic"
+        images, annotations, "train", semantic_dir, limit=5, sample_seed=2025
+    )
+    build_inventory(
+        images,
+        annotations,
+        "train",
+        panoptic_dir,
+        limit=5,
+        labels="panoptic",
+        sample_seed=2025,
     )
     output = tmp_path / "presets.png"
     plot_example["plot"](semantic_dir, panoptic_dir, output, seed=17)

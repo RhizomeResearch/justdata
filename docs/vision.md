@@ -754,10 +754,12 @@ uv run python examples/vision/lars_local_inventory.py \
 
 `--labels semantic` and `--preset segmentation_a2` are the defaults. Change
 `--preset` to `segmentation_a3` or `segmentation_a1` for the lighter or stronger
-training view. Use `--split train` for training views and
-omit `--limit` to admit the complete selected split. Each invocation needs a
-new `--output-dir`; it will not replace
-an existing directory. The example reads the author's `image_list.txt` order,
+training view. Use `--split train` for training views. `--limit N` normally takes
+the first N entries in the author's image list; add `--sample-seed S` to draw N
+entries without replacement. Reuse S for matching semantic and panoptic
+inventories. Omit `--limit` to admit the complete selected split. Each
+invocation needs a new `--output-dir`; it will not replace an existing
+directory. The example uses the author's `image_list.txt` to identify records,
 reconciles all image, semantic-mask, panoptic-mask and annotation names, checks
 the decoded pairs, and then calls `admit_inventory`. Panoptic mode checks that
 the segment table references match the panoptic PNG and that its semantic
@@ -796,13 +798,13 @@ snapshots and run the complete [Matplotlib plotting example](../examples/vision/
 uv run python examples/vision/lars_local_inventory.py \
   --images-archive ~/Downloads/lars_v1.0.0_images.zip \
   --annotations-archive ~/Downloads/lars_v1.0.0_annotations.zip \
-  --split train --limit 5 --labels semantic \
+  --split train --limit 5 --sample-seed 2025 --labels semantic \
   --output-dir /tmp/lars-five-semantic
 
 uv run python examples/vision/lars_local_inventory.py \
   --images-archive ~/Downloads/lars_v1.0.0_images.zip \
   --annotations-archive ~/Downloads/lars_v1.0.0_annotations.zip \
-  --split train --limit 5 --labels panoptic \
+  --split train --limit 5 --sample-seed 2025 --labels panoptic \
   --output-dir /tmp/lars-five-panoptic
 
 uv run --with matplotlib python examples/vision/lars_segmentation_presets_plot.py \
@@ -819,7 +821,16 @@ images align. The panoptic panel colors categories and outlines individual
 segments. Matplotlib is needed only for this plotting command and is not a
 JustData dependency. Use fresh output paths when rerunning the commands.
 
-![Five LaRS samples with A1, A2, and A3 RGB views and their semantic and panoptic labels](assets/lars-five-segmentation-presets.png)
+The black area is the model's actual constant padding, with ignore or void
+labels in the corresponding masks. As in [Torchvision's ScaleJitter](https://docs.pytorch.org/vision/main/generated/torchvision.transforms.v2.ScaleJitter.html),
+the resize factor is relative to fitting the whole source image inside the
+512 × 512 crop. A1 samples factors from
+`[0.1, 2.0]`; at `0.1`, the image's longer side is only about 51 pixels, so
+the image occupies at most 1% of the crop. Almost half of A1's factor draws
+are below `1.0`, so padded views are expected. A2's minimum factor is `0.5`,
+and A3's is `0.8`, which limits this effect.
+
+![Five seeded random LaRS samples with A1, A2, and A3 RGB views and their semantic and panoptic labels](assets/lars-five-segmentation-presets.png)
 
 `snapshot/` contains the strict admitted inventory. `metadata.jsonl` maps
 numeric row IDs back to the complete source identity, scene attributes and

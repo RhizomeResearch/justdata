@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import random
 import re
 import shutil
 import stat
@@ -230,6 +231,7 @@ def build_inventory(
     *,
     limit: int | None = None,
     labels: str = "semantic",
+    sample_seed: int | None = None,
 ):
     """Create one strict, self-contained snapshot for train or validation."""
     if split not in {"train", "val"}:
@@ -238,6 +240,8 @@ def build_inventory(
         raise ValueError("labels must be semantic or panoptic")
     if limit is not None and (type(limit) is not int or limit <= 0):
         raise ValueError("limit must be a positive integer")
+    if sample_seed is not None and (type(sample_seed) is not int or limit is None):
+        raise ValueError("sample_seed requires a limit and must be an integer")
     output_dir = Path(output_dir).absolute()
     if output_dir.exists():
         raise FileExistsError(f"Output directory already exists: {output_dir}")
@@ -296,7 +300,11 @@ def build_inventory(
         if set(annotations_by_id) != set(images_by_id):
             raise ValueError("LaRS panoptic image and annotation IDs disagree")
 
-        selected = stems[:limit]
+        selected = (
+            stems[:limit]
+            if sample_seed is None
+            else random.Random(sample_seed).sample(stems, min(limit, len(stems)))
+        )
         max_segments = max(
             1,
             *(
@@ -442,6 +450,8 @@ def build_inventory(
                 "max_segments": max_segments,
                 "semantic_values": semantic_values,
             }
+            if sample_seed is not None:
+                source_record["sample_seed"] = sample_seed
             (output_dir / "source.json").write_text(
                 json.dumps(source_record, sort_keys=True, indent=2) + "\n",
                 encoding="utf-8",
@@ -466,6 +476,7 @@ def main() -> None:
     parser.add_argument("--split", choices=("train", "val"), required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--limit", type=_positive_int)
+    parser.add_argument("--sample-seed", type=int)
     parser.add_argument(
         "--labels", choices=("semantic", "panoptic"), default="semantic"
     )
@@ -486,6 +497,7 @@ def main() -> None:
         args.output_dir,
         limit=args.limit,
         labels=args.labels,
+        sample_seed=args.sample_seed,
     )
     source_info = json.loads((args.output_dir / "source.json").read_text())
     options = (

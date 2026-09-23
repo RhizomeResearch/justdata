@@ -233,11 +233,25 @@ class TestGetPipeline:
         [name for name in list_pipelines() if name.startswith("vision/")],
     )
     def test_registered_vision_pipeline_builds(self, pipeline_name, is_training):
+        options = (
+            {
+                "geometry_kwargs": {"train_crop_size": 32, "patch_size": 1},
+                "panoptic_kwargs": {
+                    "class_values": (1, 2),
+                    "thing_class_values": (2,),
+                    "max_segments": 4,
+                },
+            }
+            if pipeline_name == "vision/panoptic_segmentation"
+            else {
+                "aug_kwargs": {"image_size": 32},
+                "postproc_kwargs": {"image_size": 32},
+            }
+        )
         result = get_pipeline(
             pipeline_name=pipeline_name,
             apply_presets=False,
-            aug_kwargs={"image_size": 32},
-            postproc_kwargs={"image_size": 32},
+            **options,
         ).build(is_training=is_training)
         assert len(result) == 4
         assert all(callable(fn) for fn in result)

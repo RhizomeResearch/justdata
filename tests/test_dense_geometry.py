@@ -307,7 +307,9 @@ def test_restoration_rejects_crop_unknown_record_and_wrong_frame():
     with pytest.raises(
         tf.errors.InvalidArgumentError, match="unsupported geometry version"
     ):
-        restore_dense_scores(logits, evaluation | {"version": tf.constant(2)})
+        restore_dense_scores(logits, evaluation | {"version": tf.constant(3)})
+    with pytest.raises(tf.errors.InvalidArgumentError, match="Shape of tensor"):
+        restore_dense_scores(logits, evaluation | {"version": tf.constant([1, 3])})
     with pytest.raises(tf.errors.InvalidArgumentError, match="padded model input"):
         restore_dense_scores(logits, evaluation, from_model_input=True)
     with pytest.raises(TypeError, match="before argmax"):

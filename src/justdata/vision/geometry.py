@@ -6,7 +6,7 @@ bilinear RGB sampling, nearest categorical sampling, and bottom/right padding.
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import tensorflow as tf
 
@@ -75,6 +75,28 @@ class DenseGeometryConfig:
         object.__setattr__(self, "class_values", values)
         object.__setattr__(self, "train_resize_range", resize_range)
         object.__setattr__(self, "image_pad_value", fill)
+
+
+@dataclass(frozen=True)
+class PanopticGeometryConfig:
+    """Spatial settings shared with dense semantic geometry, without label IDs."""
+
+    train_crop_size: int = 512
+    train_resize_range: tuple[int, int] = (512, 1024)
+    horizontal_flip_probability: float = 0.5
+    eval_long_side: int = 1024
+    eval_upscale: bool = False
+    patch_size: int = 16
+    image_pad_mode: str = "CONSTANT"
+    image_pad_value: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    image_antialias: bool = True
+
+    def __post_init__(self):
+        validated = DenseGeometryConfig(
+            class_values=(0,), ignore_value=-1, **asdict(self)
+        )
+        object.__setattr__(self, "train_resize_range", validated.train_resize_range)
+        object.__setattr__(self, "image_pad_value", validated.image_pad_value)
 
 
 def _bottom_right(amount):
@@ -157,10 +179,30 @@ def sample_dense_geometry(
     }
 
 
-def _check_record(record):
+def sample_panoptic_geometry(
+    original_size, config: PanopticGeometryConfig, *, void_value, is_training, seed=None
+):
+    """Sample the same spatial distribution with a distinct label contract."""
+    spatial = DenseGeometryConfig(class_values=(0,), ignore_value=-1, **asdict(config))
+    record = sample_dense_geometry(
+        original_size, spatial, is_training=is_training, seed=seed
+    )
+    return record | {
+        "version": tf.constant(2, tf.int32),
+        "mask_fill_value": tf.constant(void_value, tf.int64),
+        "class_values": tf.constant([], tf.int32),
+    }
+
+
+def _check_record(record, *, versions=(1,)):
     record = tf.nest.map_structure(tf.convert_to_tensor, record)
+    record["version"] = tf.ensure_shape(record["version"], [])
+    tf.debugging.assert_equal(
+        tf.reduce_any(record["version"] == tf.constant(versions, tf.int32)),
+        True,
+        message="unsupported geometry version",
+    )
     for key, value in (
-        ("version", 1),
         ("alignment", 1),
         ("image_interpolation", 1),
         ("mask_interpolation", 0),
@@ -306,6 +348,22 @@ def replay_dense_geometry(sample, record):
     sample = validate_dense_sample(
         sample, record["class_values"], record["mask_fill_value"]
     )
+    result, categorical = _replay_spatial(sample, record)
+    support = result["source_valid_mask"]
+    if "mask" in sample:
+        mask = categorical(sample["mask"], record["mask_fill_value"])
+        result["mask"] = mask
+        valid = support & (mask != tf.cast(record["mask_fill_value"], mask.dtype))
+    else:
+        valid = tf.zeros_like(support)
+    if "annotation_valid_mask" in sample:
+        annotation = categorical(sample["annotation_valid_mask"], False)
+        result["annotation_valid_mask"] = annotation
+        valid &= annotation
+    return result | {"pixel_valid_mask": valid}
+
+
+def _replay_spatial(sample, record):
     tf.debugging.assert_equal(
         tf.shape(sample["image"])[:2],
         record["original_size"],
@@ -339,17 +397,7 @@ def replay_dense_geometry(sample, record):
 
     support = categorical(tf.ones(record["original_size"], tf.bool), False)
     result = sample | {"image": image, "geometry": record, "source_valid_mask": support}
-    if "mask" in sample:
-        mask = categorical(sample["mask"], record["mask_fill_value"])
-        result["mask"] = mask
-        valid = support & (mask != tf.cast(record["mask_fill_value"], mask.dtype))
-    else:
-        valid = tf.zeros_like(support)
-    if "annotation_valid_mask" in sample:
-        annotation = categorical(sample["annotation_valid_mask"], False)
-        result["annotation_valid_mask"] = annotation
-        valid &= annotation
-    return result | {"pixel_valid_mask": valid}
+    return result, categorical
 
 
 def _validate_scores(scores):
@@ -380,7 +428,7 @@ def restore_dense_scores(scores, record, *, from_model_input=False):
     Set ``from_model_input=True`` for scores already reduced at the padded input
     resolution; their size is checked and the first resize is skipped.
     """
-    record = _check_record(record)
+    record = _check_record(record, versions=(1, 2))
     scores = _validate_scores(scores)
     tf.debugging.assert_equal(
         record["is_training"],
@@ -417,7 +465,9 @@ def restore_dense_predictions(logits, record):
 
 __all__ = [
     "DenseGeometryConfig",
+    "PanopticGeometryConfig",
     "sample_dense_geometry",
+    "sample_panoptic_geometry",
     "validate_dense_sample",
     "replay_dense_geometry",
     "restore_dense_scores",

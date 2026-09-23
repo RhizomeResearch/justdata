@@ -714,3 +714,199 @@ def _build_dense_segmentation_pipeline(config) -> PipelineFuncs:
         make_late_augmentations(),
         make_dense_postprocessing(geometry, **stages["postprocess"]["config"]),
     )
+
+
+def _panoptic_options(class_values, thing_class_values, max_segments, void_value=0):
+    from justdata.vision.encodings.panoptic_targets import _values
+
+    classes, things = _values(
+        class_values, thing_class_values, void_value, max_segments
+    )
+    return {
+        "class_values": classes,
+        "thing_class_values": things,
+        "void_value": void_value,
+        "max_segments": max_segments,
+    }
+
+
+def _resolve_panoptic_config(config, is_training):
+    import math
+
+    from justdata.vision.augmentations.color import color_jitter
+    from justdata.vision.geometry import PanopticGeometryConfig
+    from justdata.vision.tasks.panoptic import make_panoptic_postprocessing
+
+    reject_unknown_keys(
+        config,
+        _VISION_TOP_LEVEL
+        | {
+            "geometry_kwargs",
+            "panoptic_kwargs",
+            "color_jitter_kwargs",
+            "keep_original_annotations",
+        },
+        path="pipeline",
+    )
+    for name in ("preproc_kwargs", "aug_kwargs", "laug_kwargs"):
+        value = config.get(name)
+        if value is not None and (not isinstance(value, Mapping) or value):
+            raise ValueError(f"{name} must be empty for panoptic segmentation")
+    if config.get("augment_eval", False):
+        raise ValueError("panoptic evaluation must use deterministic geometry")
+    geometry = dataclasses.asdict(
+        PanopticGeometryConfig(
+            **resolve_callable_config(
+                PanopticGeometryConfig,
+                config.get("geometry_kwargs"),
+                path="geometry_kwargs",
+            )
+        )
+    )
+    panoptic = resolve_callable_config(
+        _panoptic_options, config.get("panoptic_kwargs"), path="panoptic_kwargs"
+    )
+    panoptic = _panoptic_options(**panoptic)
+    post = resolve_callable_config(
+        make_panoptic_postprocessing,
+        (config.get("postproc_kwargs") or {}) | {"is_training": is_training},
+        path="postproc_kwargs",
+        omit={"config", "geometry"},
+    )
+    normalization = _normalization_contract(post)
+    if normalization["kind"] == "mean_std" and (
+        any(not math.isfinite(v) for row in post["normalization_params"] for v in row)
+        or any(v <= 0 for v in post["normalization_params"][1])
+    ):
+        raise ValueError("normalization_params must be finite with positive std")
+    for key in ("normalize_image", "permute_image", "emit_panoptic_targets"):
+        if type(post[key]) is not bool:
+            raise ValueError(f"postproc_kwargs.{key} must be boolean")
+    keep_original = config.get("keep_original_annotations", False)
+    if type(keep_original) is not bool:
+        raise ValueError("keep_original_annotations must be boolean")
+    jitter = config.get("color_jitter_kwargs")
+    if jitter is not None:
+        jitter = resolve_callable_config(
+            color_jitter, jitter, path="color_jitter_kwargs", omit={"image", "seed"}
+        )
+    size = (
+        (geometry["train_crop_size"] + geometry["patch_size"] - 1)
+        // geometry["patch_size"]
+        * geometry["patch_size"]
+    )
+    shape = (
+        ([3, size, size] if post["permute_image"] else [size, size, 3])
+        if is_training
+        else None
+    )
+    geometry_contract = {
+        **geometry,
+        "record_version": 2,
+        "resize_policy": "uniform_integer_short_side"
+        if is_training
+        else "long_side_cap",
+        "image_interpolation": "bilinear",
+        "mask_interpolation": "nearest",
+        "resize_alignment": "half_pixel",
+        "dimension_rounding": "half_up_min_one",
+        "padding_placement": "bottom_right",
+        "void_value": panoptic["void_value"],
+    }
+    return {
+        "configuration": {
+            "geometry_kwargs": geometry,
+            "panoptic_kwargs": panoptic,
+            "color_jitter_kwargs": jitter,
+            "keep_original_annotations": keep_original,
+            "postproc_kwargs": post,
+        },
+        "stages": {
+            "preprocess": {
+                "active": True,
+                "config": panoptic
+                | {
+                    "keep_original_annotations": keep_original,
+                },
+            },
+            "augment": {
+                "active": is_training,
+                "config": {
+                    "geometry": geometry,
+                    "panoptic": panoptic,
+                    "color_jitter_kwargs": jitter,
+                },
+                "geometry": geometry_contract if is_training else None,
+            },
+            "late_augment": {"active": False, "config": {}},
+            "postprocess": {
+                "active": True,
+                "config": post,
+                "geometry": None if is_training else geometry_contract,
+                "target_set": {
+                    "version": 1,
+                    "capacity": panoptic["max_segments"],
+                    "class_values": panoptic["class_values"],
+                    "thing_class_values": panoptic["thing_class_values"],
+                    "void_value": panoptic["void_value"],
+                    "crowd_policy": "exclude_supervision",
+                    "stuff_policy": "merge_by_category",
+                }
+                if post["emit_panoptic_targets"]
+                else None,
+            },
+        },
+        "model_input": {
+            "output_key": "image",
+            "layout": "bchw" if post["permute_image"] else "bhwc",
+            "dtype": "float32",
+            "static_shape": shape,
+            "normalization": normalization,
+        },
+        "requirements": {"num_classes": False},
+    }
+
+
+@register_pipeline(
+    "vision/panoptic_segmentation", config_resolver=_resolve_panoptic_config
+)
+def default_panoptic_pipeline(
+    geometry_kwargs: dict | None = None,
+    panoptic_kwargs: dict | None = None,
+    color_jitter_kwargs: dict | None = None,
+    keep_original_annotations: bool = False,
+    postproc_kwargs: dict | None = None,
+    **kwargs,
+) -> PipelineFuncs:
+    from justdata.vision.geometry import PanopticGeometryConfig
+    from justdata.vision.tasks.panoptic import (
+        make_panoptic_augmentations,
+        make_panoptic_postprocessing,
+        make_panoptic_preprocessing,
+    )
+    from justdata.vision.tasks.segmentation import make_late_augmentations
+
+    config = kwargs | {
+        "geometry_kwargs": geometry_kwargs,
+        "panoptic_kwargs": panoptic_kwargs,
+        "color_jitter_kwargs": color_jitter_kwargs,
+        "keep_original_annotations": keep_original_annotations,
+        "postproc_kwargs": postproc_kwargs,
+    }
+    is_training = (postproc_kwargs or {}).get("is_training", False)
+    resolved = _resolve_panoptic_config(config, is_training)
+    stages = resolved["stages"]
+    panoptic = resolved["configuration"]["panoptic_kwargs"]
+    geometry = PanopticGeometryConfig(**resolved["configuration"]["geometry_kwargs"])
+    return (
+        make_panoptic_preprocessing(**stages["preprocess"]["config"]),
+        make_panoptic_augmentations(
+            panoptic,
+            geometry,
+            color_jitter_kwargs=resolved["configuration"]["color_jitter_kwargs"],
+        ),
+        make_late_augmentations(),
+        make_panoptic_postprocessing(
+            panoptic, geometry, **stages["postprocess"]["config"]
+        ),
+    )

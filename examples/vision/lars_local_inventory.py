@@ -27,6 +27,11 @@ from justdata.core import (
     get_pipeline,
     load_inventory,
 )
+from justdata.vision.encodings import (
+    decode_panoptic_rgb,
+    panoptic_map_to_semantic,
+    validate_panoptic_sample,
+)
 
 
 _MAX_MEMBERS = 100_000
@@ -122,7 +127,33 @@ def _png_size(payload: bytes, *, grayscale: bool) -> tuple[int, int]:
     return height, width
 
 
-def _read_pair(payloads: dict[str, bytes], metadata: dict) -> dict:
+def _category_contract(categories):
+    if not isinstance(categories, list) or not categories:
+        raise ValueError("LaRS panoptic categories must be a nonempty list")
+    rows = sorted(categories, key=lambda row: row["id"])
+    ids = tuple(row["id"] for row in rows)
+    things = tuple(row["id"] for row in rows if row.get("isthing") == 1)
+    mapping = {"obstacle": 0, "water": 1, "sky": 2}
+    if (
+        any(type(value) is not int or value < 0 for value in ids)
+        or len(set(ids)) != len(ids)
+        or any(row.get("isthing") not in (0, 1) for row in rows)
+        or any(row.get("supercategory") not in mapping for row in rows)
+    ):
+        raise ValueError("Invalid LaRS panoptic category table")
+    return ids, things, tuple(mapping[row["supercategory"]] for row in rows)
+
+
+def _read_pair(
+    payloads: dict[str, bytes],
+    metadata: dict,
+    *,
+    labels="semantic",
+    class_values=(),
+    thing_class_values=(),
+    semantic_values=(),
+    max_segments=1,
+) -> dict:
     expected_size = (metadata["height"], metadata["width"])
     jpeg_shape = tf.io.extract_jpeg_shape(payloads["image"]).numpy()
     if tuple(jpeg_shape[:2]) != expected_size or int(jpeg_shape[2]) not in (1, 3):
@@ -142,7 +173,48 @@ def _read_pair(payloads: dict[str, bytes], metadata: dict) -> dict:
     allowed = tf.constant((*_CLASSES, _IGNORE), dtype=mask.dtype)
     if not bool(tf.reduce_all(tf.reduce_any(mask[..., None] == allowed, -1))):
         raise ValueError("LaRS semantic mask contains an unknown class")
-    return {"image": image, "mask": mask}
+    if labels == "semantic":
+        return {"image": image, "mask": mask}
+    panoptic_mask = decode_panoptic_rgb(panoptic)
+    rows = metadata["panoptic_segments"]
+    if any(
+        not isinstance(row, dict)
+        or type(row.get("id")) is not int
+        or type(row.get("category_id")) is not int
+        or row.get("iscrowd") not in (0, 1)
+        for row in rows
+    ):
+        raise ValueError("Invalid LaRS panoptic segment table")
+    sample = validate_panoptic_sample(
+        {
+            "image": image,
+            "panoptic_mask": panoptic_mask,
+            "segments": {
+                "segment_ids": tf.constant([row["id"] for row in rows], tf.int64),
+                "category_ids": tf.constant(
+                    [row["category_id"] for row in rows], tf.int32
+                ),
+                "is_crowd": tf.constant(
+                    [bool(row["iscrowd"]) for row in rows], tf.bool
+                ),
+                "valid_mask": tf.ones([len(rows)], tf.bool),
+            },
+        },
+        class_values=class_values,
+        thing_class_values=thing_class_values,
+        max_segments=max_segments,
+    )
+    projected = panoptic_map_to_semantic(
+        panoptic_mask,
+        sample["segments"],
+        class_values=class_values,
+        thing_class_values=thing_class_values,
+        semantic_values=semantic_values,
+        max_segments=max_segments,
+    )
+    if not bool(tf.reduce_all(projected == tf.cast(mask, tf.int32))):
+        raise ValueError("LaRS panoptic and semantic annotations disagree")
+    return sample
 
 
 def _digest(path: Path) -> str:
@@ -157,10 +229,13 @@ def build_inventory(
     output_dir: Path,
     *,
     limit: int | None = None,
+    labels: str = "semantic",
 ):
     """Create one strict, self-contained snapshot for train or validation."""
     if split not in {"train", "val"}:
-        raise ValueError("LaRS semantic targets are available for train and val")
+        raise ValueError("LaRS annotations are available for train and val")
+    if labels not in {"semantic", "panoptic"}:
+        raise ValueError("labels must be semantic or panoptic")
     if limit is not None and (type(limit) is not int or limit <= 0):
         raise ValueError("limit must be a positive integer")
     output_dir = Path(output_dir).absolute()
@@ -197,6 +272,9 @@ def build_inventory(
         panoptic = _json_member(
             annotations, annotation_members, f"{split}/panoptic_annotations.json"
         )
+        class_values, thing_class_values, semantic_values = _category_contract(
+            panoptic.get("categories")
+        )
         scenes = _unique_index(
             scene.get("annotations"), "file_name", names, "scene annotations"
         )
@@ -219,13 +297,24 @@ def build_inventory(
             raise ValueError("LaRS panoptic image and annotation IDs disagree")
 
         selected = stems[:limit]
+        max_segments = max(
+            1,
+            *(
+                len(
+                    annotations_by_id[images_by_name[f"{stem}.jpg"]["id"]][
+                        "segments_info"
+                    ]
+                )
+                for stem in selected
+            ),
+        )
         images_digest = _digest(Path(images_archive))
         annotations_digest = _digest(Path(annotations_archive))
         selected_digest = hashlib.sha256(
             "\n".join(selected).encode("utf-8")
         ).hexdigest()
         inventory_digest = hashlib.sha256(
-            f"{images_digest}:{annotations_digest}:{split}:{selected_digest}".encode(
+            f"{images_digest}:{annotations_digest}:{split}:{selected_digest}:{labels}:v2".encode(
                 "ascii"
             )
         ).hexdigest()
@@ -302,15 +391,41 @@ def build_inventory(
                         },
                     )
                 )
+
+            def read_selected(payloads, metadata):
+                return _read_pair(
+                    payloads,
+                    metadata,
+                    labels=labels,
+                    class_values=class_values,
+                    thing_class_values=thing_class_values,
+                    semantic_values=semantic_values,
+                    max_segments=max_segments,
+                )
+
+            signature = (
+                {
+                    "image": tf.TensorSpec([None, None, 3], tf.uint8),
+                    "mask": tf.TensorSpec([None, None], tf.uint8),
+                }
+                if labels == "semantic"
+                else {
+                    "image": tf.TensorSpec([None, None, 3], tf.uint8),
+                    "panoptic_mask": tf.TensorSpec([None, None], tf.int64),
+                    "segments": {
+                        "segment_ids": tf.TensorSpec([max_segments], tf.int64),
+                        "category_ids": tf.TensorSpec([max_segments], tf.int32),
+                        "is_crowd": tf.TensorSpec([max_segments], tf.bool),
+                        "valid_mask": tf.TensorSpec([max_segments], tf.bool),
+                    },
+                }
+            )
             admitted = admit_inventory(
-                {"lars": InventorySource({split: records}, _read_pair)},
+                {"lars": InventorySource({split: records}, read_selected)},
                 {"lars": [split]},
                 inventory_id=f"lars/v1.0.0/{split}/{inventory_digest}",
                 snapshot_dir=output_dir / "snapshot",
-                output_signature={
-                    "image": tf.TensorSpec([None, None, 3], tf.uint8),
-                    "mask": tf.TensorSpec([None, None], tf.uint8),
-                },
+                output_signature=signature,
             )
             sidecar = MetadataSidecar.from_inventory(admitted)
             sidecar.write_jsonl(str(output_dir / "metadata.jsonl"), policy="create")
@@ -323,6 +438,9 @@ def build_inventory(
                 "annotations_archive_sha256": annotations_digest,
                 "selected_ids_sha256": selected_digest,
                 "categories": panoptic.get("categories"),
+                "labels": labels,
+                "max_segments": max_segments,
+                "semantic_values": semantic_values,
             }
             (output_dir / "source.json").write_text(
                 json.dumps(source_record, sort_keys=True, indent=2) + "\n",
@@ -348,6 +466,9 @@ def main() -> None:
     parser.add_argument("--split", choices=("train", "val"), required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--limit", type=_positive_int)
+    parser.add_argument(
+        "--labels", choices=("semantic", "panoptic"), default="semantic"
+    )
     args = parser.parse_args()
 
     # Configure TensorFlow before constructing any dataset. The caller may
@@ -359,11 +480,11 @@ def main() -> None:
         args.split,
         args.output_dir,
         limit=args.limit,
+        labels=args.labels,
     )
-    pipeline = get_pipeline(
-        "vision/segmentation",
-        apply_presets=False,
-        overrides={
+    source_info = json.loads((args.output_dir / "source.json").read_text())
+    options = (
+        {
             "geometry_kwargs": {
                 "class_values": _CLASSES,
                 "ignore_value": _IGNORE,
@@ -382,7 +503,46 @@ def main() -> None:
                 "permute_image": True,
                 "emit_semantic_targets": True,
             },
-        },
+        }
+        if args.labels == "semantic"
+        else {
+            "geometry_kwargs": {
+                "train_crop_size": 512,
+                "train_resize_range": (512, 1024),
+                "eval_long_side": 1024,
+                "patch_size": 16,
+            },
+            "panoptic_kwargs": {
+                "class_values": tuple(
+                    row["id"]
+                    for row in sorted(
+                        source_info["categories"], key=lambda row: row["id"]
+                    )
+                ),
+                "thing_class_values": tuple(
+                    row["id"]
+                    for row in sorted(
+                        source_info["categories"], key=lambda row: row["id"]
+                    )
+                    if row["isthing"]
+                ),
+                "max_segments": source_info["max_segments"],
+            },
+            "keep_original_annotations": args.split != "train",
+            "postproc_kwargs": {
+                "normalize_image": True,
+                "normalization_params": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+                "permute_image": True,
+                "emit_panoptic_targets": True,
+            },
+        }
+    )
+    pipeline = get_pipeline(
+        "vision/segmentation"
+        if args.labels == "semantic"
+        else "vision/panoptic_segmentation",
+        apply_presets=False,
+        overrides=options,
     )
     sidecar = MetadataSidecar.read_jsonl(str(args.output_dir / "metadata.jsonl"))
     batches, count, config = load_inventory(
@@ -414,8 +574,16 @@ def main() -> None:
                     for row_id in row_ids
                 ],
                 "image_shape": first["image"].shape.as_list(),
-                "mask_shape": first["mask"].shape.as_list(),
+                "labels": args.labels,
+                "mask_shape": first[
+                    "mask" if args.labels == "semantic" else "panoptic_mask"
+                ].shape.as_list(),
                 "target_shape": first["targets"]["masks"].shape.as_list(),
+                "category_ids": first["targets"]["class_ids"]
+                .numpy()[real][0][
+                    first["targets"]["target_valid_mask"].numpy()[real][0]
+                ]
+                .tolist(),
                 "present_targets": first["targets"]["num_targets"]
                 .numpy()[real]
                 .tolist(),

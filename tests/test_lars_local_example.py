@@ -45,6 +45,18 @@ def _archives(
                     [[0, 1, 2, 255, 0, 1]] * 4,
                     dtype=np.uint8,
                 )
+                panoptic_ids = np.asarray(
+                    [[65547, 3, 5, 0, 131083, 3]] + [[1, 3, 5, 0, 1, 3]] * 3,
+                    dtype=np.int32,
+                )
+                panoptic_rgb = np.stack(
+                    [
+                        (panoptic_ids % 256).astype(np.uint8),
+                        ((panoptic_ids // 256) % 256).astype(np.uint8),
+                        ((panoptic_ids // 65536) % 256).astype(np.uint8),
+                    ],
+                    axis=-1,
+                )
                 if invalid_mask == stem:
                     mask[0, 0] = 7
                 encoded_mask = (
@@ -60,7 +72,7 @@ def _archives(
                     ("semantic_masks", tf.io.encode_png(encoded_mask).numpy()),
                     (
                         "panoptic_masks",
-                        tf.io.encode_png(tf.zeros([4, 6, 3], tf.uint8)).numpy(),
+                        tf.io.encode_png(panoptic_rgb).numpy(),
                     ),
                 ):
                     name = f"{split}/{folder}/{stem}.png"
@@ -84,7 +96,17 @@ def _archives(
                     {
                         "image_id": image_id,
                         "file_name": f"{stem}.png",
-                        "segments_info": [{"id": 1, "category_id": 1}],
+                        "segments_info": [
+                            {"id": 1, "category_id": 1, "iscrowd": 0},
+                            {"id": 3, "category_id": 3, "iscrowd": 0},
+                            {"id": 5, "category_id": 5, "iscrowd": 0},
+                            {"id": 65547, "category_id": 11, "iscrowd": 0},
+                            {
+                                "id": 131083,
+                                "category_id": 11,
+                                "iscrowd": int(split == "val"),
+                            },
+                        ],
                     }
                 )
             annotations.writestr(
@@ -97,7 +119,32 @@ def _archives(
                     {
                         "images": panoptic_images,
                         "annotations": panoptic_annotations,
-                        "categories": [{"id": 1, "name": "obstacle"}],
+                        "categories": [
+                            {
+                                "id": 1,
+                                "name": "static obstacle",
+                                "supercategory": "obstacle",
+                                "isthing": 0,
+                            },
+                            {
+                                "id": 3,
+                                "name": "water",
+                                "supercategory": "water",
+                                "isthing": 0,
+                            },
+                            {
+                                "id": 5,
+                                "name": "sky",
+                                "supercategory": "sky",
+                                "isthing": 0,
+                            },
+                            {
+                                "id": 11,
+                                "name": "boat",
+                                "supercategory": "obstacle",
+                                "isthing": 1,
+                            },
+                        ],
                     }
                 ),
             )
@@ -119,7 +166,7 @@ def test_example_admits_only_requested_split_and_preserves_annotations(tmp_path)
     source = next(iter(sidecar.records.values()))["source_record"]
     assert source["split"] == "val"
     assert source["metadata"]["scene_attributes"]["scene_type"] == "river_like"
-    assert source["metadata"]["panoptic_segments"] == [{"id": 1, "category_id": 1}]
+    assert len(source["metadata"]["panoptic_segments"]) == 5
     assert {asset["role"] for asset in source["assets"]} == {
         "image",
         "semantic",
@@ -225,3 +272,45 @@ def test_example_command_loads_a_realistic_validation_view(tmp_path):
     assert printed["original_sizes"] == [[4, 6]]
     assert printed["valid_pixels"] == [20]
     assert (output / "executed_config.json").is_file()
+
+
+def test_example_panoptic_command_preserves_instances_and_crowd(tmp_path):
+    images, annotations = _archives(tmp_path)
+    output = tmp_path / "panoptic-output"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(
+                Path(__file__).resolve().parents[1]
+                / "examples/vision/lars_local_inventory.py"
+            ),
+            "--images-archive",
+            str(images),
+            "--annotations-archive",
+            str(annotations),
+            "--split",
+            "val",
+            "--labels",
+            "panoptic",
+            "--output-dir",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    printed = json.loads(result.stdout)
+    assert printed["labels"] == "panoptic"
+    assert printed["present_targets"] == [4]
+    assert printed["category_ids"] == [1, 3, 5, 11]
+    assert printed["valid_pixels"] == [19]
+    assert json.loads((output / "source.json").read_text())["max_segments"] == 5
+    sample = next(open_inventory(output / "snapshot").dataset.as_numpy_iterator())
+    assert sorted(np.unique(sample["panoptic_mask"]).tolist()) == [
+        0,
+        1,
+        3,
+        5,
+        65547,
+        131083,
+    ]

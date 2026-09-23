@@ -44,8 +44,8 @@ ______________________________________________________________________
 ## Architecture
 
 `justdata` is structured around a fixed, four-stage pipeline abstraction. The currently supported vision tasks,
-classification and segmentation, each expose exactly four composable functions. Object detection and depth estimation
-are future scope and are not registered capabilities.
+classification, semantic segmentation, and panoptic segmentation, each expose exactly four composable functions. Object
+detection and depth estimation are future scope and are not registered capabilities.
 
 ```
 (preprocess_fn, augment_fn, late_augment_fn, postprocess_fn)
@@ -504,6 +504,12 @@ For semantic segmentation with replayable geometry, select `vision/segmentation`
 independent RGB/ignore padding, per-pixel validity, and original-coordinate score restoration. See
 [the dense geometry contract](docs/vision.md#12-replayable-dense-segmentation) for configuration, record fields, replay,
 and batching requirements.
+
+For instance-aware labels, select `vision/panoptic_segmentation` with a segment-ID map and category table. It preserves
+thing instances, merges stuff by category, and excludes crowd pixels from panoptic supervision. The
+[panoptic contract](docs/vision.md#13-panoptic-segmentation) and
+[LaRS example](docs/vision.md#14-loading-local-lars-archives) show how to load either semantic or panoptic labels
+from local LaRS v1.0.0 archives.
 
 ______________________________________________________________________
 

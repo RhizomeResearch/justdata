@@ -9,9 +9,9 @@ documented in the [usage guide](../README.md#bounded-input-execution-and-protect
 For dense inputs, include the resolved geometry and ignore conventions in the
 cache fingerprint and use a finite batch/prefetch profile.
 
-Current pipeline support covers image classification and segmentation. Object
-detection and depth estimation remain future scope and are not registered
-capabilities.
+Current pipeline support covers image classification, semantic segmentation,
+and panoptic segmentation. Object detection and depth estimation remain future
+scope and are not registered capabilities.
 
 ## 1. Why justdata owns image transforms
 
@@ -34,6 +34,8 @@ Raw or adapted vision samples use these keys:
 | `image` | Image tensor in HWC layout before postprocessing. |
 | `label` | Optional class index, dense vector, or task target. |
 | `mask` | Optional segmentation mask. |
+| `panoptic_mask` | Optional HW segment-ID map for panoptic segmentation. |
+| `segments` | Optional panoptic segment table with category and crowd flags. |
 | `depth` | Optional depth map. |
 | `bboxes` | Optional object detection boxes. |
 | `metadata` | Optional nested metadata such as dataset, split, filename, example id, or class name. |
@@ -670,7 +672,52 @@ rejected. The independent scalar reference in `tests/test_dense_geometry.py`
 checks the complete resize/unpad/resize path and detects early argmax or direct
 patch-to-original resizing.
 
-## 13. Loading local LaRS archives
+## 13. Panoptic segmentation
+
+Import `justdata.vision` and select `vision/panoptic_segmentation` with
+`apply_presets=False`. Supply `geometry_kwargs` and `panoptic_kwargs` with
+`class_values`, `thing_class_values`, and `max_segments`. The source sample has
+an HWC RGB `image`, an HW integer `panoptic_mask` of segment IDs, and a
+`segments` table containing equally sized 1D `segment_ids` (int64),
+`category_ids` (int32), `is_crowd` (bool), and `valid_mask` (bool). Optional
+`annotation_valid_mask` is HW bool. `decode_panoptic_rgb` converts an RGB ID
+image with `R + 256 G + 65536 B`; it never rounds IDs through float32.
+Validation checks each segment ID and category, rejects duplicates, and
+requires the nonvoid map IDs to match the valid table rows exactly. The
+declared `max_segments` is a fixed per-sample table and target capacity;
+overflow raises an error rather than dropping instances.
+
+The pipeline uses the same sampled resize, crop, flip, and patch padding as
+the semantic geometry above. Its version-2 `geometry` record carries an
+int64 `mask_fill_value` equal to `void_value` (default 0). RGB uses bilinear
+resizing and segment IDs use exact nearest-neighbor integer gathers. A crop
+keeps original segment IDs for surviving pixels, drops invisible segments,
+and recomputes per-segment `area` and `bbox=[left, top, width, height]` in the
+view. `source_valid_mask` marks image support; `pixel_valid_mask` additionally
+excludes void, crowds, and unavailable annotation. Evaluation is deterministic.
+`restore_dense_scores` accepts a version-2 geometry record to restore
+floating scores to original image coordinates.
+
+Set `postproc_kwargs={"emit_panoptic_targets": True}` to create fixed-capacity
+`targets`: `masks` is bool `[max_segments, H, W]`, with matching `class_ids`,
+`class_indices`, `segment_ids`, `is_thing`, `target_valid_mask`,
+`num_targets`, `pixel_valid_mask`, and `supervision_valid`. Each visible thing
+segment gets its own mask even when several share a category. Visible stuff
+segments of one category merge into one mask. Crowd pixels never enter
+panoptic targets or panoptic pixel supervision. Void and padded pixels are
+ignored. An all-void or all-crowd view has no targets and
+`supervision_valid=False`. `padding_mask` from the shared loader marks real
+batch rows. Disable target emission to use the compact panoptic map and table
+directly, especially when `max_segments × H × W` masks would be large.
+
+`panoptic_map_to_semantic` projects segment categories into caller-specified
+semantic IDs. It retains crowd categories by default; pass
+`include_crowd=False` to ignore them. The semantic and panoptic supervision
+policies are distinct. Keep original annotations for evaluation with
+`keep_original_annotations=True`; mixed original frame sizes require
+`batch_size=1` or a separate collation strategy.
+
+## 14. Loading local LaRS archives
 
 [`examples/vision/lars_local_inventory.py`](../examples/vision/lars_local_inventory.py)
 loads one annotated LaRS v1.0.0 split from the separate image and annotation ZIP
@@ -681,16 +728,50 @@ directory. For a quick validation example, run from the repository root:
 uv run python examples/vision/lars_local_inventory.py \
   --images-archive ~/Downloads/lars_v1.0.0_images.zip \
   --annotations-archive ~/Downloads/lars_v1.0.0_annotations.zip \
-  --split val --limit 4 --output-dir /tmp/lars-val-example
+  --split val --limit 4 --labels semantic \
+  --output-dir /tmp/lars-val-semantic
+
+uv run python examples/vision/lars_local_inventory.py \
+  --images-archive ~/Downloads/lars_v1.0.0_images.zip \
+  --annotations-archive ~/Downloads/lars_v1.0.0_annotations.zip \
+  --split val --limit 4 --labels panoptic \
+  --output-dir /tmp/lars-val-panoptic
 ```
 
-Use `--split train` for training views and omit `--limit` to admit the complete
-selected split. Each invocation needs a new `--output-dir`; it will not replace
+`--labels semantic` is the default. Use `--split train` for training views and
+omit `--limit` to admit the complete selected split. Each invocation needs a
+new `--output-dir`; it will not replace
 an existing directory. The example reads the author's `image_list.txt` order,
 reconciles all image, semantic-mask, panoptic-mask and annotation names, checks
-the decoded pairs, and then calls `admit_inventory`. It stages only the selected
-records. An omitted `--limit` can create a large decoded TFRecord snapshot, so
-choose an output filesystem with room for the source assets and snapshot.
+the decoded pairs, and then calls `admit_inventory`. Panoptic mode checks that
+the segment table references match the panoptic PNG and that its semantic
+projection matches the supplied semantic PNG. It stages only the selected
+records. An omitted `--limit` can create a large decoded TFRecord snapshot;
+panoptic target masks can also be large for scenes with many instances.
+
+| `--labels` | Source label | Batched supervision |
+| :-- | :-- | :-- |
+| `semantic` | HW `mask`: obstacle `0`, water `1`, sky `2`, ignore `255`. | Three class-mask slots; crowd retains its semantic class. |
+| `panoptic` | HW int64 `panoptic_mask`: RGB-coded segment IDs, void `0`; `segments` has LaRS category IDs and crowd flags. | One target per thing instance and one per stuff category; crowds excluded. |
+
+The LaRS panoptic categories are finer than the three semantic classes:
+static obstacle, water, and sky are stuff; vessel and other obstacle
+categories are things. The example reads the category table from the
+annotation archive and records its capacity in `source.json`. To inspect the
+decoded source rows after running the two commands:
+
+```python
+from pathlib import Path
+from justdata.core import open_inventory
+
+semantic = open_inventory(Path("/tmp/lars-val-semantic") / "snapshot")
+panoptic = open_inventory(Path("/tmp/lars-val-panoptic") / "snapshot")
+semantic_row = next(iter(semantic.dataset))
+panoptic_row = next(iter(panoptic.dataset))
+print(semantic_row["image"].shape, semantic_row["mask"].shape)
+print(panoptic_row["image"].shape, panoptic_row["panoptic_mask"].shape)
+print(panoptic_row["segments"]["segment_ids"])
+```
 
 `snapshot/` contains the strict admitted inventory. `metadata.jsonl` maps
 numeric row IDs back to the complete source identity, scene attributes and
@@ -700,11 +781,14 @@ contains the exact pipeline configuration used for the displayed batch. The
 example prints the first batch's source IDs, model-input and target shapes,
 present target counts and configuration digest. Reopen the result with
 `open_inventory(output_dir / "snapshot")` and
-`MetadataSidecar.read_jsonl(str(output_dir / "metadata.jsonl"))`.
+`MetadataSidecar.read_jsonl(str(output_dir / "metadata.jsonl"))`. The code
+above reads admitted source rows; to reproduce the model view, pass a reopened
+inventory and matching pipeline to `load_inventory` as in the example.
 
 Train and validation are admitted separately so that the dataset type cannot
-mix their records. The example uses class IDs `0/1/2`, ignore `255`, paired
-512 × 512 training crops, and rectangular validation with a 1,024-pixel
-longer-side cap. Validation batches have size one because original frames vary
-in shape. The official test split has no local semantic targets, and the nine
-preceding context frames require the separate sequence archive.
+mix their records. The semantic mode uses class IDs `0/1/2`, ignore `255`;
+both label modes use paired 512 × 512 training crops and rectangular validation
+with a 1,024-pixel longer-side cap. Validation batches have size one because
+original frames vary in shape. The official test split has no local semantic
+or panoptic targets, and the nine preceding context frames require the
+separate sequence archive.

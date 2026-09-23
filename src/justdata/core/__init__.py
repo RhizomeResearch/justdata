@@ -43,6 +43,13 @@ from justdata.core.registry import (
     register_dataset,
     register_pipeline,
 )
+from justdata.core.replay import (
+    ReplayEpoch,
+    ReplayError,
+    ReplayState,
+    count_real_examples,
+    load_replay_epoch,
+)
 from justdata.core.sources import (
     get_source_loader,
     register_default_source_loader,
@@ -62,10 +69,14 @@ __all__ = [
     "InventorySource",
     "MetadataSidecar",
     "ResolvedPreset",
+    "ReplayEpoch",
+    "ReplayError",
+    "ReplayState",
     "admit_inventory",
     "apply_metadata_mode",
     "canonical_config_json",
     "compute_feature_stats",
+    "count_real_examples",
     "filter_by_metadata",
     "finalize_dataset",
     "fetch_ds",
@@ -82,6 +93,7 @@ __all__ = [
     "list_pipelines",
     "load_ds",
     "load_inventory",
+    "load_replay_epoch",
     "make_stats_iterator",
     "merge_with_presets",
     "metadata_filter_predicate",

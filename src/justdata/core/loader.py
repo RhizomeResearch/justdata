@@ -829,6 +829,7 @@ def _prepare_ds(
         seed: int,
         as_numpy: bool | None = None,
         augment_is_stateless: bool = False,
+        prefetch: bool = True,
         return_config: bool = False,
     ):
         """Build an addressable epoch with optional stateless augmentation parallelism.
@@ -872,6 +873,7 @@ def _prepare_ds(
             shuffle_seed=seed,
             reshuffle_each_iteration=False,
             as_numpy=default_as_numpy if as_numpy is None else as_numpy,
+            prefetch=prefetch,
         )
         if not return_config:
             return result
@@ -888,6 +890,7 @@ def _prepare_ds(
                     "shuffle_seed": seed,
                     "reshuffle_each_iteration": False,
                     "as_numpy": default_as_numpy if as_numpy is None else as_numpy,
+                    "prefetch": prefetch,
                 },
             ),
         )

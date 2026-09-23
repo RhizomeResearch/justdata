@@ -187,3 +187,56 @@ receives numeric `metadata.row_id` and `metadata.row_fingerprint`; its sidecar
 record retains the full record ID, source, split, verified assets, and supplied
 metadata. Use `padding_mask` to exclude padded rows from joins. Numeric geometry
 generated for a view stays with its emitted row.
+
+## Deterministic epoch replay
+
+`load_replay_epoch` accepts an admitted inventory and a registered pipeline with an exported configuration. It verifies
+the snapshot again before building each epoch, derives the epoch seed from the run seed, epoch and view number, and uses
+deterministic maps, indexed augmentation seeds and a fixed shuffle. Set `callbacks_are_stateless=True` only when every
+pipeline stage preserves rows and depends solely on its input and supplied seed. Custom pipelines should include an
+implementation version in their resolved configuration. The library cannot infer callback purity from the declaration.
+
+```python
+from justdata.core import (
+    MetadataSidecar, ReplayState, count_real_examples,
+    load_replay_epoch, open_inventory,
+)
+
+# Restore this state from the same checkpoint as model and optimizer state.
+admitted = open_inventory(snapshot_dir)
+saved_state = ReplayState.from_json(saved_checkpoint["data_state"])
+replay = load_replay_epoch(
+    admitted, "train", batch_size=4, seed=17,
+    pipeline=pipeline, epoch=saved_state.epoch, view=saved_state.view,
+    state=saved_state, callbacks_are_stateless=True,
+    metadata_mode="numeric_only",
+    metadata_sidecar=MetadataSidecar.from_inventory(admitted),
+    as_numpy=True,
+)
+state = replay.state
+for batch in replay.batches:
+    train_step(batch)  # Caller-owned successful update and model-state changes.
+    real_rows = int(count_real_examples(batch))
+    state = state.with_next_batch(state.next_batch + 1)
+    save_checkpoint(model, optimizer, data_state=state.to_json())
+```
+
+`train_step` and `save_checkpoint` above are caller-owned functions. Persist the advanced data state atomically with the
+corresponding model and optimizer update. Reading or prefetching a batch does not advance it. At a fresh epoch, omit
+`state` and pass the new epoch and view. `ReplayEpoch.remaining_batches` and `.remaining_examples` report work after
+the committed position. `ReplayState.to_dict()` and `from_dict()` are available for structured checkpoint backends.
+
+The state binds the ordered snapshot digest, complete executed configuration, run seed, epoch, view, batch policy and
+Python, TensorFlow and JustData versions. A changed input order, batch size, map/thread setting or pipeline configuration
+requires a fresh replay state. Use the same implementation and hardware profile when exact tensor equality matters.
+`ReplayError.status` and `.reason` identify incompatible state, invalid positions, and unsupported replay without
+parsing exception text. Undeclared callbacks, opaque configurations, disk pipeline caches and streaming sidecar writers
+are unsupported by this route. Memory preprocessing caches, eligible model-input caches, and immutable metadata
+sidecars are supported. Model-input caches are unavailable when augmentation is active. The route queues one batch after
+the committed-batch skip.
+
+Evaluation retains the final partial batch. `padding_mask=True` identifies each real row; the last batch remains padded
+to the requested shape. `count_real_examples(batch)` works for TensorFlow and NumPy batches even when the underlying
+dataset has unknown cardinality. For dense targets, combine row validity with `pixel_valid_mask`; synthetic zero-filled
+target rows and ignored pixels are excluded from losses and metrics. Training may explicitly set
+`drop_remainder=True`, in which case dropped inputs are excluded from `remaining_examples`.

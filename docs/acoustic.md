@@ -161,6 +161,11 @@ labels = batch["label"]
 padding_mask = batch["padding_mask"]
 ```
 
+For an admitted immutable inventory, the shared
+[`load_replay_epoch`](inventory.md#deterministic-epoch-replay) route resumes at
+the next committed batch. `count_real_examples(batch)` counts true
+`padding_mask` rows, including a final partial evaluation batch.
+
 AST presets use a dedicated pipeline because the original recipe applies fbank
 padding/cropping, SpecAugment, normalization, and optional waveform mixup in a
 specific order:

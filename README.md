@@ -1028,6 +1028,12 @@ graph preparation are reused. A fresh NumPy iterator is created by each `finaliz
 downstream cache intentionally freezes the first sampled augmented views. Existing one-shot `load_ds` and `finalize_fn`
 behavior is unchanged.
 
+For a verified local inventory, `load_replay_epoch` binds an immutable snapshot and executed configuration to an
+explicit committed-batch cursor. It rebuilds the full epoch before skipping committed batches. See
+[`docs/inventory.md`](docs/inventory.md#deterministic-epoch-replay) for checkpoint and resume usage. Count real rows with
+`count_real_examples(batch)` or the returned epoch's `remaining_examples`; padded rows have a false `padding_mask`.
+The epoch path also accepts `prefetch=False` when finalization must precede a caller-controlled prefetch stage.
+
 ### Loading a Hugging Face Dataset
 
 ```python

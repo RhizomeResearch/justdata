@@ -605,6 +605,10 @@ as numeric arrays using `np.savez` and loaded with `np.load(..., allow_pickle=Fa
 Replay supports eager execution, `tf.function`, and `tf.data.Dataset.map`.
 Zero-filled batch-padding records are invalid: only replay or score rows whose
 `padding_mask` is true.
+For resumed dense fitting, use the admitted-inventory epoch API in
+[`inventory.md`](inventory.md#deterministic-epoch-replay). Combine row validity
+with `pixel_valid_mask` before computing a loss or metric; an all-ignore real
+row contributes zero valid pixels, and padded rows contribute none.
 
 ### Original-coordinate scoring
 

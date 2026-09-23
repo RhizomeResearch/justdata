@@ -19,8 +19,11 @@ from justdata.vision.encodings import (
     validate_panoptic_sample,
 )
 from justdata.vision.geometry import (
+    DenseGeometryConfig,
     PanopticGeometryConfig,
+    replay_dense_geometry,
     restore_dense_scores,
+    sample_dense_geometry,
     sample_panoptic_geometry,
 )
 from justdata.vision.panoptic_geometry import replay_panoptic_geometry
@@ -82,6 +85,7 @@ def test_rgb_decode_and_distinct_same_class_instances():
         void_value=0,
         is_training=False,
     )
+    assert int(record["version"]) == 1
     view = replay_panoptic_geometry(sample, record, **CONFIG)
     targets = panoptic_map_to_targets(
         view["panoptic_mask"],
@@ -97,6 +101,58 @@ def test_rgb_decode_and_distinct_same_class_instances():
     np.testing.assert_array_equal(view["segments"]["bbox"][0], [0, 0, 5, 4])
     restored = restore_dense_scores(tf.ones([4, 5, 2]), record, from_model_input=True)
     assert restored.shape == (4, 5, 2)
+
+
+def test_version_one_records_reject_the_wrong_label_contract():
+    sample = _sample()
+    panoptic_record = sample_panoptic_geometry(
+        [4, 5],
+        PanopticGeometryConfig(eval_long_side=5, patch_size=1),
+        void_value=0,
+        is_training=False,
+    )
+    semantic_record = sample_dense_geometry(
+        [4, 5],
+        DenseGeometryConfig(class_values=(1,), eval_long_side=5, patch_size=1),
+        is_training=False,
+    )
+    with pytest.raises(
+        tf.errors.InvalidArgumentError, match="semantic geometry requires"
+    ):
+        replay_dense_geometry({"image": sample["image"]}, panoptic_record)
+    with pytest.raises(
+        tf.errors.InvalidArgumentError, match="panoptic geometry must not"
+    ):
+        replay_panoptic_geometry(sample, semantic_record, **CONFIG)
+    with pytest.raises(tf.errors.InvalidArgumentError, match="void value mismatch"):
+        replay_panoptic_geometry(
+            sample,
+            panoptic_record | {"mask_fill_value": tf.constant(1, tf.int64)},
+            **CONFIG,
+        )
+    with pytest.raises(
+        tf.errors.InvalidArgumentError, match="unsupported geometry version"
+    ):
+        replay_panoptic_geometry(
+            sample,
+            panoptic_record | {"version": tf.constant(2, tf.int32)},
+            **CONFIG,
+        )
+
+
+def test_panoptic_pipeline_records_version_one_in_executed_config():
+    assert (
+        _pipeline().resolve_config(False)["stages"]["postprocess"]["geometry"][
+            "record_version"
+        ]
+        == 1
+    )
+    assert (
+        _pipeline().resolve_config(True)["stages"]["augment"]["geometry"][
+            "record_version"
+        ]
+        == 1
+    )
 
 
 def test_crop_removes_instance_and_preserves_remaining_ids():

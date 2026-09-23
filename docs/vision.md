@@ -688,14 +688,16 @@ declared `max_segments` is a fixed per-sample table and target capacity;
 overflow raises an error rather than dropping instances.
 
 The pipeline uses the same sampled resize, crop, flip, and patch padding as
-the semantic geometry above. Its version-2 `geometry` record carries an
-int64 `mask_fill_value` equal to `void_value` (default 0). RGB uses bilinear
-resizing and segment IDs use exact nearest-neighbor integer gathers. A crop
-keeps original segment IDs for surviving pixels, drops invisible segments,
+the semantic geometry above. Both modes use geometry record version 1. The
+panoptic record carries an int64 `mask_fill_value` equal to `void_value`
+(default 0) and an empty `class_values` field; semantic records carry their
+declared class values. RGB uses bilinear resizing and segment IDs use exact
+nearest-neighbor integer gathers. A crop keeps original segment IDs for
+surviving pixels, drops invisible segments,
 and recomputes per-segment `area` and `bbox=[left, top, width, height]` in the
 view. `source_valid_mask` marks image support; `pixel_valid_mask` additionally
 excludes void, crowds, and unavailable annotation. Evaluation is deterministic.
-`restore_dense_scores` accepts a version-2 geometry record to restore
+`restore_dense_scores` accepts version-1 records from either mode to restore
 floating scores to original image coordinates.
 
 Set `postproc_kwargs={"emit_panoptic_targets": True}` to create fixed-capacity

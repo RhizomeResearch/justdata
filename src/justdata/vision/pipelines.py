@@ -802,7 +802,7 @@ def _resolve_panoptic_config(config, is_training):
     )
     geometry_contract = {
         **geometry,
-        "record_version": 2,
+        "record_version": 1,
         "resize_policy": "uniform_integer_short_side"
         if is_training
         else "long_side_cap",

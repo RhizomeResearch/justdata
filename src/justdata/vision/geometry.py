@@ -182,24 +182,23 @@ def sample_dense_geometry(
 def sample_panoptic_geometry(
     original_size, config: PanopticGeometryConfig, *, void_value, is_training, seed=None
 ):
-    """Sample the same spatial distribution with a distinct label contract."""
+    """Sample version-1 geometry with a panoptic label contract."""
     spatial = DenseGeometryConfig(class_values=(0,), ignore_value=-1, **asdict(config))
     record = sample_dense_geometry(
         original_size, spatial, is_training=is_training, seed=seed
     )
     return record | {
-        "version": tf.constant(2, tf.int32),
         "mask_fill_value": tf.constant(void_value, tf.int64),
         "class_values": tf.constant([], tf.int32),
     }
 
 
-def _check_record(record, *, versions=(1,)):
+def _check_record(record):
     record = tf.nest.map_structure(tf.convert_to_tensor, record)
     record["version"] = tf.ensure_shape(record["version"], [])
     tf.debugging.assert_equal(
-        tf.reduce_any(record["version"] == tf.constant(versions, tf.int32)),
-        True,
+        record["version"],
+        1,
         message="unsupported geometry version",
     )
     for key, value in (
@@ -345,6 +344,10 @@ def replay_dense_geometry(sample, record):
     Replay covers geometry, before photometric transforms and normalization.
     """
     record = _check_record(record)
+    tf.debugging.assert_positive(
+        tf.size(record["class_values"]),
+        message="semantic geometry requires class values",
+    )
     sample = validate_dense_sample(
         sample, record["class_values"], record["mask_fill_value"]
     )
@@ -428,7 +431,7 @@ def restore_dense_scores(scores, record, *, from_model_input=False):
     Set ``from_model_input=True`` for scores already reduced at the padded input
     resolution; their size is checked and the first resize is skipped.
     """
-    record = _check_record(record, versions=(1, 2))
+    record = _check_record(record)
     scores = _validate_scores(scores)
     tf.debugging.assert_equal(
         record["is_training"],

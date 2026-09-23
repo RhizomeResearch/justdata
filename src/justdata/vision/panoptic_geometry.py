@@ -66,8 +66,20 @@ def _visible_segments(mask, segments, max_segments):
 def replay_panoptic_geometry(
     sample, record, *, class_values, thing_class_values, void_value, max_segments
 ):
-    """Replay a version-2 record, including integer map and crowd validity."""
-    record = _check_record(record, versions=(2,))
+    """Replay a version-1 record, including integer map and crowd validity."""
+    record = _check_record(record)
+    tf.debugging.assert_equal(
+        tf.size(record["class_values"]),
+        0,
+        message="panoptic geometry must not contain semantic class values",
+    )
+    if record["mask_fill_value"].dtype != tf.int64:
+        raise TypeError("panoptic geometry mask fill must be int64")
+    tf.debugging.assert_equal(
+        record["mask_fill_value"],
+        tf.cast(void_value, tf.int64),
+        message="panoptic geometry void value mismatch",
+    )
     sample = validate_panoptic_sample(
         sample,
         class_values=class_values,

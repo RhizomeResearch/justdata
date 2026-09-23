@@ -669,3 +669,42 @@ inverse here and are rejected. Nonfinite fields and integer predictions are
 rejected. The independent scalar reference in `tests/test_dense_geometry.py`
 checks the complete resize/unpad/resize path and detects early argmax or direct
 patch-to-original resizing.
+
+## 13. Loading local LaRS archives
+
+[`examples/vision/lars_local_inventory.py`](../examples/vision/lars_local_inventory.py)
+loads one annotated LaRS v1.0.0 split from the separate image and annotation ZIP
+archives. Supply archives obtained under the dataset's terms and a new output
+directory. For a quick validation example, run from the repository root:
+
+```bash
+uv run python examples/vision/lars_local_inventory.py \
+  --images-archive ~/Downloads/lars_v1.0.0_images.zip \
+  --annotations-archive ~/Downloads/lars_v1.0.0_annotations.zip \
+  --split val --limit 4 --output-dir /tmp/lars-val-example
+```
+
+Use `--split train` for training views and omit `--limit` to admit the complete
+selected split. Each invocation needs a new `--output-dir`; it will not replace
+an existing directory. The example reads the author's `image_list.txt` order,
+reconciles all image, semantic-mask, panoptic-mask and annotation names, checks
+the decoded pairs, and then calls `admit_inventory`. It stages only the selected
+records. An omitted `--limit` can create a large decoded TFRecord snapshot, so
+choose an output filesystem with room for the source assets and snapshot.
+
+`snapshot/` contains the strict admitted inventory. `metadata.jsonl` maps
+numeric row IDs back to the complete source identity, scene attributes and
+panoptic segment references. `source.json` records the archive digests,
+available/selected counts and panoptic categories. `executed_config.json`
+contains the exact pipeline configuration used for the displayed batch. The
+example prints the first batch's source IDs, model-input and target shapes,
+present target counts and configuration digest. Reopen the result with
+`open_inventory(output_dir / "snapshot")` and
+`MetadataSidecar.read_jsonl(str(output_dir / "metadata.jsonl"))`.
+
+Train and validation are admitted separately so that the dataset type cannot
+mix their records. The example uses class IDs `0/1/2`, ignore `255`, paired
+512 × 512 training crops, and rectangular validation with a 1,024-pixel
+longer-side cap. Validation batches have size one because original frames vary
+in shape. The official test split has no local semantic targets, and the nine
+preceding context frames require the separate sequence archive.

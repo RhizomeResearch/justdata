@@ -180,5 +180,10 @@ filtering creates a different population outside the admission report.
 
 Report counts describe admitted source records, independently of training shuffle, view expansion, dropped batches, or
 padded rows. `metadata_mode` retains its existing behavior: `numeric_only` removes string IDs and `none` removes
-metadata. Full numeric identity transport, sidecar persistence, geometry, and resume qualification belong to subsequent
-JD requirements; this API does not claim those guarantees.
+metadata. To retain a complete mapping before iteration, call
+`MetadataSidecar.from_inventory(admitted)` and pass the result as
+`metadata_sidecar=` with `metadata_mode="numeric_only"`. Each real batch row
+receives numeric `metadata.row_id` and `metadata.row_fingerprint`; its sidecar
+record retains the full record ID, source, split, verified assets, and supplied
+metadata. Use `padding_mask` to exclude padded rows from joins. Numeric geometry
+generated for a view stays with its emitted row.

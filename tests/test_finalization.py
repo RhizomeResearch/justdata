@@ -116,10 +116,16 @@ def test_sidecar_respects_map_parallelism(
     assert parallel_calls == {expected}
 
     list(ds)
-    assert MetadataSidecar.read_jsonl(str(sidecar_path)).records == {
-        11: {"source": "a"},
-        12: {"source": "b"},
-        13: {"source": "c"},
+    sidecar = MetadataSidecar.read_jsonl(str(sidecar_path))
+    assert {key: record["source"] for key, record in sidecar.records.items()} == {
+        11: "a",
+        12: "b",
+        13: "c",
+    }
+    assert {key: record["example_id"] for key, record in sidecar.records.items()} == {
+        11: 11,
+        12: 12,
+        13: 13,
     }
 
 
@@ -224,11 +230,12 @@ def test_sidecar_joins_survive_shuffle_model_cache_and_reiteration(tmp_path):
 
     assert sorted(first_ids) == sorted(second_ids) == [11, 12, 13]
     assert sidecar_path.read_bytes() == first_contents
-    assert sidecar.records == {
-        11: {"source": "a"},
-        12: {"source": "b"},
-        13: {"source": "c"},
+    assert {key: record["source"] for key, record in sidecar.records.items()} == {
+        11: "a",
+        12: "b",
+        13: "c",
     }
+    assert all(sidecar.records[key]["example_id"] == key for key in (11, 12, 13))
 
 
 @pytest.mark.parametrize("metadata_mode", ["numeric_only", "none"])

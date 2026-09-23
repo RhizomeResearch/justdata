@@ -249,13 +249,33 @@ explicitly allows otherwise.
 
 When string metadata is needed for later joins, pass
 `sidecar_metadata_path="metadata.jsonl"` with `metadata_mode="numeric_only"`.
-The loader writes string leaves keyed by stable example id while batches remain
-NumPy/JAX friendly.
-Sidecar identity must come from an integer/string `example_id` or the composite
-`dataset`, `split`, and `clip_id` fields. Repeated dataset iterations do not add
-duplicate records; a reused ID with different string metadata raises an error.
-The file is populated as samples are consumed, so partial dataset consumption
-can produce a partial sidecar.
+The loader adds numeric `metadata.row_id` and `metadata.row_fingerprint` to each
+real row. The key joins to complete static source metadata; the fingerprint
+detects stale cache entries while batches remain NumPy/JAX friendly.
+Filter by `padding_mask` before joining; a padded row has no source identity.
+For a complete, replayable mapping, build `MetadataSidecar.from_metadata`
+before iteration and pass it as `metadata_sidecar=`. This accepts records with
+an integer/string `example_id` or the composite `dataset`, `split`, `clip_id`.
+The same source can have different per-view numeric times and indices in each
+batch without changing its sidecar entry.
+
+String view descriptors, such as a corruption name, are stored separately in
+`sidecar.view_records[(row_id, view_id)]`; emitted batches carry numeric
+`metadata.view_id` and `metadata.view_fingerprint`. A zero `view_id` means the
+view has no separate string record. Numeric timing metadata remains in the
+batch.
+
+For an immutable sidecar, add known string view descriptors with
+`sidecar.add_view_metadata(row_id, view_metadata)` before loading. An unknown
+string view fails rather than changing the immutable mapping during iteration.
+
+An existing streaming sidecar resumes by default and is never cleared by a new
+iterator. `sidecar_metadata_policy="create"` requires a new path;
+`"overwrite"` replaces it explicitly. Identical records deduplicate and
+conflicting identities or metadata fail. Each accepted JSONL update is
+atomically replaced. A stream consumed only in part can leave an incomplete
+mapping; use a precomputed sidecar when a complete inventory is required.
+Use one writer process per sidecar path.
 
 ## 8. Golden compatibility tests
 

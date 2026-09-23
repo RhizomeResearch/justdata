@@ -135,7 +135,40 @@ def test_audio_corruption_finalizer_applies_metadata_sidecar_and_padding(tmp_pat
     np.testing.assert_array_equal(final["padding_mask"].numpy(), [True, False])
     sidecar = MetadataSidecar.read_jsonl(str(sidecar_path))
     assert sidecar.records[0]["clip_id"] == "clip-0"
-    assert sidecar.records[0]["corruption"] == "identity"
+    assert "corruption" not in sidecar.records[0]
+    views = [
+        metadata
+        for (source_id, _view_id), metadata in sidecar.view_records.items()
+        if source_id == 0
+    ]
+    assert len(views) == 1
+    assert views[0]["corruption"] == "identity"
+
+
+def test_audio_corruption_sidecar_keeps_distinct_views_of_same_source(tmp_path):
+    sidecar_path = tmp_path / "metadata.jsonl"
+    with patch("justdata.core.loader.fetch_ds", return_value=_base_dataset(2)):
+        datasets, _ = create_audio_corruption_datasets(
+            corruption_types=["identity", "clipping"],
+            severity=1,
+            base_dataset="mock_audio",
+            preset=None,
+            split="validation",
+            seed=7,
+            batch_size=2,
+            preprocess_fn=lambda x: x,
+            postprocess_fn=_postprocess,
+            metadata_mode="numeric_only",
+            sidecar_metadata_path=str(sidecar_path),
+        )
+    batches = [next(iter(dataset)) for dataset in datasets]
+    first_view = int(batches[0][METADATA]["view_id"][0])
+    second_view = int(batches[1][METADATA]["view_id"][0])
+    assert first_view != second_view
+    sidecar = MetadataSidecar.read_jsonl(str(sidecar_path))
+    assert sidecar.view_records[(0, first_view)]["corruption"] == "identity"
+    assert sidecar.view_records[(0, second_view)]["corruption"] == "clipping"
+    assert sidecar.records[0]["clip_id"] == "clip-0"
 
 
 def test_spectrogram_corruption_runs_after_one_frontend_pass():

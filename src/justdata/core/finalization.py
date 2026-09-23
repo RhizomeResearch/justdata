@@ -5,7 +5,14 @@ from typing import Any, Literal
 
 import tensorflow as tf
 
-from justdata.core.metadata import apply_metadata_mode, attach_sidecar_writer
+from justdata.core.metadata import (
+    MetadataSidecar,
+    apply_metadata_mode,
+    attach_sidecar_mapping,
+    attach_sidecar_views,
+    attach_sidecar_writer,
+    verify_sidecar_keys,
+)
 
 
 MetadataMode = Literal["full", "numeric_only", "none"]
@@ -91,6 +98,9 @@ def finalize_dataset(
     post_postprocess_transform: Callable | None = None,
     metadata_mode: MetadataMode = "full",
     sidecar_metadata_path: str | None = None,
+    metadata_sidecar: MetadataSidecar | None = None,
+    sidecar_metadata_policy: Literal["resume", "create", "overwrite"] = "resume",
+    _sidecar_already_bound: bool = False,
     cache_model_inputs: bool = False,
     model_input_cache_path: str = "",
     drop_remainder: bool = False,
@@ -112,6 +122,22 @@ def finalize_dataset(
         raise ValueError(
             "metadata_mode must be one of 'full', 'numeric_only', or 'none'."
         )
+    if sidecar_metadata_path is not None and metadata_sidecar is not None:
+        raise ValueError(
+            "Choose either a sidecar path or an immutable metadata sidecar."
+        )
+    if (
+        sidecar_metadata_path is not None or metadata_sidecar is not None
+    ) and metadata_mode != "numeric_only":
+        raise ValueError("Sidecar transport requires metadata_mode='numeric_only'.")
+    if metadata_sidecar is not None and not isinstance(
+        metadata_sidecar, MetadataSidecar
+    ):
+        raise TypeError("metadata_sidecar must be a MetadataSidecar.")
+    if sidecar_metadata_policy not in {"resume", "create", "overwrite"}:
+        raise ValueError("Unknown sidecar metadata policy.")
+    if sidecar_metadata_path is None and sidecar_metadata_policy != "resume":
+        raise ValueError("Sidecar policy requires a sidecar path.")
     if apply_late_augment is None:
         apply_late_augment = is_training
     if (
@@ -130,12 +156,32 @@ def finalize_dataset(
         tf.data.AUTOTUNE if map_parallel_calls is None else map_parallel_calls
     )
 
+    # Bind identities before postprocessing creates per-view metadata.
+    if (
+        _sidecar_already_bound
+        and sidecar_metadata_path is None
+        and metadata_sidecar is None
+    ):
+        raise ValueError("A bound sidecar needs a mapping or path for verification.")
+    if not _sidecar_already_bound and metadata_sidecar is not None:
+        ds = attach_sidecar_mapping(
+            ds, metadata_sidecar, map_parallel_calls=parallel_calls
+        )
+    elif not _sidecar_already_bound and sidecar_metadata_path is not None:
+        ds = attach_sidecar_writer(
+            ds,
+            sidecar_metadata_path,
+            policy=sidecar_metadata_policy,
+            map_parallel_calls=parallel_calls,
+        )
+
     map_deterministic = deterministic if is_training else None
 
     may_fuse_metadata = (
         metadata_mode != "full"
         and post_postprocess_transform is None
         and sidecar_metadata_path is None
+        and metadata_sidecar is None
     )
     # Dataset.map traces synchronously to establish its output structure.
     metadata_fused = [False]
@@ -172,10 +218,11 @@ def finalize_dataset(
         return dataset
 
     def apply_metadata(dataset):
-        if metadata_mode == "numeric_only" and sidecar_metadata_path is not None:
-            dataset = attach_sidecar_writer(
+        if metadata_sidecar is not None or sidecar_metadata_path is not None:
+            dataset = attach_sidecar_views(
                 dataset,
-                sidecar_metadata_path,
+                sidecar=metadata_sidecar,
+                path=sidecar_metadata_path,
                 map_parallel_calls=parallel_calls,
             )
         if metadata_mode != "full" and not metadata_fused[0]:
@@ -187,12 +234,16 @@ def finalize_dataset(
         return dataset
 
     def apply_metadata_and_cache(dataset):
-        if cache_model_inputs and sidecar_metadata_path is not None:
-            dataset = dataset.cache(model_input_cache_path)
-            return apply_metadata(dataset)
         dataset = apply_metadata(dataset)
         if cache_model_inputs:
             dataset = dataset.cache(model_input_cache_path)
+        if metadata_sidecar is not None or sidecar_metadata_path is not None:
+            dataset = verify_sidecar_keys(
+                dataset,
+                sidecar=metadata_sidecar,
+                path=sidecar_metadata_path,
+                map_parallel_calls=parallel_calls,
+            )
         return dataset
 
     should_shuffle = is_training and shuffle_buffer is not None

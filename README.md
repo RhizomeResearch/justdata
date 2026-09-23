@@ -499,11 +499,11 @@ complex interpolation during dense evaluation, images are resized to the target 
 the bottom and right edges such that both height and width are exact multiples of the ViT patch size (e.g., 14). This is
 implemented in `justdata.vision.transforms.pad_to_patch_multiple`.
 
-For semantic segmentation with replayable geometry, select `vision/segmentation` with
-`apply_presets=False` and explicit `geometry_kwargs`. It supports paired aspect-preserving training resize and crops,
-longer-side evaluation caps, independent RGB/ignore padding, per-pixel validity, and original-coordinate score
-restoration. See [the dense geometry contract](docs/vision.md#12-replayable-dense-segmentation) for configuration,
-record fields, replay, and batching requirements.
+For semantic segmentation with replayable geometry, select `vision/segmentation` with `apply_presets=False` and explicit
+`geometry_kwargs`. It supports paired aspect-preserving training resize and crops, longer-side evaluation caps,
+independent RGB/ignore padding, per-pixel validity, and original-coordinate score restoration. See
+[the dense geometry contract](docs/vision.md#12-replayable-dense-segmentation) for configuration, record fields, replay,
+and batching requirements.
 
 ______________________________________________________________________
 
@@ -527,10 +527,10 @@ All extensible components in `justdata` use a decorator-based registry pattern w
 user-supplied kwargs (via smart merge; see below), and invokes the appropriate pipeline factory.
 
 Custom pipelines may register `@register_pipeline(name, config_resolver=resolver)` when they support strict overrides
-and executed-configuration export. The resolver receives a defensive copy of the merged configuration plus
-`is_training` and returns the resolved four-stage configuration and model-input contract. Legacy factories without a
-resolver remain buildable, but strict resolution and `return_config=True` reject them because their behavior cannot be
-described completely.
+and executed-configuration export. The resolver receives a defensive copy of the merged configuration plus `is_training`
+and returns the resolved four-stage configuration and model-input contract. Legacy factories without a resolver remain
+buildable, but strict resolution and `return_config=True` reject them because their behavior cannot be described
+completely.
 
 **Built-in crop strategies:** `random_resized`, `random_resized_hvflip`, `random_pad`, `random_hflip`,
 `resize_random_hflip`, `random_rot90_hflip`.
@@ -610,8 +610,8 @@ pipeline = get_pipeline(
 ```
 
 Supplying `overrides={}` selects strict resolution without changing values. Built-in resolvers reject unknown nested
-keys, missing required settings, contradictory configurations, and attempts to set runtime-owned fields before a
-loader opens its source. Existing keyword arguments retain smart-merge compatibility semantics.
+keys, missing required settings, contradictory configurations, and attempts to set runtime-owned fields before a loader
+opens its source. Existing keyword arguments retain smart-merge compatibility semantics.
 
 Resolved presets are serializable and hashable across modalities. Use `get_resolved_preset(name)` from
 `justdata.vision.presets`, `justdata.acoustic.presets`, or `justdata.core.presets` to obtain an object with `.to_json()`
@@ -679,6 +679,23 @@ represented by configuration data.
 The snapshot describes JustData's configured execution. A consuming product must separately bind admitted source
 inventory identities, external transformations, exact library revisions, model/checkpoint identities, and other run
 artifacts.
+
+### Numeric identity and metadata sidecars
+
+With `metadata_mode="numeric_only"`, pass `metadata_sidecar=` for a complete source mapping prepared before iteration.
+For an admitted inventory, use `MetadataSidecar.from_inventory(admitted)`; for another finite source, use
+`MetadataSidecar.from_metadata(source_records)`. Each real batch row then has `metadata.row_id`, an `int64` join key,
+and `metadata.row_fingerprint`, a numeric check against stale cache entries. Resolve keys through `sidecar.records` only
+where `padding_mask` is true. The sidecar preserves original string IDs and static source metadata while numeric
+geometry remains with each view.
+
+For a view with additional string metadata, use the numeric `metadata.view_id` with `row_id` to read
+`sidecar.view_records[(row_id, view_id)]`.
+
+`sidecar.write_jsonl(path, policy="create")` saves a complete mapping and `MetadataSidecar.read_jsonl(path)` reopens it.
+The streaming `sidecar_metadata_path=` route resumes and validates an existing file by default;
+`sidecar_metadata_policy="create"` rejects reuse and `"overwrite"` explicitly replaces it. Streaming artifacts can be
+partial after interrupted iteration. Executed configuration records the sidecar policy or full mapping digest.
 
 ### Automatic preset resolution
 

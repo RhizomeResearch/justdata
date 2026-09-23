@@ -288,11 +288,42 @@ stable.
 Use `metadata_mode="numeric_only"` with `as_numpy=True` for JAX-friendly arrays.
 If string metadata is needed for later joins, pass
 `sidecar_metadata_path="metadata.jsonl"` and keep batches numeric.
-Sidecar records require either an integer/string `example_id` or the composite
-`dataset`, `split`, and `clip_id` fields. Repeated dataset iterations do not add
-duplicate records; a reused ID with different string metadata raises an error.
-The file is populated as samples are consumed, so partial dataset consumption
-can produce a partial sidecar.
+Each real row then carries `metadata.row_id` (`int64`), which joins to the
+complete source mapping, and a numeric `metadata.row_fingerprint` that detects
+stale cached mappings. Test `padding_mask` before looking up keys: padded
+rows have no identity, even if their zero fill matches a real key.
+
+For a finite source, build `MetadataSidecar.from_metadata(source_records)` or
+`MetadataSidecar.from_inventory(admitted)` before iteration and pass it as
+`metadata_sidecar=` to `load_ds`, `load_inventory`, or `finalize_dataset`.
+`from_metadata` takes source metadata dictionaries with an integer/string
+`example_id` or `dataset`, `split`, and `clip_id`. The inventory helper also
+retains admitted source, split, record ID, verified assets, and supplied record
+metadata. The mapping is detached when the dataset is built, so iteration,
+shuffle, caches, and restart do not create its entries. Save it with
+`sidecar.write_jsonl(path, policy="create")` and read it with
+`MetadataSidecar.read_jsonl(path)`. A full digest is available as
+`sidecar.digest()` and appears in executed configuration snapshots.
+
+The streaming path writes static source metadata before transforms. Its default
+`sidecar_metadata_policy="resume"` validates and keeps accepted mappings;
+`"create"` fails if a file exists and `"overwrite"` explicitly replaces it.
+New records are committed by atomic JSONL replacement. Repeated IDs with
+identical metadata are accepted; conflicting metadata or numeric-key collisions
+fail. An older sidecar remains readable, but entries without complete identity
+evidence cannot be used as an immutable mapping. Streaming sidecars may be
+partial if iteration stops early. Each new record rewrites the JSONL atomically,
+so use the precomputed route for large finite inventories. Use one writer
+process per path.
+
+Keep geometry for each crop in the emitted numeric `geometry` record. It may
+change between epochs without changing the source identity or sidecar entry.
+When a stage adds string metadata for a distinct view, the batch also carries
+`metadata.view_id` and `metadata.view_fingerprint`. Join `(row_id, view_id)` to
+`sidecar.view_records` for that view's metadata. A zero `view_id` means no
+string view record; numeric view geometry remains in the batch. For an immutable
+sidecar, register known string views with `sidecar.add_view_metadata(row_id,
+view_metadata)` before building the dataset. Unknown views fail explicitly.
 
 ## 9. Golden compatibility tests
 

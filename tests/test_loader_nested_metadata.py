@@ -107,10 +107,23 @@ def test_sidecar_preserves_valid_id_hashes_and_json_shape(
     record = json.loads(path.read_text(encoding="utf-8"))
     assert record == {
         "example_id": expected_id,
+        "identity": (
+            {
+                key: metadata[key].decode("utf-8")
+                for key in ("dataset", "split", "clip_id")
+            }
+            if "dataset" in metadata
+            else {
+                "example_id": (
+                    metadata["example_id"].decode("utf-8")
+                    if isinstance(metadata["example_id"], bytes)
+                    else metadata["example_id"]
+                )
+            }
+        ),
         "metadata": {
-            key: value.decode("utf-8")
+            key: value.decode("utf-8") if isinstance(value, bytes) else value
             for key, value in metadata.items()
-            if isinstance(value, bytes)
         },
     }
     assert path.read_text(encoding="utf-8") == (

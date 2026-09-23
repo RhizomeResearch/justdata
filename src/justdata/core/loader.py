@@ -9,6 +9,11 @@ from loguru import logger
 from justdata.core.adapters import get_adapter
 from justdata.core.executed_config import ExecutedConfig
 from justdata.core.finalization import _seed_for_index, finalize_dataset
+from justdata.core.metadata import (
+    MetadataSidecar,
+    attach_sidecar_mapping,
+    attach_sidecar_writer,
+)
 from justdata.core.sources import get_source_loader
 
 
@@ -189,6 +194,8 @@ def load_ds(
     as_numpy: bool = False,
     metadata_mode: Literal["full", "numeric_only", "none"] | None = None,
     sidecar_metadata_path: str | None = None,
+    metadata_sidecar: MetadataSidecar | None = None,
+    sidecar_metadata_policy: Literal["resume", "create", "overwrite"] = "resume",
     filter_fn=None,
     *,
     source_filter_fn=None,
@@ -252,8 +259,10 @@ def load_ds(
             When omitted, uses ``pipeline.kwargs["metadata_mode"]`` if present,
             then defaults to ``full``.
             ``numeric_only`` drops strings from batches and ``none`` removes metadata.
-        sidecar_metadata_path: JSONL path for string metadata
-            when ``metadata_mode="numeric_only"``.
+        sidecar_metadata_path: JSONL path for source metadata when
+            ``metadata_mode="numeric_only"``. Existing files resume by default.
+        metadata_sidecar: Complete, precomputed source mapping for numeric joins.
+        sidecar_metadata_policy: ``resume``, ``create``, or explicit ``overwrite``.
         filter_fn: Optional predicate applied after preprocessing and caching,
             before augmentation, postprocessing, and batching.
         source_filter_fn: Optional predicate applied to raw source records
@@ -335,6 +344,8 @@ def load_ds(
         as_numpy=as_numpy,
         metadata_mode=metadata_mode,
         sidecar_metadata_path=sidecar_metadata_path,
+        metadata_sidecar=metadata_sidecar,
+        sidecar_metadata_policy=sidecar_metadata_policy,
         filter_fn=filter_fn,
         map_parallel_calls=map_parallel_calls,
         private_threadpool_size=private_threadpool_size,
@@ -367,6 +378,8 @@ def _prepare_ds(
     as_numpy: bool = False,
     metadata_mode: Literal["full", "numeric_only", "none"] | None = None,
     sidecar_metadata_path: str | None = None,
+    metadata_sidecar: MetadataSidecar | None = None,
+    sidecar_metadata_policy: Literal["resume", "create", "overwrite"] = "resume",
     filter_fn=None,
     map_parallel_calls: int | None = None,
     private_threadpool_size: int | None = None,
@@ -384,6 +397,24 @@ def _prepare_ds(
         raise ValueError(
             "metadata_mode must be one of 'full', 'numeric_only', or 'none'."
         )
+    if sidecar_metadata_path is not None and metadata_sidecar is not None:
+        raise ValueError(
+            "Choose either a sidecar path or an immutable metadata sidecar."
+        )
+    if (
+        sidecar_metadata_path is not None or metadata_sidecar is not None
+    ) and metadata_mode != "numeric_only":
+        raise ValueError("Sidecar transport requires metadata_mode='numeric_only'.")
+    if sidecar_metadata_policy not in {"resume", "create", "overwrite"}:
+        raise ValueError("Unknown sidecar metadata policy.")
+    if metadata_sidecar is not None and not isinstance(
+        metadata_sidecar, MetadataSidecar
+    ):
+        raise TypeError("metadata_sidecar must be a MetadataSidecar.")
+    if sidecar_metadata_path is None and sidecar_metadata_policy != "resume":
+        raise ValueError("Sidecar policy requires a sidecar path.")
+    if metadata_sidecar is not None:
+        metadata_sidecar = copy.deepcopy(metadata_sidecar)
 
     if (
         isinstance(batch_size, bool)
@@ -495,6 +526,18 @@ def _prepare_ds(
         tf.data.AUTOTUNE if map_parallel_calls is None else map_parallel_calls
     )
 
+    if metadata_sidecar is not None:
+        ds = attach_sidecar_mapping(
+            ds, metadata_sidecar, map_parallel_calls=parallel_calls
+        )
+    elif sidecar_metadata_path is not None:
+        ds = attach_sidecar_writer(
+            ds,
+            sidecar_metadata_path,
+            policy=sidecar_metadata_policy,
+            map_parallel_calls=parallel_calls,
+        )
+
     ds = ds.map(
         preprocess_fn,
         num_parallel_calls=parallel_calls,
@@ -520,6 +563,10 @@ def _prepare_ds(
         "batch_size": batch_size,
         "metadata_mode": metadata_mode,
         "sidecar_metadata_path": sidecar_metadata_path,
+        "metadata_sidecar": metadata_sidecar,
+        "_sidecar_already_bound": bool(
+            sidecar_metadata_path is not None or metadata_sidecar is not None
+        ),
         "cache_model_inputs": cache_model_inputs,
         "model_input_cache_path": model_input_cache_path,
         "drop_remainder": drop_remainder,
@@ -688,8 +735,20 @@ def _prepare_ds(
                     "metadata": {
                         "mode": final.get("metadata_mode", metadata_mode),
                         "sidecar_path": (
-                            os.fspath(final.get("sidecar_metadata_path"))
+                            os.fspath(final["sidecar_metadata_path"])
                             if final.get("sidecar_metadata_path") is not None
+                            else None
+                        ),
+                        "sidecar_policy": (
+                            final.get(
+                                "sidecar_metadata_policy", sidecar_metadata_policy
+                            )
+                            if final.get("sidecar_metadata_path") is not None
+                            else None
+                        ),
+                        "sidecar_digest": (
+                            final["metadata_sidecar"].digest()
+                            if final.get("metadata_sidecar") is not None
                             else None
                         ),
                     },
@@ -735,6 +794,18 @@ def _prepare_ds(
         )
 
     def finalize_fn(epoch_ds, *, return_config=False, **overrides):
+        if finalize_defaults["_sidecar_already_bound"]:
+            locked = {
+                "sidecar_metadata_path",
+                "metadata_sidecar",
+                "sidecar_metadata_policy",
+                "_sidecar_already_bound",
+            }.intersection(overrides)
+            if locked:
+                raise ValueError(
+                    "Source identity mapping is fixed during finalization: "
+                    + ", ".join(sorted(locked))
+                )
         config = None
         if return_config:
             config = executed_config(

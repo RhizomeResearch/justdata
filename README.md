@@ -509,7 +509,8 @@ For instance-aware labels, select `vision/panoptic_segmentation` with a segment-
 thing instances, merges stuff by category, and excludes crowd pixels from panoptic supervision. The
 [panoptic contract](docs/vision.md#13-panoptic-segmentation) and
 [LaRS example](docs/vision.md#14-loading-local-lars-archives) show how to load either semantic or panoptic labels
-from local LaRS v1.0.0 archives.
+from local LaRS v1.0.0 archives and plot five images under the A1/A2/A3 presets
+with both label views.
 
 ______________________________________________________________________
 

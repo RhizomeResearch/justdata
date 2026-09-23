@@ -789,6 +789,36 @@ print(panoptic_row["image"].shape, panoptic_row["panoptic_mask"].shape)
 print(panoptic_row["segments"]["segment_ids"])
 ```
 
+To compare the training augmentations, create matching five-image train
+snapshots and run the complete [Matplotlib plotting example](../examples/vision/lars_segmentation_presets_plot.py):
+
+```bash
+uv run python examples/vision/lars_local_inventory.py \
+  --images-archive ~/Downloads/lars_v1.0.0_images.zip \
+  --annotations-archive ~/Downloads/lars_v1.0.0_annotations.zip \
+  --split train --limit 5 --labels semantic \
+  --output-dir /tmp/lars-five-semantic
+
+uv run python examples/vision/lars_local_inventory.py \
+  --images-archive ~/Downloads/lars_v1.0.0_images.zip \
+  --annotations-archive ~/Downloads/lars_v1.0.0_annotations.zip \
+  --split train --limit 5 --labels panoptic \
+  --output-dir /tmp/lars-five-panoptic
+
+uv run --with matplotlib python examples/vision/lars_segmentation_presets_plot.py \
+  --semantic-inventory /tmp/lars-five-semantic \
+  --panoptic-inventory /tmp/lars-five-panoptic \
+  --output /tmp/lars-five-presets.png
+```
+
+The PNG has five rows and, for each of A1/A2/A3, an RGB image, semantic mask,
+and panoptic mask with class legends. Each row uses the same source image and
+seed across all six pipeline applications. The snapshots hold unaugmented source
+rows; the example applies each preset and checks that the semantic and panoptic
+images align. The panoptic panel colors categories and outlines individual
+segments. Matplotlib is needed only for this plotting command and is not a
+JustData dependency. Use fresh output paths when rerunning the commands.
+
 `snapshot/` contains the strict admitted inventory. `metadata.jsonl` maps
 numeric row IDs back to the complete source identity, scene attributes and
 panoptic segment references. `source.json` records the archive digests,

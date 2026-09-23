@@ -22,7 +22,13 @@ build_inventory = EXAMPLE["build_inventory"]
 
 
 def _archives(
-    tmp_path, *, missing=None, invalid_mask=None, bad_size=False, rgb_mask=False
+    tmp_path,
+    *,
+    missing=None,
+    invalid_mask=None,
+    bad_size=False,
+    rgb_mask=False,
+    train_count=2,
 ):
     tmp_path.mkdir(parents=True, exist_ok=True)
     images_path = tmp_path / "images.zip"
@@ -32,7 +38,7 @@ def _archives(
         ZipFile(annotations_path, "w") as annotations,
     ):
         for split, stems in (
-            ("train", ("train_0001", "train_0002")),
+            ("train", tuple(f"train_{i:04d}" for i in range(1, train_count + 1))),
             ("val", ("val_0001",)),
         ):
             images.writestr(f"{split}/image_list.txt", "\n".join(stems) + "\n")
@@ -189,6 +195,30 @@ def test_example_limit_follows_author_list_order(tmp_path):
     assert admitted.report["splits"][0]["retained_ids"] == [
         "lars/v1.0.0/train/train_0001"
     ]
+
+
+def test_plot_shows_five_paired_views_for_each_preset(tmp_path):
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg", force=True)
+    plot_example = runpy.run_path(
+        str(
+            Path(__file__).resolve().parents[1]
+            / "examples/vision/lars_segmentation_presets_plot.py"
+        )
+    )
+    images, annotations = _archives(tmp_path / "archives", train_count=5)
+    semantic_dir = tmp_path / "semantic"
+    panoptic_dir = tmp_path / "panoptic"
+    build_inventory(images, annotations, "train", semantic_dir, limit=5)
+    build_inventory(
+        images, annotations, "train", panoptic_dir, limit=5, labels="panoptic"
+    )
+    output = tmp_path / "presets.png"
+    plot_example["plot"](semantic_dir, panoptic_dir, output, seed=17)
+    image = matplotlib.image.imread(output)
+    assert image.shape[0] > 1000
+    assert image.shape[1] > 1000
+    assert len(np.unique(image.reshape(-1, image.shape[-1]), axis=0)) > 10
 
 
 @pytest.mark.parametrize(

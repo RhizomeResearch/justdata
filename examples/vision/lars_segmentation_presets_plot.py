@@ -173,7 +173,7 @@ def plot(semantic_dir: Path, panoptic_dir: Path, output: Path, seed: int):
     )
     fig.legend(handles=handles, loc="lower center", ncol=6, fontsize=8)
     fig.tight_layout(rect=(0, 0.09, 1, 0.97))
-    fig.savefig(output, dpi=110, bbox_inches="tight", format="png")
+    fig.savefig(output, dpi=90, bbox_inches="tight", format="png")
     plt.close(fig)
 
 

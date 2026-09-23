@@ -819,6 +819,8 @@ images align. The panoptic panel colors categories and outlines individual
 segments. Matplotlib is needed only for this plotting command and is not a
 JustData dependency. Use fresh output paths when rerunning the commands.
 
+![Five LaRS samples with A1, A2, and A3 RGB views and their semantic and panoptic labels](assets/lars-five-segmentation-presets.png)
+
 `snapshot/` contains the strict admitted inventory. `metadata.jsonl` maps
 numeric row IDs back to the complete source identity, scene attributes and
 panoptic segment references. `source.json` records the archive digests,

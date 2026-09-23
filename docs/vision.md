@@ -615,6 +615,41 @@ For resumed dense fitting, use the admitted-inventory epoch API in
 with `pixel_valid_mask` before computing a loss or metric; an all-ignore real
 row contributes zero valid pixels, and padded rows contribute none.
 
+### Semantic class-mask targets
+
+Set `postproc_kwargs={"emit_semantic_targets": True}` alongside recorded
+`geometry_kwargs` to emit `sample["targets"]`. The conversion runs after paired
+resize, crop, flip, and padding. It uses the geometry configuration's ordered
+`class_values` and `ignore_value`; changing the setting or class order changes
+the executed configuration and replay fingerprint. The default is disabled.
+The same operation is available directly as
+`justdata.vision.encodings.semantic_map_to_targets(mask, class_values=...,
+ignore_value=..., pixel_valid_mask=..., example_valid=True)`. Pass an HW or HW1
+integer mask and HW boolean validity. `with_semantic_targets(sample, ...)`
+attaches the result to a sample that already has `pixel_valid_mask`.
+
+For `T = len(class_values)`, targets contain int32 `class_ids[T]` with original
+values, int32 `class_indices[T]` numbered in caller order, boolean
+`masks[T,H,W]`, boolean `target_valid_mask[T]`, boolean
+`pixel_valid_mask[H,W]`, scalar int32 `num_targets`, and scalar boolean
+`supervision_valid`. Absent classes keep their slot with an empty mask.
+Disconnected regions of one class share a mask. Ignored or unavailable pixels
+are false in every class mask and in spatial validity. `supervision_valid=False`
+means the entire example contributes no supervised loss, including query
+classification. It is false for all-ignore samples and padded batch rows;
+the loader's `padding_mask` still identifies real rows. Ignore is distinct from
+a model's no-object class and from its feature-exclusion mask.
+
+Identity, instance provenance, `original_mask`, and numeric `geometry` remain
+in their existing sample fields; converting class masks never groups instances.
+TensorFlow batching adds a leading `B` axis to every target field, and partial
+batch padding fills validity and counts with zero. A missing semantic mask is
+supported only when spatial validity is entirely false. Use the returned
+`pixel_valid_mask` for matching and mask-point sampling; the model's random
+points and decoder randomness must be recorded by its own replay controller.
+[`examples/vision/semantic_targets.py`](../examples/vision/semantic_targets.py)
+shows a complete synthetic view.
+
 ### Original-coordinate scoring
 
 `restore_dense_scores(scores, record)` accepts a single floating HWC logit field,

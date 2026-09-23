@@ -327,6 +327,8 @@ def _resolve_classification_config(config, is_training):
 def _resolve_segmentation_config(config, is_training):
     if config.get("geometry_kwargs") is not None:
         return _resolve_dense_segmentation_config(config, is_training)
+    if (config.get("postproc_kwargs") or {}).get("emit_semantic_targets", False):
+        raise ValueError("emit_semantic_targets requires geometry_kwargs")
     for name in ("color_jitter_kwargs", "keep_original_mask"):
         if name in config:
             raise ValueError(f"{name} requires geometry_kwargs")
@@ -528,6 +530,8 @@ def default_segmentation_pipeline(
                 "postproc_kwargs": postproc_kwargs,
             }
         )
+    if (postproc_kwargs or {}).get("emit_semantic_targets", False):
+        raise ValueError("emit_semantic_targets requires geometry_kwargs")
     for name in ("color_jitter_kwargs", "keep_original_mask"):
         if name in kwargs:
             raise ValueError(f"{name} requires geometry_kwargs")
@@ -606,6 +610,8 @@ def _resolve_dense_segmentation_config(config, is_training):
     for key in ("normalize_image", "permute_image"):
         if type(post[key]) is not bool:
             raise ValueError(f"postproc_kwargs.{key} must be boolean")
+    if type(post["emit_semantic_targets"]) is not bool:
+        raise ValueError("postproc_kwargs.emit_semantic_targets must be boolean")
     keep_original = config.get("keep_original_mask", True)
     if type(keep_original) is not bool:
         raise ValueError("keep_original_mask must be boolean")
@@ -661,6 +667,18 @@ def _resolve_dense_segmentation_config(config, is_training):
                 "active": True,
                 "config": post,
                 "geometry": None if is_training else geometry_contract,
+                "target_set": (
+                    {
+                        "version": 1,
+                        "class_values": geometry["class_values"],
+                        "ignore_value": geometry["ignore_value"],
+                        "capacity": len(geometry["class_values"]),
+                        "slot_order": "class_values",
+                        "pixel_validity": "source_annotation_non_ignore_and_example",
+                    }
+                    if post["emit_semantic_targets"]
+                    else None
+                ),
             },
         },
         "model_input": {

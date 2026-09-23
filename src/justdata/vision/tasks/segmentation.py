@@ -240,9 +240,11 @@ def make_dense_postprocessing(
     normalize_image=True,
     normalization_params=((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     permute_image=True,
+    emit_semantic_targets=False,
 ):
     """Create deterministic evaluation geometry and normalize RGB exactly once."""
     from justdata.vision.geometry import replay_dense_geometry, sample_dense_geometry
+    from justdata.vision.encodings import with_semantic_targets
     from justdata.vision.transforms import nhwc_to_nchw
 
     def postprocessing(sample, **kwargs):
@@ -271,6 +273,13 @@ def make_dense_postprocessing(
             image = normalize(image, *normalization_params)
         if permute_image:
             image = nhwc_to_nchw(image)
-        return sample | {"image": image}
+        sample = sample | {"image": image}
+        if emit_semantic_targets:
+            sample = with_semantic_targets(
+                sample,
+                class_values=geometry.class_values,
+                ignore_value=geometry.ignore_value,
+            )
+        return sample
 
     return postprocessing

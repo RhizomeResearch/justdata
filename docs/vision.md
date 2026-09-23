@@ -4,6 +4,11 @@
 schema normalization, augmentation, batching, metadata, presets, and corruption
 benchmarks.
 
+Shared bounded prefetch, CPU placement, and protected cache controls are
+documented in the [usage guide](../README.md#bounded-input-execution-and-protected-caches).
+For dense inputs, include the resolved geometry and ignore conventions in the
+cache fingerprint and use a finite batch/prefetch profile.
+
 Current pipeline support covers image classification and segmentation. Object
 detection and depth estimation remain future scope and are not registered
 capabilities.

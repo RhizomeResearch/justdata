@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import os
 from functools import partial
 from typing import Any, Dict, Literal, Optional, Union
@@ -6,7 +7,9 @@ from typing import Any, Dict, Literal, Optional, Union
 import tensorflow as tf
 from loguru import logger
 
+from justdata import __version__
 from justdata.core.adapters import get_adapter
+from justdata.core.cache import CachePolicy, protected_cache
 from justdata.core.executed_config import ExecutedConfig
 from justdata.core.finalization import _seed_for_index, finalize_dataset
 from justdata.core.metadata import (
@@ -87,7 +90,11 @@ def fetch_ds(
           and that dataset is skipped. The function will attempt to proceed
           with other dataset names.
     """
-    if map_parallel_calls is not None and map_parallel_calls <= 0:
+    if map_parallel_calls is not None and (
+        isinstance(map_parallel_calls, bool)
+        or not isinstance(map_parallel_calls, int)
+        or map_parallel_calls <= 0
+    ):
         raise ValueError("map_parallel_calls must be positive when provided")
 
     parallel_calls = (
@@ -202,6 +209,8 @@ def load_ds(
     map_parallel_calls: int | None = None,
     private_threadpool_size: int | None = None,
     max_intra_op_parallelism: int | None = None,
+    prefetch: bool | int = True,
+    cache_policy: CachePolicy | None = None,
 ):
     """
     Loads, preprocesses, and batches HuggingFace or TensorFlow Datasets.
@@ -308,9 +317,9 @@ def load_ds(
             "dictionary mapping dataset names to lists of strings."
         )
 
-    if return_config and source_filter_fn is not None:
+    if (return_config or cache_policy is not None) and source_filter_fn is not None:
         raise ValueError(
-            "return_config does not support opaque source_filter_fn callbacks"
+            "Configuration export and protected caching do not support opaque source_filter_fn callbacks"
         )
 
     return _prepare_ds(
@@ -350,6 +359,8 @@ def load_ds(
         map_parallel_calls=map_parallel_calls,
         private_threadpool_size=private_threadpool_size,
         max_intra_op_parallelism=max_intra_op_parallelism,
+        prefetch=prefetch,
+        cache_policy=cache_policy,
     )
 
 
@@ -384,6 +395,9 @@ def _prepare_ds(
     map_parallel_calls: int | None = None,
     private_threadpool_size: int | None = None,
     max_intra_op_parallelism: int | None = None,
+    prefetch: bool | int = True,
+    cache_policy: CachePolicy | None = None,
+    _cache_input_identity: str | None = None,
 ):
     """Shared pipeline, resolving its source only after validating options."""
     rng = tf.random.Generator.from_seed(seed)
@@ -430,21 +444,59 @@ def _prepare_ds(
         raise ValueError("num_classes must be a positive integer when provided")
     is_training = dataset_type == "train"
     if is_training:
-        if shuffle_buffer is not None and shuffle_buffer <= 0:
-            raise ValueError("shuffle_buffer must be positive for training")
+        if shuffle_buffer is not None and (
+            isinstance(shuffle_buffer, bool)
+            or not isinstance(shuffle_buffer, int)
+            or shuffle_buffer <= 0
+        ):
+            raise ValueError("shuffle_buffer must be a positive integer for training")
 
     for name, value in (
         ("map_parallel_calls", map_parallel_calls),
         ("private_threadpool_size", private_threadpool_size),
         ("max_intra_op_parallelism", max_intra_op_parallelism),
     ):
-        if value is not None and value <= 0:
-            raise ValueError(f"{name} must be positive when provided")
-
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+        ):
+            raise ValueError(f"{name} must be a positive integer when provided")
+    if not isinstance(prefetch, bool) and (
+        not isinstance(prefetch, int) or prefetch <= 0
+    ):
+        raise ValueError("prefetch must be a positive integer or boolean")
     augment_eval = bool(
         pipeline is not None and pipeline.kwargs.get("augment_eval", False)
     )
     apply_augmentation = is_training or augment_eval
+    if cache_policy is not None:
+        if not isinstance(cache_policy, CachePolicy):
+            raise TypeError("cache_policy must be a CachePolicy")
+        if not cache_policy.callbacks_are_deterministic:
+            raise ValueError("Protected caching requires deterministic callbacks")
+        if (cache_dataset and not cache_path) or (
+            cache_model_inputs and not model_input_cache_path
+        ):
+            raise ValueError("Protected caches require nonempty file paths")
+        if not cache_dataset and not cache_model_inputs:
+            raise ValueError("cache_policy requires an enabled cache stage")
+        if filter_fn is not None or sidecar_metadata_path is not None:
+            raise ValueError(
+                "Protected caches do not support opaque filters or streaming sidecars"
+            )
+        if pipeline is None or not hasattr(pipeline, "resolve_config"):
+            raise ValueError("Protected caching requires a resolved DataPipeline")
+        input_identity = (
+            f"inventory:{_cache_input_identity}:{cache_policy.input_identity or ''}"
+            if _cache_input_identity is not None
+            else cache_policy.input_identity
+        )
+        if not input_identity:
+            raise ValueError("Protected caching requires input_identity")
+        if cache_model_inputs and apply_augmentation:
+            raise ValueError(
+                "Protected model-input caching requires inactive augmentation"
+            )
+
     if cache_model_inputs and apply_augmentation and not allow_train_model_input_cache:
         raise ValueError(
             "cache_model_inputs with training or evaluation augmentation requires "
@@ -468,7 +520,9 @@ def _prepare_ds(
 
     resolved_pipeline = None
     if pipeline is not None and (
-        return_config or getattr(pipeline, "_strict_config", False)
+        return_config
+        or cache_policy is not None
+        or getattr(pipeline, "_strict_config", False)
     ):
         if not hasattr(pipeline, "resolve_config"):
             raise ValueError(
@@ -499,6 +553,24 @@ def _prepare_ds(
         raise ValueError("preprocess_fn and postprocess_fn must both be configured")
     if apply_augmentation and augment_fn is None:
         raise ValueError("augment_fn must be configured when augmentation is active")
+
+    def cache_fingerprint(stage: str) -> str:
+        payload = {
+            "schema": "justdata.cache.v1",
+            "stage": stage,
+            "input_identity": input_identity,
+            "pipeline": resolved_pipeline,
+            "dataset_type": dataset_type,
+            "seed": seed,
+            "num_classes": num_classes,
+            "metadata_mode": metadata_mode,
+            "sidecar_digest": (
+                metadata_sidecar.digest() if metadata_sidecar is not None else None
+            ),
+            "tensorflow_version": tf.__version__,
+            "justdata_version": __version__,
+        }
+        return hashlib.sha256(ExecutedConfig.from_dict(payload).to_bytes()).hexdigest()
 
     ds = source_factory()
 
@@ -547,7 +619,16 @@ def _prepare_ds(
     # An empty path caches in memory; a nonempty path caches on the filesystem.
     # Large datasets should use an explicit disk path or remain uncached.
     if cache_dataset:
-        ds = ds.cache(cache_path)
+        if cache_policy is None:
+            ds = ds.cache(cache_path)
+        else:
+            ds = protected_cache(
+                ds,
+                cache_path,
+                stage="preprocess",
+                policy=cache_policy,
+                fingerprint=cache_fingerprint("preprocess"),
+            )
     else:
         logger.info(
             f"Caching disabled for '{dataset_type}' dataset. "
@@ -579,6 +660,12 @@ def _prepare_ds(
         "shuffle_seed": seed,
         "as_numpy": as_numpy,
         "map_parallel_calls": map_parallel_calls,
+        "prefetch": prefetch,
+        "_protected_model_cache": (
+            (cache_policy, cache_fingerprint("model_input"))
+            if cache_policy is not None and cache_model_inputs
+            else None
+        ),
     }
 
     def pipeline_snapshot():
@@ -753,6 +840,16 @@ def _prepare_ds(
                         ),
                     },
                     "cache": {
+                        "protected": (
+                            {
+                                "input_identity": input_identity,
+                                "max_bytes": cache_policy.max_bytes,
+                                "max_examples": cache_policy.max_examples,
+                                "materialization": cache_policy.materialization,
+                            }
+                            if cache_policy is not None
+                            else None
+                        ),
                         "preprocess": {
                             "enabled": cache_dataset,
                             "path": os.fspath(cache_path),
@@ -783,7 +880,11 @@ def _prepare_ds(
                         "private_threadpool_size": private_threadpool_size,
                         "max_intra_op_parallelism": max_intra_op_parallelism,
                         "prefetch": (
-                            "AUTOTUNE" if final.get("prefetch", True) else "disabled"
+                            "AUTOTUNE"
+                            if final.get("prefetch", prefetch) is True
+                            else "disabled"
+                            if final.get("prefetch", prefetch) is False
+                            else final.get("prefetch", prefetch)
                         ),
                     },
                     "deterministic": bool(final.get("deterministic", deterministic)),
@@ -794,6 +895,41 @@ def _prepare_ds(
         )
 
     def finalize_fn(epoch_ds, *, return_config=False, **overrides):
+        if cache_policy is not None and cache_model_inputs and epoch_ds is not ds:
+            raise ValueError(
+                "Protected model-input caching requires the prepared dataset"
+            )
+        if cache_policy is not None and cache_model_inputs:
+            safe_overrides = {
+                "as_numpy",
+                "prefetch",
+                "map_parallel_calls",
+                "deterministic",
+                "shuffle_buffer",
+                "shuffle_seed",
+                "reshuffle_each_iteration",
+                "drop_remainder",
+                "batch_size",
+                "rng",
+                "late_augment_seed",
+            }
+            if forbidden := overrides.keys() - safe_overrides:
+                raise ValueError(
+                    "Protected model-input cache cannot override "
+                    + ", ".join(sorted(forbidden))
+                )
+        if cache_policy is not None and (
+            {
+                "post_postprocess_transform",
+                "postprocess_fn",
+                "late_augment_fn",
+                "_protected_model_cache",
+            }
+            & overrides.keys()
+        ):
+            raise ValueError(
+                "Protected caching does not accept unrecorded finalization transforms"
+            )
         if finalize_defaults["_sidecar_already_bound"]:
             locked = {
                 "sidecar_metadata_path",
@@ -829,7 +965,7 @@ def _prepare_ds(
         seed: int,
         as_numpy: bool | None = None,
         augment_is_stateless: bool = False,
-        prefetch: bool = True,
+        prefetch: bool | int | None = None,
         return_config: bool = False,
     ):
         """Build an addressable epoch with optional stateless augmentation parallelism.
@@ -873,7 +1009,9 @@ def _prepare_ds(
             shuffle_seed=seed,
             reshuffle_each_iteration=False,
             as_numpy=default_as_numpy if as_numpy is None else as_numpy,
-            prefetch=prefetch,
+            prefetch=prefetch
+            if prefetch is not None
+            else finalize_defaults["prefetch"],
         )
         if not return_config:
             return result
@@ -890,7 +1028,9 @@ def _prepare_ds(
                     "shuffle_seed": seed,
                     "reshuffle_each_iteration": False,
                     "as_numpy": default_as_numpy if as_numpy is None else as_numpy,
-                    "prefetch": prefetch,
+                    "prefetch": prefetch
+                    if prefetch is not None
+                    else finalize_defaults["prefetch"],
                 },
             ),
         )

@@ -1034,6 +1034,78 @@ explicit committed-batch cursor. It rebuilds the full epoch before skipping comm
 `count_real_examples(batch)` or the returned epoch's `remaining_examples`; padded rows have a false `padding_mask`.
 The epoch path also accepts `prefetch=False` when finalization must precede a caller-controlled prefetch stage.
 
+### Bounded input execution and protected caches
+
+Pass `prefetch=1` (or another positive batch count) to `load_ds`,
+`load_inventory`, or `finalize_fn` to bound final prefetch. `finalize_epoch`
+inherits the configured value unless overridden. `False` disables prefetch;
+`True` retains automatic tuning. A bounded input profile also sets positive
+integer `map_parallel_calls`, `private_threadpool_size`, and
+`max_intra_op_parallelism`, plus a finite shuffle buffer. The executed
+configuration records the effective values. Replay prefetches after skipping
+committed batches and defaults to one batch.
+
+When another framework uses the accelerator, configure TensorFlow before
+creating tensors or datasets:
+
+```python
+from justdata.core import configure_tensorflow_cpu
+
+device_report = configure_tensorflow_cpu(intra_op_threads=1, inter_op_threads=1)
+assert device_report["logical_gpus"] == []
+```
+
+The report includes physical and logical device names and process thread
+settings. The helper raises if the runtime has initialized too early for the
+requested change. Core, vision, acoustic, and audio imports permit this setup.
+
+`CachePolicy` enables identity-checked file caches on the existing preprocessing
+and model-input cache stages. The cache path is a directory whose parent exists.
+The input identity must cover ordered content. `load_inventory` binds its
+verified manifest automatically; other sources require a content-derived
+`input_identity`. Callers must declare deterministic callbacks because arbitrary
+callbacks cannot be inspected for stateful random operations.
+
+```python
+from justdata.core import CachePolicy, inspect_cache, load_inventory
+
+policy = CachePolicy(
+    max_bytes=1_073_741_824,
+    max_examples=256,
+    materialization="lazy",  # choose "eager" to finish before returning
+    callbacks_are_deterministic=True,
+)
+batches, count, config = load_inventory(
+    admitted, "validation", 2, 17,
+    pipeline=pipeline,
+    cache_dataset=True,
+    cache_path="/existing/cache-parent/prepared",
+    cache_policy=policy,
+    return_config=True,
+    map_parallel_calls=2,
+    private_threadpool_size=2,
+    max_intra_op_parallelism=1,
+    prefetch=1,
+)
+for batch in batches:
+    consume(batch)
+assert policy.status("preprocess")["state"] == "complete"
+assert inspect_cache("/existing/cache-parent/prepared")["state"] == "complete"
+```
+
+Lazy caches publish completion only after the source is fully exhausted.
+Eager caches finish before loading returns. Both modes record count, byte size,
+checksum, and a versioned stage/configuration identity. Changed input,
+normalization, geometry, or augmentation configuration rejects reuse at the
+same path. An incomplete or incompatible cache raises `CacheError`; choose a
+new path after inspecting or clearing the caller-owned artifact. Cache errors
+expose `code` and `path`. During lazy iteration TensorFlow may wrap the
+exception; `policy.status(stage)` retains its structured failure code. Quotas
+bound record count and serialized record bytes. Protected model-input caches
+require evaluation without active augmentation; preprocessing caches remain
+before per-epoch augmentation. Existing cache flags without a policy retain
+their behavior.
+
 ### Loading a Hugging Face Dataset
 
 ```python

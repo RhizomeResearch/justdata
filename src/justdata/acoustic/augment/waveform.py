@@ -32,7 +32,7 @@ from justdata.acoustic.registry import (
 from justdata.acoustic.schema import DURATION, SAMPLE_RATE, WAVEFORM
 
 
-_EPS = tf.constant(1e-8, dtype=tf.float32)
+_EPS = 1e-8
 
 
 def _as_waveform_tc(waveform: tf.Tensor) -> tuple[tf.Tensor, int | None]:

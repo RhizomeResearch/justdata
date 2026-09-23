@@ -7,7 +7,7 @@ from justdata.acoustic.frontends.stft import ensure_waveform_tc
 from justdata.acoustic.registry import register_audio_frontend
 
 
-_KALDI_EPSILON = tf.constant(1.1920928955078125e-7, dtype=tf.float32)
+_KALDI_EPSILON = 1.1920928955078125e-7
 
 
 def _next_power_of_two(value: int) -> int:

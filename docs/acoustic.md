@@ -15,6 +15,11 @@ The vision counterpart is [docs/vision.md](vision.md). Keep the two documents
 aligned when changing shared loader behavior, preset contracts, metadata modes,
 or corruption dataset APIs.
 
+Shared bounded prefetch, CPU placement, and protected cache controls are
+documented in the [usage guide](../README.md#bounded-input-execution-and-protected-caches).
+The cache fingerprint includes the resolved frontend and normalization
+configuration; cached model inputs require deterministic preprocessing.
+
 ## 1. Why justdata owns audio frontends
 
 Audio checkpoints usually assume exact frontend semantics: resampling, channel

@@ -23,7 +23,7 @@ from justdata.acoustic.schema import FEATURES
 SpectrogramLayout = Literal["tf", "tfc", "cft"]
 BatchSpectrogramLayout = Literal["tf", "tfc", "cft", "btf", "btfc", "bcft"]
 
-_EPS = tf.constant(1e-6, dtype=tf.float32)
+_EPS = 1e-6
 
 
 def _enabled(is_training: bool, augment_eval: bool) -> bool:

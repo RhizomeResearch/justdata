@@ -189,6 +189,7 @@ def load_replay_epoch(
     map_parallel_calls: int = 1,
     private_threadpool_size: int = 1,
     max_intra_op_parallelism: int = 1,
+    prefetch: bool | int = 1,
     **pipeline_options,
 ) -> ReplayEpoch:
     """Build and resume one complete deterministic epoch from a verified snapshot.
@@ -214,6 +215,13 @@ def load_replay_epoch(
             raise ValueError(f"{name} must be a positive integer")
     if not isinstance(callbacks_are_stateless, bool):
         raise TypeError("callbacks_are_stateless must be boolean")
+    if prefetch is True or (
+        prefetch is not False
+        and (
+            isinstance(prefetch, bool) or not isinstance(prefetch, int) or prefetch <= 0
+        )
+    ):
+        raise ValueError("Replay prefetch must be disabled or a positive integer")
     if not callbacks_are_stateless:
         _unsupported(
             "callbacks_unqualified",
@@ -243,6 +251,7 @@ def load_replay_epoch(
         "max_intra_op_parallelism",
         "filter_fn",
         "source_filter_fn",
+        "prefetch",
     }.intersection(pipeline_options)
     if forbidden:
         _unsupported(
@@ -253,11 +262,12 @@ def load_replay_epoch(
         _unsupported(
             "streaming_sidecar", "Replay requires an immutable metadata sidecar."
         )
-    if (
-        pipeline_options.get("cache_dataset") and pipeline_options.get("cache_path")
-    ) or (
-        pipeline_options.get("cache_model_inputs")
-        and pipeline_options.get("model_input_cache_path")
+    if pipeline_options.get("cache_policy") is None and (
+        (pipeline_options.get("cache_dataset") and pipeline_options.get("cache_path"))
+        or (
+            pipeline_options.get("cache_model_inputs")
+            and pipeline_options.get("model_input_cache_path")
+        )
     ):
         _unsupported(
             "persistent_cache", "Replay does not qualify persistent pipeline caches."
@@ -293,6 +303,7 @@ def load_replay_epoch(
         map_parallel_calls=map_parallel_calls,
         private_threadpool_size=private_threadpool_size,
         max_intra_op_parallelism=max_intra_op_parallelism,
+        prefetch=False,
         **pipeline_options,
     )
     epoch_seed = _epoch_seed(seed, epoch, view)
@@ -304,12 +315,12 @@ def load_replay_epoch(
         return_config=True,
     )
     config_data = config.to_dict()
-    config_data["execution"]["limits"]["prefetch"] = 1
+    config_data["execution"]["limits"]["prefetch"] = prefetch or "disabled"
     config_data["execution"]["replay"] = {
         "schema": _SCHEMA,
         "epoch": epoch,
         "view": view,
-        "prefetch_after_skip": 1,
+        "prefetch_after_skip": prefetch or "disabled",
     }
     config = ExecutedConfig.from_dict(config_data)
     total_examples = verified.report["retained_count"]
@@ -352,7 +363,9 @@ def load_replay_epoch(
     # Assert the full epoch's batch count before skipping. The snapshot route
     # has one output row per admitted input; callback purity is caller-owned.
     batches = batches.apply(tf.data.experimental.assert_cardinality(total_batches))
-    batches = batches.skip(cursor).prefetch(1)
+    batches = batches.skip(cursor)
+    if prefetch:
+        batches = batches.prefetch(prefetch)
     remaining_batches = total_batches - cursor
     consumed_examples = min(cursor * batch_size, total_examples)
     remaining_examples = (

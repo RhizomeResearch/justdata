@@ -1,5 +1,14 @@
 # Performance checks
 
+For bounded 512-pixel training and 1,024-pixel evaluation input profiles, run
+`uv run python benchmarks/benchmark_input_resources.py`. It emits one JSON line
+per fresh-process case with native peak RSS, device placement, throughput,
+effective controls, and cache completion. Each case enforces a 1 GiB additional
+RSS ceiling; the 32-record cache case has a separate 1 GiB file budget. Run
+`uv run python benchmarks/benchmark_input_resources.py --gpu-preflight` on a
+JAX GPU host to require a JAX GPU computation while TensorFlow exposes only
+CPUs. Missing JAX or GPU is an explicit failed qualification, not a CPU pass.
+
 Run the standalone CPU benchmark from the repository root:
 
 ```bash

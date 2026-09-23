@@ -8,11 +8,10 @@ from justdata.acoustic.normalization import apply_feature_normalization
 from justdata.acoustic.registry import register_audio_frontend
 
 
-_LOG10 = tf.math.log(tf.constant(10.0, dtype=tf.float32))
-
-
 def _log10(x: tf.Tensor) -> tf.Tensor:
-    return tf.math.log(x) / tf.cast(_LOG10, x.dtype)
+    return tf.math.log(x) / tf.cast(
+        tf.math.log(tf.constant(10.0, dtype=tf.float32)), x.dtype
+    )
 
 
 def _example_axes(x: tf.Tensor) -> list[int]:

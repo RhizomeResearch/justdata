@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 import tensorflow as tf
 
+from justdata.core.cache import CachePolicy, protected_cache
 from justdata.core.metadata import (
     MetadataSidecar,
     apply_metadata_mode,
@@ -113,9 +114,10 @@ def finalize_dataset(
     shuffle_buffer: int | None = None,
     shuffle_seed: int | None = None,
     reshuffle_each_iteration: bool = True,
-    prefetch: bool = True,
+    prefetch: bool | int = True,
     as_numpy: bool = False,
     map_parallel_calls: int | None = None,
+    _protected_model_cache: tuple[CachePolicy, str] | None = None,
 ) -> tuple[Any, int | None]:
     """Finalize preprocessed samples into padded, model-ready batches."""
     if metadata_mode not in {"full", "numeric_only", "none"}:
@@ -149,8 +151,16 @@ def finalize_dataset(
         raise ValueError(
             "rng or late_augment_seed is required when late augmentation is enabled."
         )
-    if map_parallel_calls is not None and map_parallel_calls <= 0:
+    if map_parallel_calls is not None and (
+        isinstance(map_parallel_calls, bool)
+        or not isinstance(map_parallel_calls, int)
+        or map_parallel_calls <= 0
+    ):
         raise ValueError("map_parallel_calls must be positive when provided")
+    if not isinstance(prefetch, bool) and (
+        not isinstance(prefetch, int) or prefetch <= 0
+    ):
+        raise ValueError("prefetch must be a positive integer or boolean")
 
     parallel_calls = (
         tf.data.AUTOTUNE if map_parallel_calls is None else map_parallel_calls
@@ -236,7 +246,17 @@ def finalize_dataset(
     def apply_metadata_and_cache(dataset):
         dataset = apply_metadata(dataset)
         if cache_model_inputs:
-            dataset = dataset.cache(model_input_cache_path)
+            if _protected_model_cache is None:
+                dataset = dataset.cache(model_input_cache_path)
+            else:
+                policy, fingerprint = _protected_model_cache
+                dataset = protected_cache(
+                    dataset,
+                    model_input_cache_path,
+                    stage="model_input",
+                    policy=policy,
+                    fingerprint=fingerprint,
+                )
         if metadata_sidecar is not None or sidecar_metadata_path is not None:
             dataset = verify_sidecar_keys(
                 dataset,
@@ -303,8 +323,15 @@ def finalize_dataset(
             map_parallel_calls=parallel_calls,
         )
 
+    if prefetch is not True:
+        options = tf.data.Options()
+        options.experimental_optimization.inject_prefetch = False
+        if map_parallel_calls is not None:
+            options.autotune.enabled = False
+            options.experimental_optimization.map_parallelization = False
+        ds = ds.with_options(options)
     if prefetch:
-        ds = ds.prefetch(tf.data.AUTOTUNE)
+        ds = ds.prefetch(tf.data.AUTOTUNE if prefetch is True else prefetch)
 
     cardinality = int(tf.data.Dataset.cardinality(ds).numpy())
     n_batches = cardinality if cardinality >= 0 else None

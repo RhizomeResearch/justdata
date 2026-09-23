@@ -5,6 +5,8 @@ from justdata.core.filters import (
     metadata_filter_predicate,
 )
 from justdata.core.finalization import finalize_dataset
+from justdata.core.cache import CacheError, CachePolicy, inspect_cache
+from justdata.core.execution import configure_tensorflow_cpu
 from justdata.core.executed_config import ExecutedConfig, canonical_config_json
 from justdata.core.loader import fetch_ds, load_ds
 from justdata.core.inventory import (
@@ -58,6 +60,8 @@ from justdata.core.sources import (
 from justdata.core.stats import compute_feature_stats, make_stats_iterator
 
 __all__ = [
+    "CacheError",
+    "CachePolicy",
     "AdmittedInventory",
     "DataPipeline",
     "DatasetInfo",
@@ -76,6 +80,7 @@ __all__ = [
     "apply_metadata_mode",
     "canonical_config_json",
     "compute_feature_stats",
+    "configure_tensorflow_cpu",
     "count_real_examples",
     "filter_by_metadata",
     "finalize_dataset",
@@ -90,6 +95,7 @@ __all__ = [
     "get_task_for_dataset",
     "groupby_metadata",
     "has_pipeline",
+    "inspect_cache",
     "list_pipelines",
     "load_ds",
     "load_inventory",

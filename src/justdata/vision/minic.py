@@ -12,7 +12,7 @@ from justdata.vision.corruptions.registry import (
 )
 
 
-_MAX_SEED = tf.constant(2**31 - 1, dtype=tf.int64)
+_MAX_SEED = 2**31 - 1
 _LEGACY_MINIC_VERSIONS = {
     "blur": "1.0.0",
     "digital": "1.0.0",

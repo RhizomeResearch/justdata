@@ -3,7 +3,7 @@ from __future__ import annotations
 import tensorflow as tf
 
 
-_EPS = tf.constant(1e-8, dtype=tf.float32)
+_EPS = 1e-8
 
 
 def _fit_length(audio: tf.Tensor, target_length: tf.Tensor) -> tf.Tensor:

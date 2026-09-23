@@ -35,7 +35,7 @@ from justdata.core.label_mixing import (
 )
 
 
-_EPS = tf.constant(1e-6, dtype=tf.float32)
+_EPS = 1e-6
 
 _ALIASES = {
     "cutmix": "cutmix_spec",

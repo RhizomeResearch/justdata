@@ -18,8 +18,8 @@ from justdata.acoustic.registry import (
 
 SeverityTable = Mapping[int, float | int | tuple[float, ...]]
 
-_EPS = tf.constant(1e-8, dtype=tf.float32)
-_MAX_SEED = tf.constant(2**31 - 1, dtype=tf.int64)
+_EPS = 1e-8
+_MAX_SEED = 2**31 - 1
 
 
 def apply_audio_corruption(

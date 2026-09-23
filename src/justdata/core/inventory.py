@@ -761,10 +761,14 @@ def load_inventory(
             raise ValueError(
                 f"{name} is not supported; declare an InventoryFilter at admission."
             )
+    cache_identity = hashlib.sha256(
+        (admitted.path / "manifest.json").read_bytes()
+    ).hexdigest()
     return _prepare_ds(
         lambda: admitted.dataset,
         dataset_type=dataset_type,
         batch_size=batch_size,
         seed=seed,
+        _cache_input_identity=cache_identity,
         **pipeline_options,
     )

@@ -5,6 +5,7 @@ import pytest
 import tensorflow as tf
 
 from justdata.core import (
+    CachePolicy,
     DataPipeline,
     InventoryRecord,
     InventorySource,
@@ -310,3 +311,39 @@ def test_real_example_count_with_unknown_dataset_cardinality():
     assert (
         int(count_real_examples({"padding_mask": batch["padding_mask"].numpy()})) == 3
     )
+
+
+def test_replay_uses_completed_protected_preprocess_cache(tmp_path):
+    admitted = _admitted(tmp_path)
+    path = tmp_path / "prepared"
+
+    def policy():
+        return CachePolicy(
+            max_bytes=100_000,
+            max_examples=5,
+            materialization="eager",
+            callbacks_are_deterministic=True,
+        )
+
+    first_policy = policy()
+    first = _load(
+        admitted,
+        cache_dataset=True,
+        cache_path=str(path),
+        cache_policy=first_policy,
+        prefetch=2,
+    )
+    expected = list(first.batches.as_numpy_iterator())
+    assert first_policy.status("preprocess")["state"] == "complete"
+    saved = first.state.with_next_batch(1)
+    resumed = _load(
+        open_inventory(admitted.path),
+        cache_dataset=True,
+        cache_path=str(path),
+        cache_policy=policy(),
+        prefetch=2,
+        state=saved,
+        as_numpy=True,
+    )
+    assert _rows(resumed.batches) == _rows(expected[1:])
+    assert resumed.config.to_dict()["execution"]["limits"]["prefetch"] == 2

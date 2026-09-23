@@ -6,7 +6,9 @@ using lars_local_inventory.py, then pass their output directories here.
 """
 
 import argparse
+import colorsys
 import json
+from collections import defaultdict
 from itertools import islice
 from pathlib import Path
 
@@ -75,6 +77,7 @@ def _semantic_rgb(mask):
 
 def _panoptic_rgb(mask, segments, category_colors):
     rgb = np.zeros((*mask.shape, 3), dtype=np.uint8)
+    by_category = defaultdict(list)
     for segment_id, category_id, valid in zip(
         segments["segment_ids"].numpy(),
         segments["category_ids"].numpy(),
@@ -82,12 +85,26 @@ def _panoptic_rgb(mask, segments, category_colors):
         strict=True,
     ):
         if valid:
-            rgb[mask == segment_id] = category_colors[int(category_id)]
-    # Draw segment boundaries so two instances of the same category remain distinct.
-    edges = np.zeros(mask.shape, dtype=bool)
-    edges[1:, :] |= mask[1:, :] != mask[:-1, :]
-    edges[:, 1:] |= mask[:, 1:] != mask[:, :-1]
-    rgb[edges & (mask != 0)] = 0
+            by_category[int(category_id)].append(int(segment_id))
+    for category_id, ids in by_category.items():
+        base = np.asarray(category_colors[category_id]) / 255
+        hue, _, saturation = colorsys.rgb_to_hls(*base)
+        for index, segment_id in enumerate(sorted(ids)):
+            if len(ids) == 1:
+                color = category_colors[category_id]
+            else:
+                # Keep a category's hue; vary lightness per segment ID.
+                lightness = (0.36, 0.68, 0.50, 0.80)[index % 4]
+                shifted_hue = (hue + 0.06 * (index // 4)) % 1
+                color = np.rint(
+                    np.asarray(
+                        colorsys.hls_to_rgb(
+                            shifted_hue, lightness, max(saturation, 0.55)
+                        )
+                    )
+                    * 255
+                )
+            rgb[mask == segment_id] = color
     return rgb
 
 

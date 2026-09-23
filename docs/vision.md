@@ -817,9 +817,11 @@ The PNG has five rows and, for each of A1/A2/A3, an RGB image, semantic mask,
 and panoptic mask with class legends. Each row uses the same source image and
 seed across all six pipeline applications. The snapshots hold unaugmented source
 rows; the example applies each preset and checks that the semantic and panoptic
-images align. The panoptic panel colors categories and outlines individual
-segments. Matplotlib is needed only for this plotting command and is not a
-JustData dependency. Use fresh output paths when rerunning the commands.
+images align. The panoptic panel uses a hue for each category and varies
+lightness between its instances; the legend shows each category's base color.
+Black pixels there indicate void or padding. Matplotlib is needed only for this
+plotting command and is not a JustData dependency. Use fresh output paths when
+rerunning the commands.
 
 The black area is the model's actual constant padding, with ignore or void
 labels in the corresponding masks. As in [Torchvision's ScaleJitter](https://docs.pytorch.org/vision/main/generated/torchvision.transforms.v2.ScaleJitter.html),

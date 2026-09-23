@@ -266,6 +266,26 @@ def test_plot_shows_five_paired_views_for_each_preset(tmp_path):
     assert len(np.unique(image.reshape(-1, image.shape[-1]), axis=0)) > 10
 
 
+def test_panoptic_plot_distinguishes_same_class_instances_without_black_edges():
+    pytest.importorskip("matplotlib")
+    plot_example = runpy.run_path(
+        str(
+            Path(__file__).resolve().parents[1]
+            / "examples/vision/lars_segmentation_presets_plot.py"
+        )
+    )
+    mask = np.tile(np.asarray([11, 11, 22, 22, 0, 0]), (4, 1))
+    segments = {
+        "segment_ids": tf.constant([11, 22], tf.int64),
+        "category_ids": tf.constant([7, 7], tf.int32),
+        "valid_mask": tf.constant([True, True]),
+    }
+    rgb = plot_example["_panoptic_rgb"](mask, segments, {7: (100, 120, 180)})
+    assert not np.array_equal(rgb[0, 0], rgb[0, 2])
+    assert np.all(np.any(rgb[mask != 0] != 0, axis=-1))
+    np.testing.assert_array_equal(rgb[mask == 0], 0)
+
+
 @pytest.mark.parametrize(
     ("change", "expected"),
     [

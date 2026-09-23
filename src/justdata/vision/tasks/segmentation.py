@@ -214,13 +214,24 @@ def make_dense_preprocessing(
     return preprocessing
 
 
-def make_dense_augmentations(geometry, color_jitter_kwargs=None):
-    """Sample paired resize/crop/flip geometry, then optional image-only jitter."""
-    from justdata.vision.augmentations.color import color_jitter
+def make_dense_augmentations(
+    geometry, color_jitter_kwargs=None, photometric_kwargs=None
+):
+    """Apply optional RGB distortion and paired, replayable geometry."""
+    from justdata.vision.augmentations.color import (
+        color_jitter,
+        photometric_distortion,
+    )
     from justdata.vision.geometry import replay_dense_geometry, sample_dense_geometry
 
     def augmentations(sample, seed):
         seeds = tf.random.experimental.stateless_split(seed, 2)
+        if photometric_kwargs is not None:
+            sample = sample | {
+                "image": photometric_distortion(
+                    sample["image"], seeds[1], **photometric_kwargs
+                )
+            }
         record = sample_dense_geometry(
             tf.shape(sample["image"])[:2], geometry, is_training=True, seed=seeds[0]
         )

@@ -469,6 +469,11 @@ def main() -> None:
     parser.add_argument(
         "--labels", choices=("semantic", "panoptic"), default="semantic"
     )
+    parser.add_argument(
+        "--preset",
+        choices=("segmentation_a1", "segmentation_a2", "segmentation_a3"),
+        default="segmentation_a2",
+    )
     args = parser.parse_args()
 
     # Configure TensorFlow before constructing any dataset. The caller may
@@ -488,30 +493,14 @@ def main() -> None:
             "geometry_kwargs": {
                 "class_values": _CLASSES,
                 "ignore_value": _IGNORE,
-                "train_crop_size": 512,
-                "train_resize_range": (512, 1024),
-                "eval_long_side": 1024,
-                "patch_size": 16,
             },
             "keep_original_mask": args.split != "train",
             "postproc_kwargs": {
-                "normalize_image": True,
-                "normalization_params": (
-                    (0.485, 0.456, 0.406),
-                    (0.229, 0.224, 0.225),
-                ),
-                "permute_image": True,
                 "emit_semantic_targets": True,
             },
         }
         if args.labels == "semantic"
         else {
-            "geometry_kwargs": {
-                "train_crop_size": 512,
-                "train_resize_range": (512, 1024),
-                "eval_long_side": 1024,
-                "patch_size": 16,
-            },
             "panoptic_kwargs": {
                 "class_values": tuple(
                     row["id"]
@@ -530,9 +519,6 @@ def main() -> None:
             },
             "keep_original_annotations": args.split != "train",
             "postproc_kwargs": {
-                "normalize_image": True,
-                "normalization_params": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-                "permute_image": True,
                 "emit_panoptic_targets": True,
             },
         }
@@ -541,7 +527,7 @@ def main() -> None:
         "vision/segmentation"
         if args.labels == "semantic"
         else "vision/panoptic_segmentation",
-        apply_presets=False,
+        preset=args.preset,
         overrides=options,
     )
     sidecar = MetadataSidecar.read_jsonl(str(args.output_dir / "metadata.jsonl"))
@@ -575,6 +561,7 @@ def main() -> None:
                 ],
                 "image_shape": first["image"].shape.as_list(),
                 "labels": args.labels,
+                "preset": args.preset,
                 "mask_shape": first[
                     "mask" if args.labels == "semantic" else "panoptic_mask"
                 ].shape.as_list(),

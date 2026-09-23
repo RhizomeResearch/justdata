@@ -79,6 +79,48 @@ _CIFAR10_NORM = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
 _CIFAR100_NORM = ((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
 
 
+def _register_segmentation_preset(name: str, scale_range, photometric: bool):
+    """Spatial and RGB policy shared by semantic and panoptic pipelines."""
+    register_preset(
+        name,
+        {
+            "geometry_kwargs": {
+                "train_crop_size": 512,
+                "train_resize_range": None,
+                "train_scale_range": scale_range,
+                "horizontal_flip_probability": 0.5,
+                "eval_long_side": 1024,
+                "eval_upscale": False,
+                "patch_size": 16,
+                "image_pad_mode": "CONSTANT",
+                "image_pad_value": (0.0, 0.0, 0.0),
+                "image_antialias": True,
+            },
+            "photometric_kwargs": (
+                {
+                    "brightness": 32 / 255,
+                    "contrast": 0.5,
+                    "saturation": 0.5,
+                    "hue": 0.05,
+                    "probability": 0.5,
+                }
+                if photometric
+                else None
+            ),
+            "postproc_kwargs": {
+                "normalize_image": True,
+                "normalization_params": _IMAGENET_NORM,
+                "permute_image": True,
+            },
+        },
+    )
+
+
+_register_segmentation_preset("segmentation_a3", (0.8, 1.25), False)
+_register_segmentation_preset("segmentation_a2", (0.5, 2.0), True)
+_register_segmentation_preset("segmentation_a1", (0.1, 2.0), True)
+
+
 # CIFAR-10 / CIFAR-100
 # Modern branch: TrivialAugment, zero-padding crop.
 # RandomCrop(32, padding=4, padding_mode='zeros') -> RandomHorizontalFlip

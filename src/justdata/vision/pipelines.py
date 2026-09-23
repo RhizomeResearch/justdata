@@ -1,5 +1,6 @@
 import copy
 import dataclasses
+import math
 from collections.abc import Mapping
 
 from justdata.core.config_resolution import (
@@ -18,6 +19,41 @@ _VISION_TOP_LEVEL = {
     "postproc_kwargs",
     "preproc_kwargs",
 }
+
+
+def _resolve_photometric(config):
+    if config is None:
+        return None
+    from justdata.vision.augmentations.color import photometric_distortion
+
+    resolved = resolve_callable_config(
+        photometric_distortion,
+        config,
+        path="photometric_kwargs",
+        omit={"image", "seed"},
+    )
+    for name in ("brightness", "contrast", "saturation", "hue"):
+        value = resolved[name]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            raise ValueError(
+                f"photometric_kwargs.{name} must be finite and nonnegative"
+            )
+    if resolved["hue"] > 0.5:
+        raise ValueError("photometric_kwargs.hue must be at most 0.5")
+    value = resolved["probability"]
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not 0 <= value <= 1
+    ):
+        raise ValueError("photometric_kwargs.probability must be in [0, 1]")
+    return resolved
 
 
 def _validate_positive(value, *, path):
@@ -329,7 +365,7 @@ def _resolve_segmentation_config(config, is_training):
         return _resolve_dense_segmentation_config(config, is_training)
     if (config.get("postproc_kwargs") or {}).get("emit_semantic_targets", False):
         raise ValueError("emit_semantic_targets requires geometry_kwargs")
-    for name in ("color_jitter_kwargs", "keep_original_mask"):
+    for name in ("color_jitter_kwargs", "photometric_kwargs", "keep_original_mask"):
         if name in config:
             raise ValueError(f"{name} requires geometry_kwargs")
 
@@ -532,7 +568,7 @@ def default_segmentation_pipeline(
         )
     if (postproc_kwargs or {}).get("emit_semantic_targets", False):
         raise ValueError("emit_semantic_targets requires geometry_kwargs")
-    for name in ("color_jitter_kwargs", "keep_original_mask"):
+    for name in ("color_jitter_kwargs", "photometric_kwargs", "keep_original_mask"):
         if name in kwargs:
             raise ValueError(f"{name} requires geometry_kwargs")
 
@@ -567,6 +603,7 @@ def _resolve_dense_segmentation_config(config, is_training):
         | {
             "geometry_kwargs",
             "color_jitter_kwargs",
+            "photometric_kwargs",
             "keep_original_mask",
         },
         path="pipeline",
@@ -616,6 +653,9 @@ def _resolve_dense_segmentation_config(config, is_training):
     if type(keep_original) is not bool:
         raise ValueError("keep_original_mask must be boolean")
     jitter = config.get("color_jitter_kwargs")
+    photometric = _resolve_photometric(config.get("photometric_kwargs"))
+    if jitter is not None and photometric is not None:
+        raise ValueError("color_jitter_kwargs and photometric_kwargs are exclusive")
     if jitter is not None:
         jitter = resolve_callable_config(
             color_jitter, jitter, path="color_jitter_kwargs", omit={"image", "seed"}
@@ -629,7 +669,11 @@ def _resolve_dense_segmentation_config(config, is_training):
         "padding_placement": "bottom_right",
         "image_padding_domain": "rgb_0_255_before_normalization",
         "mask_padding_value": geometry["ignore_value"],
-        "resize_policy": "uniform_integer_short_side"
+        "resize_policy": (
+            "uniform_fit_scale"
+            if geometry["train_scale_range"] is not None
+            else "uniform_integer_short_side"
+        )
         if is_training
         else "long_side_cap",
     }
@@ -659,7 +703,11 @@ def _resolve_dense_segmentation_config(config, is_training):
             },
             "augment": {
                 "active": is_training,
-                "config": {"geometry": geometry, "color_jitter_kwargs": jitter},
+                "config": {
+                    "geometry": geometry,
+                    "color_jitter_kwargs": jitter,
+                    "photometric_kwargs": photometric,
+                },
                 "geometry": geometry_contract if is_training else None,
             },
             "late_augment": {"active": False, "config": {}},
@@ -709,7 +757,9 @@ def _build_dense_segmentation_pipeline(config) -> PipelineFuncs:
     return (
         make_dense_preprocessing(**stages["preprocess"]["config"]),
         make_dense_augmentations(
-            geometry, stages["augment"]["config"]["color_jitter_kwargs"]
+            geometry,
+            stages["augment"]["config"]["color_jitter_kwargs"],
+            stages["augment"]["config"]["photometric_kwargs"],
         ),
         make_late_augmentations(),
         make_dense_postprocessing(geometry, **stages["postprocess"]["config"]),
@@ -744,6 +794,7 @@ def _resolve_panoptic_config(config, is_training):
             "geometry_kwargs",
             "panoptic_kwargs",
             "color_jitter_kwargs",
+            "photometric_kwargs",
             "keep_original_annotations",
         },
         path="pipeline",
@@ -786,6 +837,9 @@ def _resolve_panoptic_config(config, is_training):
     if type(keep_original) is not bool:
         raise ValueError("keep_original_annotations must be boolean")
     jitter = config.get("color_jitter_kwargs")
+    photometric = _resolve_photometric(config.get("photometric_kwargs"))
+    if jitter is not None and photometric is not None:
+        raise ValueError("color_jitter_kwargs and photometric_kwargs are exclusive")
     if jitter is not None:
         jitter = resolve_callable_config(
             color_jitter, jitter, path="color_jitter_kwargs", omit={"image", "seed"}
@@ -803,7 +857,11 @@ def _resolve_panoptic_config(config, is_training):
     geometry_contract = {
         **geometry,
         "record_version": 1,
-        "resize_policy": "uniform_integer_short_side"
+        "resize_policy": (
+            "uniform_fit_scale"
+            if geometry["train_scale_range"] is not None
+            else "uniform_integer_short_side"
+        )
         if is_training
         else "long_side_cap",
         "image_interpolation": "bilinear",
@@ -818,6 +876,7 @@ def _resolve_panoptic_config(config, is_training):
             "geometry_kwargs": geometry,
             "panoptic_kwargs": panoptic,
             "color_jitter_kwargs": jitter,
+            "photometric_kwargs": photometric,
             "keep_original_annotations": keep_original,
             "postproc_kwargs": post,
         },
@@ -835,6 +894,7 @@ def _resolve_panoptic_config(config, is_training):
                     "geometry": geometry,
                     "panoptic": panoptic,
                     "color_jitter_kwargs": jitter,
+                    "photometric_kwargs": photometric,
                 },
                 "geometry": geometry_contract if is_training else None,
             },
@@ -874,6 +934,7 @@ def default_panoptic_pipeline(
     geometry_kwargs: dict | None = None,
     panoptic_kwargs: dict | None = None,
     color_jitter_kwargs: dict | None = None,
+    photometric_kwargs: dict | None = None,
     keep_original_annotations: bool = False,
     postproc_kwargs: dict | None = None,
     **kwargs,
@@ -890,6 +951,7 @@ def default_panoptic_pipeline(
         "geometry_kwargs": geometry_kwargs,
         "panoptic_kwargs": panoptic_kwargs,
         "color_jitter_kwargs": color_jitter_kwargs,
+        "photometric_kwargs": photometric_kwargs,
         "keep_original_annotations": keep_original_annotations,
         "postproc_kwargs": postproc_kwargs,
     }
@@ -904,6 +966,7 @@ def default_panoptic_pipeline(
             panoptic,
             geometry,
             color_jitter_kwargs=resolved["configuration"]["color_jitter_kwargs"],
+            photometric_kwargs=resolved["configuration"]["photometric_kwargs"],
         ),
         make_late_augmentations(),
         make_panoptic_postprocessing(

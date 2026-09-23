@@ -42,11 +42,22 @@ def make_panoptic_preprocessing(
     return preprocessing
 
 
-def make_panoptic_augmentations(config, geometry, *, color_jitter_kwargs=None):
-    from justdata.vision.augmentations.color import color_jitter
+def make_panoptic_augmentations(
+    config, geometry, *, color_jitter_kwargs=None, photometric_kwargs=None
+):
+    from justdata.vision.augmentations.color import (
+        color_jitter,
+        photometric_distortion,
+    )
 
     def augmentations(sample, seed):
         seeds = tf.random.experimental.stateless_split(seed, 2)
+        if photometric_kwargs is not None:
+            sample = sample | {
+                "image": photometric_distortion(
+                    sample["image"], seeds[1], **photometric_kwargs
+                )
+            }
         record = sample_panoptic_geometry(
             tf.shape(sample["image"])[:2],
             geometry,

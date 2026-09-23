@@ -1,9 +1,109 @@
+import math
 from typing import Optional
 
 import tensorflow as tf
 
 from justdata.vision.augmentations.registry import register_augment_strategy
 from justdata.vision.utils import _brightness, _color, _contrast, gaussian_filter2d
+
+
+@tf.function
+def photometric_distortion(
+    image: tf.Tensor,
+    seed,
+    brightness: float = 32 / 255,
+    contrast: float = 0.5,
+    saturation: float = 0.5,
+    hue: float = 0.05,
+    probability: float = 0.5,
+) -> tf.Tensor:
+    """Stateless, float32 RGB distortion for dense segmentation.
+
+    Input and output use the unnormalized [0, 255] RGB domain. The four
+    operations are independently gated; contrast is placed on either side of
+    saturation and hue with equal probability.
+    """
+    for name, value in (
+        ("brightness", brightness),
+        ("contrast", contrast),
+        ("saturation", saturation),
+        ("hue", hue),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            raise ValueError(f"{name} must be a finite nonnegative number")
+    if hue > 0.5:
+        raise ValueError("hue must be at most 0.5")
+    if (
+        isinstance(probability, bool)
+        or not isinstance(probability, (int, float))
+        or not math.isfinite(probability)
+        or not 0 <= probability <= 1
+    ):
+        raise ValueError("probability must be in [0, 1]")
+
+    seeds = tf.random.experimental.stateless_split(seed, 9)
+    image = tf.cast(image, tf.float32)
+    image = tf.ensure_shape(image, [None, None, 3])
+    tf.debugging.assert_greater_equal(image, 0.0)
+    tf.debugging.assert_less_equal(image, 255.0)
+    gates = [tf.random.stateless_uniform([], seeds[i]) < probability for i in range(4)]
+    factors = [
+        tf.random.stateless_uniform(
+            [], seeds[i + 4], minval=max(0.0, 1.0 - amount), maxval=1.0 + amount
+        )
+        if amount > 0
+        else tf.constant(1.0)
+        for i, amount in enumerate((brightness, contrast, saturation))
+    ]
+    hue_delta = (
+        tf.random.stateless_uniform([], seeds[7], minval=-hue, maxval=hue)
+        if hue > 0
+        else tf.constant(0.0)
+    )
+    contrast_first = tf.random.stateless_uniform([], seeds[8]) < 0.5
+
+    def clipped(value):
+        return tf.clip_by_value(value, 0.0, 255.0)
+
+    image = tf.cond(gates[0], lambda: clipped(image * factors[0]), lambda: image)
+
+    def adjust_contrast(value):
+        gray = tf.reduce_sum(value * [0.2989, 0.5870, 0.1140], axis=-1)
+        mean = tf.reduce_mean(gray)
+        return clipped(mean + factors[1] * (value - mean))
+
+    def adjust_saturation_and_hue(value):
+        def adjust_saturation():
+            gray = tf.reduce_sum(
+                value * [0.2989, 0.5870, 0.1140], axis=-1, keepdims=True
+            )
+            return clipped(gray + factors[2] * (value - gray))
+
+        value = tf.cond(gates[2], adjust_saturation, lambda: value)
+
+        def adjust_hue():
+            hsv = tf.image.rgb_to_hsv(value / 255.0)
+            shifted = tf.concat(
+                [tf.math.floormod(hsv[..., :1] + hue_delta, 1.0), hsv[..., 1:]], axis=-1
+            )
+            return clipped(tf.image.hsv_to_rgb(shifted) * 255.0)
+
+        return tf.cond(gates[3], adjust_hue, lambda: value)
+
+    def contrast_then_color():
+        adjusted = tf.cond(gates[1], lambda: adjust_contrast(image), lambda: image)
+        return adjust_saturation_and_hue(adjusted)
+
+    def color_then_contrast():
+        adjusted = adjust_saturation_and_hue(image)
+        return tf.cond(gates[1], lambda: adjust_contrast(adjusted), lambda: adjusted)
+
+    return tf.cond(contrast_first, contrast_then_color, color_then_contrast)
 
 
 @tf.function

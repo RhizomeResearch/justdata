@@ -15,8 +15,9 @@ import tensorflow as tf
 class DenseGeometryConfig:
     """Geometry and categorical-label contract for one dense view.
 
-    Training samples an integer shorter-side size uniformly from the inclusive
-    range, pads to fit a square crop, samples its origin uniformly, optionally
+    Training samples either an integer shorter-side size from the inclusive
+    resize range or a scale relative to fitting the image inside the crop.
+    It pads to fit a square crop, samples its origin uniformly, optionally
     flips horizontally, then pads to the patch multiple. Evaluation caps the
     longer side, without upscaling by default, and only pads to the multiple.
     Dimensions round half up and are clamped to at least one pixel.
@@ -25,7 +26,8 @@ class DenseGeometryConfig:
     class_values: tuple[int, ...]
     ignore_value: int = 255
     train_crop_size: int = 512
-    train_resize_range: tuple[int, int] = (512, 1024)
+    train_resize_range: tuple[int, int] | None = (512, 1024)
+    train_scale_range: tuple[float, float] | None = None
     horizontal_flip_probability: float = 0.5
     eval_long_side: int = 1024
     eval_upscale: bool = False
@@ -49,13 +51,36 @@ class DenseGeometryConfig:
         for name in ("train_crop_size", "eval_long_side", "patch_size"):
             if type(getattr(self, name)) is not int or getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be a positive integer")
-        resize_range = tuple(self.train_resize_range)
-        if (
-            len(resize_range) != 2
-            or any(type(v) is not int or v <= 0 for v in resize_range)
-            or resize_range[0] > resize_range[1]
-        ):
-            raise ValueError("train_resize_range must be two ordered positive integers")
+        if (self.train_resize_range is None) == (self.train_scale_range is None):
+            raise ValueError("exactly one training resize or scale range is required")
+        if self.train_resize_range is not None:
+            resize_range = tuple(self.train_resize_range)
+            if (
+                len(resize_range) != 2
+                or any(type(v) is not int or v <= 0 for v in resize_range)
+                or resize_range[0] > resize_range[1]
+            ):
+                raise ValueError(
+                    "train_resize_range must be two ordered positive integers"
+                )
+            object.__setattr__(self, "train_resize_range", resize_range)
+        if self.train_scale_range is not None:
+            scale_range = tuple(self.train_scale_range)
+            if (
+                len(scale_range) != 2
+                or any(
+                    isinstance(v, bool)
+                    or not isinstance(v, (int, float))
+                    or not math.isfinite(v)
+                    or v <= 0
+                    for v in scale_range
+                )
+                or scale_range[0] > scale_range[1]
+            ):
+                raise ValueError(
+                    "train_scale_range must be two ordered positive numbers"
+                )
+            object.__setattr__(self, "train_scale_range", scale_range)
         if not 0 <= self.horizontal_flip_probability <= 1:
             raise ValueError("horizontal_flip_probability must be in [0, 1]")
         if (
@@ -73,7 +98,6 @@ class DenseGeometryConfig:
                 "image_pad_value must contain three finite RGB values in [0, 255]"
             )
         object.__setattr__(self, "class_values", values)
-        object.__setattr__(self, "train_resize_range", resize_range)
         object.__setattr__(self, "image_pad_value", fill)
 
 
@@ -82,7 +106,8 @@ class PanopticGeometryConfig:
     """Spatial settings shared with dense semantic geometry, without label IDs."""
 
     train_crop_size: int = 512
-    train_resize_range: tuple[int, int] = (512, 1024)
+    train_resize_range: tuple[int, int] | None = (512, 1024)
+    train_scale_range: tuple[float, float] | None = None
     horizontal_flip_probability: float = 0.5
     eval_long_side: int = 1024
     eval_upscale: bool = False
@@ -96,6 +121,7 @@ class PanopticGeometryConfig:
             class_values=(0,), ignore_value=-1, **asdict(self)
         )
         object.__setattr__(self, "train_resize_range", validated.train_resize_range)
+        object.__setattr__(self, "train_scale_range", validated.train_scale_range)
         object.__setattr__(self, "image_pad_value", validated.image_pad_value)
 
 
@@ -116,13 +142,20 @@ def sample_dense_geometry(
         if seed.dtype not in (tf.int32, tf.int64):
             raise TypeError("seed must have int32 or int64 dtype")
         seeds = tf.random.experimental.stateless_split(seed, 4)
-        low, high = config.train_resize_range
-        target = tf.random.stateless_uniform(
-            [], seeds[0], low, high + 1, dtype=tf.int32
-        )
-        scale = tf.cast(target, tf.float64) / tf.cast(
-            tf.reduce_min(original), tf.float64
-        )
+        if config.train_scale_range is None:
+            low, high = config.train_resize_range
+            target = tf.random.stateless_uniform(
+                [], seeds[0], low, high + 1, dtype=tf.int32
+            )
+            scale = tf.cast(target, tf.float64) / tf.cast(
+                tf.reduce_min(original), tf.float64
+            )
+        else:
+            low, high = config.train_scale_range
+            fraction = tf.random.stateless_uniform([], seeds[0], dtype=tf.float64)
+            factor = low + (high - low) * fraction
+            crop = tf.cast(config.train_crop_size, tf.float64)
+            scale = factor * tf.reduce_min(crop / tf.cast(original, tf.float64))
     else:
         scale = config.eval_long_side / tf.cast(tf.reduce_max(original), tf.float64)
         if not config.eval_upscale:
@@ -341,7 +374,8 @@ def replay_dense_geometry(sample, record):
     Unknown sample fields pass through. ``source_valid_mask`` marks image
     support including ignored annotations; ``pixel_valid_mask`` additionally
     excludes ignore IDs and unavailable annotations (all false without a mask).
-    Replay covers geometry, before photometric transforms and normalization.
+    Replay covers geometry; callers may apply photometric transforms before or
+    after replay, depending on the pipeline.
     """
     record = _check_record(record)
     tf.debugging.assert_positive(

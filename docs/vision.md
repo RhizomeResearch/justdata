@@ -124,6 +124,7 @@ Choose the preset that matches the dataset scale and model recipe:
 | Standard ImageNet-style ViT or ConvNeXt recipe | `_default` through `dataset="imagenet"`. |
 | Legacy ImageNet ResNet recipe | `imagenet_resnet`. |
 | ResNet Strikes Back recipes | `imagenet_a1`, `imagenet_a2`, or `imagenet_a3`. |
+| Semantic or panoptic segmentation | `segmentation_a2` by default; `segmentation_a3` is lighter and `segmentation_a1` uses large scale jitter. |
 | DINOv2-style self-supervised multi-crop | `dinov2`. |
 | WILDS image classification | Benchmark defaults: `wilds:camelyon17`, `wilds:fmow`, `wilds:iwildcam`, or `wilds:rxrx1`. Strong opt-ins add `_strong`. |
 
@@ -463,12 +464,14 @@ frontend or transform contracts.
 `geometry_kwargs` mapping. Omitting it or setting it to `None` preserves the
 existing segmentation behavior and presets. To enable recorded geometry, use
 `apply_presets=False` and supply `geometry_kwargs` with the required
-`class_values`. This mode also accepts optional `color_jitter_kwargs`,
+`class_values`, or select a `segmentation_a*` preset and override its label
+values. This mode also accepts optional `color_jitter_kwargs` or
+`photometric_kwargs`,
 `keep_original_mask`, and normalization/layout settings in `postproc_kwargs`.
 Nonempty legacy `preproc_kwargs`, `aug_kwargs`, and `laug_kwargs` cannot be
 combined with recorded geometry; empty mappings or `None` are accepted.
-Configure resize, crop, flip, and padding in `geometry_kwargs`, and photometric
-augmentation in `color_jitter_kwargs`. Fixed-size postprocessing options such
+Configure resize, crop, flip, and padding in `geometry_kwargs`, and RGB
+augmentation in one of the mutually exclusive color option mappings. Fixed-size postprocessing options such
 as `postproc_kwargs.image_size` are rejected in this mode. Unknown or conflicting
 settings fail before source access.
 `load_ds(..., return_config=True)` includes the resolved geometry and all four
@@ -516,12 +519,17 @@ predictions = restore_dense_predictions(patch_logits, view["geometry"])
 # predictions and view["original_mask"] both have shape [301, 601].
 ```
 
-Training first samples an integer shorter-side target uniformly from the
-inclusive `train_resize_range`, resizes while preserving aspect ratio, pads
+By default, training first samples an integer shorter-side target uniformly
+from the inclusive `train_resize_range`, resizes while preserving aspect ratio, pads
 to fit `train_crop_size`, and samples a square crop origin uniformly from all
 fitting integer positions. A stateless horizontal flip follows with the
 configured probability. Final patch padding is added if the crop size is not
 divisible by `patch_size`. The defaults produce a 512 × 512 training input.
+Setting `train_resize_range=None` and `train_scale_range=(low, high)` instead
+samples a floating factor uniformly, multiplies it by
+`min(train_crop_size / source_height, train_crop_size / source_width)`, then
+applies the same resize, crop, and flip. Exactly one training range is required.
+The `segmentation_a*` presets use this fit-scale policy.
 Use `pipeline.build(is_training=True)` with `augment(sample, seed)` or let
 `load_ds(..., dataset_type="train")` supply its seed. Both int32 and int64
 two-element seeds are supported. The pipeline splits geometry and color seeds;
@@ -545,8 +553,12 @@ normalization: with no color jitter, a constant channel `v` becomes
 in the `[0, 255]` domain. `permute_image=True` produces CHW images; all masks
 remain HW. Optional training `color_jitter_kwargs` uses the existing color
 jitter function after geometry and before normalization, affecting RGB pixels
-including padding. It never changes masks, validity, or geometry. Other
-augmentation policies are not part of this route's replay contract.
+including padding. The new `photometric_kwargs` transform applies independently
+gated brightness, contrast, saturation, and hue to float32 source RGB before
+geometry; padding therefore retains its configured fill. These transforms
+never change masks or validity. Stored version-1 geometry records replay the
+spatial view; reproducing the full photometric view also requires the transform
+configuration and augmentation seed.
 
 Categorical masks accept HW or HW1 integer tensors and return HW with the
 same dtype (`uint8`, `uint16`, `int16`, `int32`, or `int64`). All source values
@@ -730,17 +742,19 @@ directory. For a quick validation example, run from the repository root:
 uv run python examples/vision/lars_local_inventory.py \
   --images-archive ~/Downloads/lars_v1.0.0_images.zip \
   --annotations-archive ~/Downloads/lars_v1.0.0_annotations.zip \
-  --split val --limit 4 --labels semantic \
+  --split val --limit 4 --labels semantic --preset segmentation_a2 \
   --output-dir /tmp/lars-val-semantic
 
 uv run python examples/vision/lars_local_inventory.py \
   --images-archive ~/Downloads/lars_v1.0.0_images.zip \
   --annotations-archive ~/Downloads/lars_v1.0.0_annotations.zip \
-  --split val --limit 4 --labels panoptic \
+  --split val --limit 4 --labels panoptic --preset segmentation_a2 \
   --output-dir /tmp/lars-val-panoptic
 ```
 
-`--labels semantic` is the default. Use `--split train` for training views and
+`--labels semantic` and `--preset segmentation_a2` are the defaults. Change
+`--preset` to `segmentation_a3` or `segmentation_a1` for the lighter or stronger
+training view. Use `--split train` for training views and
 omit `--limit` to admit the complete selected split. Each invocation needs a
 new `--output-dir`; it will not replace
 an existing directory. The example reads the author's `image_list.txt` order,
@@ -794,3 +808,59 @@ with a 1,024-pixel longer-side cap. Validation batches have size one because
 original frames vary in shape. The official test split has no local semantic
 or panoptic targets, and the nine preceding context frames require the
 separate sequence archive.
+
+## 15. Generic segmentation augmentation presets
+
+The three recipes apply to either semantic or panoptic segmentation. Their
+strengths follow standard and large scale jitter in
+[Simple Copy-Paste](https://arxiv.org/abs/2012.07177) and EoMT's normal versus
+large scale ranges in [Appendix A.2](https://arxiv.org/html/2503.19108v1).
+They are JustData presets, not exact reproductions of those full training
+recipes. All three use the same 512 × 512 crop, horizontal flip probability
+0.5, bilinear antialiased RGB resize, nearest categorical resize, patch size
+16, and ImageNet normalization by default.
+
+| Preset | Strength | Fit-scale factor | RGB distortion |
+| :-- | :-- | :-- | :-- |
+| `segmentation_a3` | Low | Uniform `[0.8, 1.25]` | None |
+| `segmentation_a2` | Medium | Uniform `[0.5, 2.0]` | Enabled |
+| `segmentation_a1` | High | Uniform `[0.1, 2.0]` | Enabled |
+
+For A2 and A1, brightness, contrast, saturation, and hue are independently
+enabled with probability 0.5. Their sampled factors are respectively
+`[1-32/255, 1+32/255]`, `[0.5, 1.5]`, `[0.5, 1.5]`, and hue displacement
+`[-0.05, 0.05]` turns. Brightness runs first; contrast runs before or after
+saturation/hue with equal probability. RGB calculations remain float32 and
+clip to `[0, 255]` after each applied operation. Evaluation uses the same
+deterministic, full-frame, 1,024-pixel longer-side cap for all three presets.
+
+Select the same name for either task, then provide dataset-specific ontology:
+
+```python
+from justdata.core import get_pipeline
+import justdata.vision
+
+semantic = get_pipeline(
+    pipeline_name="vision/segmentation",
+    preset="segmentation_a2",
+    overrides={"geometry_kwargs": {"class_values": (0, 1, 2), "ignore_value": 255}},
+)
+panoptic = get_pipeline(
+    pipeline_name="vision/panoptic_segmentation",
+    preset="segmentation_a2",
+    overrides={"panoptic_kwargs": {
+        "class_values": (1, 3, 5, 11),
+        "thing_class_values": (11,),
+        "void_value": 0,
+        "max_segments": 64,
+    }},
+)
+```
+
+The LaRS archive example uses these presets with the actual LaRS category
+table and observed segment capacity. The fixed values in the code block above
+illustrate the generic API and are not a complete LaRS ontology. To test a
+different resize anchor for small objects, explicitly replace both range
+fields, for example
+`"geometry_kwargs": {"train_scale_range": None, "train_resize_range": (512, 1024)}`.
+Keep the task's class or panoptic overrides alongside those values.

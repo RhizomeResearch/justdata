@@ -15,6 +15,7 @@ Start with the checkpoint or model family:
 | CED | `ced_tiny_16k_logmel64`, `ced_mini_16k_logmel64`, `ced_small_16k_logmel64`, `ced_base_16k_logmel64`, `dcase2025_task1_ced_16k_1s` |
 | Generic acoustic | `audio_default_16k_waveform`, `audio_default_32k_logmel64`, `audio_default_32k_logmel128`, `dcase2025_task1_native_44k_1s` |
 | Vision classification | `cifar`, `cifar100`, `imagenet_resnet`, `imagenet_a1`, `imagenet_a2`, `imagenet_a3`, `dinov2`, WILDS `wilds:*` presets |
+| Vision semantic or panoptic segmentation | `segmentation_a3` (low), `segmentation_a2` (medium), `segmentation_a1` (high). |
 
 Then choose the dataset duration policy. For DCASE Task 1, 1 s direct-view
 presets preserve the benchmark source duration. The 10 s padding variants adapt
@@ -141,6 +142,14 @@ WILDS unless explicitly overridden.
 Use `tests/test_vision_preset_contracts.py` as the source of truth for pinned
 vision preset hashes, static shapes, normalization, and deterministic eval
 behavior.
+
+The segmentation presets share a 512 × 512 training crop and deterministic
+rectangular evaluation view. A3 samples a fit-scale factor in `[0.8, 1.25]`
+without photometric distortion; A2 uses `[0.5, 2.0]` with distortion; A1 uses
+`[0.1, 2.0]` with distortion. A2 is the recommended general starting point.
+Callers must supply their own semantic class/ignore IDs or panoptic category,
+thing, void and capacity settings. See [`vision.md`](vision.md#15-generic-segmentation-augmentation-presets)
+for the exact geometry and transform order.
 
 ## EfficientAT/DyMN contract
 

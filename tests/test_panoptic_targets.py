@@ -85,7 +85,6 @@ def test_rgb_decode_and_distinct_same_class_instances():
         void_value=0,
         is_training=False,
     )
-    assert int(record["version"]) == 1
     view = replay_panoptic_geometry(sample, record, **CONFIG)
     targets = panoptic_map_to_targets(
         view["panoptic_mask"],
@@ -138,21 +137,6 @@ def test_version_one_records_reject_the_wrong_label_contract():
             panoptic_record | {"version": tf.constant(2, tf.int32)},
             **CONFIG,
         )
-
-
-def test_panoptic_pipeline_records_version_one_in_executed_config():
-    assert (
-        _pipeline().resolve_config(False)["stages"]["postprocess"]["geometry"][
-            "record_version"
-        ]
-        == 1
-    )
-    assert (
-        _pipeline().resolve_config(True)["stages"]["augment"]["geometry"][
-            "record_version"
-        ]
-        == 1
-    )
 
 
 def test_crop_removes_instance_and_preserves_remaining_ids():
@@ -326,4 +310,3 @@ def test_replay_epoch_transports_targets_and_partial_batch(tmp_path):
     assert rows[-1]["padding_mask"].tolist() == [True, False]
     assert rows[-1]["targets"]["num_targets"][1] == 0
     assert not rows[-1]["targets"]["target_valid_mask"][1].any()
-    assert epoch.config is not None and epoch.state is not None

@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.2.1 — 2026-09-24
+
+This patch release adds static type checking to the lint checks and fixes the defects it exposed.
+
+### Fixed
+
+- Resample with soxr again. `resampler="soxr"`, and `kaiser_best` when librosa is unavailable, failed because soxr does
+  not accept an `axis` argument; `[T, C]` waveforms are now resampled per channel.
+- Report the existing owner when a name is registered twice even if that owner has no `__qualname__`, such as a
+  `functools.partial` or a callable instance. This covers the pipeline, adapter, vision strategy and corruption, and
+  acoustic registries, which previously raised `AttributeError` instead of the descriptive `ValueError`.
+- Pass the seed to classification augment strategies by keyword, as `AugmentStrategyFn` declares, so custom strategies
+  with a keyword-only `seed` work.
+- Require exactly one of `sidecar` or `path` in `attach_sidecar_views` and `verify_sidecar_keys` when the dataset is
+  built. Passing neither previously failed only during iteration. `finalize_dataset` already enforced this.
+- Raise a `ValueError` from `ast_pipeline`, instead of a `TypeError`, when `static_shape` has no static time dimension
+  and `metadata["ast"]["target_length"]` is absent.
+
+### Maintenance and compatibility
+
+- Type check `src/` with ty in `tests/doctor/test_lint.sh`. The check resolves imports against the locked development
+  environment, so the GitLab lint job now installs it. TensorFlow imports are treated as untyped because `Tensor`
+  operators are attached at runtime.
+- Acoustic config `from_dict` accepts a mapping or an instance of the same config class and raises a descriptive
+  `TypeError` otherwise. Sequences of key-value pairs are no longer accepted.
+- Correct annotations without changing runtime behavior: optional parameter defaults, audio layouts, and new
+  `SegmentPadMode`, `DurationPolicy`, and `LabelTransformMode` aliases in `justdata.acoustic.configs`.
+
 ## 1.2.0 — 2026-09-24
 
 This release adds strict offline inventory admission and reproducible, bounded data execution for dense vision tasks,

@@ -9,7 +9,7 @@ import pytest
 CHECKER = Path(__file__).parent / "doctor" / "check_release_version.py"
 
 
-def run_check(tmp_path, tag, *, project_version="1.2.0", package_version="1.2.0"):
+def run_check(tmp_path, tag, *, project_version="1.2.1", package_version="1.2.1"):
     (tmp_path / "pyproject.toml").write_text(
         f'[project]\nversion = "{project_version}"\n'
     )
@@ -30,11 +30,11 @@ def run_check(tmp_path, tag, *, project_version="1.2.0", package_version="1.2.0"
     )
 
 
-@pytest.mark.parametrize("tag", ["1.2.0", "v1.2.0"])
+@pytest.mark.parametrize("tag", ["1.2.1", "v1.2.1"])
 def test_release_accepts_matching_tag(tmp_path, tag):
     result = run_check(tmp_path, tag)
     assert result.returncode == 0, result.stderr
-    assert "Release version verified: 1.2.0" in result.stdout
+    assert "Release version verified: 1.2.1" in result.stdout
 
 
 @pytest.mark.parametrize("tag", [None, ""])
@@ -44,7 +44,7 @@ def test_release_requires_tag(tmp_path, tag):
     assert "CI_COMMIT_TAG is required" in result.stderr
 
 
-@pytest.mark.parametrize("tag", ["v1.0.0", "vv1.2.0", "release/1.2.0"])
+@pytest.mark.parametrize("tag", ["v1.0.0", "vv1.2.1", "release/1.2.1"])
 def test_release_rejects_mismatched_tag(tmp_path, tag):
     result = run_check(tmp_path, tag)
     assert result.returncode != 0
@@ -52,12 +52,12 @@ def test_release_rejects_mismatched_tag(tmp_path, tag):
 
 
 def test_release_rejects_package_version_drift(tmp_path):
-    result = run_check(tmp_path, "v1.2.0", package_version="1.0.0")
+    result = run_check(tmp_path, "v1.2.1", package_version="1.0.0")
     assert result.returncode != 0
     assert "justdata.__version__='1.0.0'" in result.stderr
 
 
 def test_release_rejects_project_version_drift(tmp_path):
-    result = run_check(tmp_path, "v1.2.0", project_version="1.0.0")
+    result = run_check(tmp_path, "v1.2.1", project_version="1.0.0")
     assert result.returncode != 0
     assert "pyproject.toml='1.0.0'" in result.stderr

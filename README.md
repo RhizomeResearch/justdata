@@ -1263,7 +1263,7 @@ package-support jobs pass. Build artifacts are retained for one week. Tag pipeli
 to complete a release.
 
 Before tagging, update `pyproject.toml`, `src/justdata/__init__.py`, and `CHANGELOG.md`, then run `uv lock`. Push a tag
-matching the package version, with an optional `v` prefix (for example, `v1.2.0` or `1.2.0`). Publishing rejects tags
+matching the package version, with an optional `v` prefix (for example, `v1.2.1` or `1.2.1`). Publishing rejects tags
 that disagree with either version declaration. Branch pipelines build artifacts without publishing.
 
 Configure a [PyPI GitLab trusted publisher](https://docs.pypi.org/trusted-publishers/adding-a-publisher/) for the

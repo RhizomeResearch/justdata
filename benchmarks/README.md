@@ -9,6 +9,29 @@ RSS ceiling; the 32-record cache case has a separate 1 GiB file budget. Run
 JAX GPU host to require a JAX GPU computation while TensorFlow exposes only
 CPUs. Missing JAX or GPU is an explicit failed qualification, not a CPU pass.
 
+## Bounded dense-input check, 2026-09-24
+
+The fresh-process resource benchmark passed all 16 streaming cases on an AMD
+Ryzen 9 7940HS with Python 3.12.14 and TensorFlow 2.21.0. Each profile used
+32 and 256 synthetic records, batch size 2, prefetch limits 1 and 2, two map
+workers, a two-thread private pool, and one TensorFlow intra-op thread. Every
+case emitted its declared number of real rows. Maximum additional native peak
+RSS across the four cases per shape was:
+
+| Input shape | Maximum additional peak RSS |
+| --- | ---: |
+| 512 × 512 | 63.2 MiB |
+| 1,024 × 1,024 | 202.5 MiB |
+| 576 × 1,024 | 117.2 MiB |
+| 1,024 × 576 | 117.3 MiB |
+
+All cases stayed below the configured 1 GiB additional RSS ceiling. The
+32-record, 512-pixel protected-cache case completed with 142,610,848 bytes of
+cache content; the one-byte quota probe failed with `quota_exceeded` and left
+an incomplete cache rather than a reusable artifact. TensorFlow reported one
+logical CPU and no visible GPUs on this host. The JAX GPU preflight requires a
+GPU-equipped host and is not covered by these CPU measurements.
+
 Run the standalone CPU benchmark from the repository root:
 
 ```bash

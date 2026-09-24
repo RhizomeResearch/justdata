@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.2.0 — 2026-09-24
+
+This release adds strict offline inventory admission and reproducible, bounded
+data execution for dense vision tasks, while keeping the existing loader route
+available.
+
+### Added
+
+- Admit an ordered local inventory with verified content hashes, complete
+  identity reconciliation, declared filtering, structured failures, and an
+  offline snapshot. The existing `fetch_ds` and `load_ds` route retains its
+  permissive source handling.
+- Apply explicit, recursively merged pipeline overrides, including values equal
+  to defaults, and export a canonical snapshot of the executed stages and
+  loader settings for full-digest fingerprinting.
+- Produce replayable paired image and categorical-mask geometry with explicit
+  ignore padding, pixel validity, original-coordinate records, and evaluation
+  logit restoration.
+- Preserve complete source identities in immutable metadata sidecars and keep
+  per-view geometry distinct across shuffling, batching, cache reuse, and
+  resumed iteration.
+- Reconstruct deterministic epochs from admitted inventories at committed
+  batch positions. Partial evaluation batches retain every real sample and
+  expose row validity and real-example counts.
+- Configure bounded prefetch and CPU-only TensorFlow input execution. Protected
+  caches expose completion, quotas, failures, and content/configuration checks.
+- Convert semantic maps to fixed-capacity class-mask target sets with absent
+  slots, spatial validity, and explicit all-ignore disposition. Add panoptic
+  target conversion and graded segmentation augmentation presets.
+
+See [inventory admission](docs/inventory.md), [executed configuration](docs/presets.md#executed-configuration),
+and [dense segmentation](docs/vision.md#12-replayable-dense-segmentation) for
+the public contracts.
+
 ## 1.1.0 — 2026-09-05
 
 This release adds reusable seeded training epochs, more vision corruption and

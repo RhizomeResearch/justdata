@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from threading import Barrier
 
 import pytest
@@ -15,6 +16,7 @@ from justdata.core.registry import (
     get_task_for_dataset,
     list_pipelines,
     register_dataset,
+    register_pipeline,
 )
 
 
@@ -57,6 +59,16 @@ class TestDatasetTaskMapping:
             register_dataset(name, "classification", modality="acoustic")
 
         assert get_dataset_info(name).modality == "vision"
+
+    def test_duplicate_registration_names_a_partial_owner(self):
+        name = "test_duplicate_partial_pipeline_registration"
+        register_pipeline(name)(partial(get_pipeline, task="classification"))
+
+        with pytest.raises(
+            ValueError,
+            match=f"Pipeline '{name}' already registered by functools.partial",
+        ):
+            register_pipeline(name)(get_pipeline)
 
     def test_concurrent_duplicate_dataset_registration_has_one_winner(self):
         name = "test_concurrent_duplicate_dataset_registration"

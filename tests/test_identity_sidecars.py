@@ -18,7 +18,11 @@ from justdata.core import (
 )
 from justdata.core.finalization import finalize_dataset
 from justdata.core.loader import load_ds
-from justdata.core.metadata import stable_int64_hash
+from justdata.core.metadata import (
+    attach_sidecar_views,
+    stable_int64_hash,
+    verify_sidecar_keys,
+)
 
 
 def _identity(sample, *args, **kwargs):
@@ -115,6 +119,16 @@ def test_precomputed_view_mapping_keeps_string_descriptors_out_of_batch():
     assert "corruption" not in batch["metadata"]
     assert int(batch["metadata"]["view_id"][0]) == view_id
     assert sidecar.view_records[(source_id, view_id)] == view_metadata
+
+
+@pytest.mark.parametrize("bind", [attach_sidecar_views, verify_sidecar_keys])
+def test_sidecar_binders_require_exactly_one_mapping_source(tmp_path, bind):
+    ds = _source([b"a"])
+
+    with pytest.raises(ValueError, match="Choose either"):
+        bind(ds)
+    with pytest.raises(ValueError, match="Choose either"):
+        bind(ds, sidecar=MetadataSidecar(), path=str(tmp_path / "views.jsonl"))
 
 
 def test_zero_is_a_valid_real_key_and_padding_is_not_a_mapping():

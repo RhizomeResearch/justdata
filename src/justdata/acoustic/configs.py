@@ -5,10 +5,19 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypeVar
+from typing import Any, ClassVar, Literal, Self
 
 
-ConfigT = TypeVar("ConfigT", bound="_SerializableConfig")
+SegmentPadMode = Literal["zero", "repeat", "reflect"]
+DurationPolicy = Literal[
+    "keep_1s",
+    "pad_to_model_duration",
+    "tile_to_model_duration",
+    "repeat_pad_to_model_duration",
+    "sliding_windows",
+    "none",
+]
+LabelTransformMode = Literal["index", "one_hot", "multi_hot", "text", "event_frames"]
 
 
 def _canonical_json(config: Any) -> str:
@@ -48,6 +57,8 @@ def _tuple_or_scalar_value(value: Any) -> Any:
 
 
 class _SerializableConfig:
+    __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
+
     def __post_init__(self) -> None:
         self.validate()
 
@@ -58,13 +69,15 @@ class _SerializableConfig:
         return _canonical_json(self)
 
     @classmethod
-    def from_dict(cls: type[ConfigT], data: Mapping[str, Any] | ConfigT) -> ConfigT:
+    def from_dict(cls, data: Mapping[str, Any] | _SerializableConfig) -> Self:
         if isinstance(data, cls):
             return data
-        return cls(**dict(data))
+        if not isinstance(data, Mapping):
+            raise TypeError(f"{cls.__name__} requires a mapping or {cls.__name__}")
+        return cls(**data)
 
     @classmethod
-    def from_json(cls: type[ConfigT], data: str) -> ConfigT:
+    def from_json(cls, data: str) -> Self:
         return cls.from_dict(json.loads(data))
 
     def hash(self) -> str:
@@ -119,21 +132,14 @@ class SegmentStrategyConfig(_SerializableConfig):
     clip_duration: float
     train_mode: Literal["random_crop", "center_crop", "full", "sliding", "pad_or_crop"]
     eval_mode: Literal["center_crop", "full", "sliding", "multi_crop"]
-    pad_mode: Literal["zero", "repeat", "reflect"]
+    pad_mode: SegmentPadMode
     pad_position: Literal["right", "center", "random"]
     num_views: int = 1
     sliding_hop_duration: float | None = None
     allow_train_sliding: bool = False
     drop_short: bool = False
     min_duration: float | None = None
-    duration_policy: Literal[
-        "keep_1s",
-        "pad_to_model_duration",
-        "tile_to_model_duration",
-        "repeat_pad_to_model_duration",
-        "sliding_windows",
-        "none",
-    ] = "none"
+    duration_policy: DurationPolicy = "none"
 
     def validate(self) -> SegmentStrategyConfig:
         _ensure_positive("clip_duration", self.clip_duration)
@@ -401,7 +407,7 @@ class FrontendConfig(_SerializableConfig):
 
 @dataclass(frozen=True)
 class LabelTransformConfig(_SerializableConfig):
-    mode: Literal["index", "one_hot", "multi_hot", "text", "event_frames"]
+    mode: LabelTransformMode
     num_classes: int | None = None
     class_names: tuple[str, ...] | None = None
     smoothing: float = 0.0
@@ -480,12 +486,10 @@ class AudioPreset(_SerializableConfig):
         self.validate()
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any] | AudioPreset) -> AudioPreset:
-        if isinstance(data, cls):
-            return data
-        if "target_sample_rate" not in data:
+    def from_dict(cls, data: Mapping[str, Any] | _SerializableConfig) -> Self:
+        if isinstance(data, Mapping) and "target_sample_rate" not in data:
             raise ValueError("AudioPreset requires target_sample_rate")
-        return cls(**dict(data))
+        return super().from_dict(data)
 
     def validate(self) -> AudioPreset:
         if not self.name:

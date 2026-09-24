@@ -1,6 +1,8 @@
 import threading
 from typing import Any, Dict, Protocol
 
+from justdata.core.registry import qualified_name
+
 
 class DatasetAdapter(Protocol):
     """Maps raw dataset samples to a canonical dict schema."""
@@ -18,7 +20,7 @@ def register_adapter(dataset_name: str):
             if dataset_name in _ADAPTERS:
                 raise ValueError(
                     f"Adapter for '{dataset_name}' already registered by "
-                    f"{_ADAPTERS[dataset_name].__module__}.{_ADAPTERS[dataset_name].__qualname__}"
+                    f"{qualified_name(_ADAPTERS[dataset_name])}"
                 )
             _ADAPTERS[dataset_name] = fn
         return fn

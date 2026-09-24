@@ -63,11 +63,11 @@ def make_augmentations(
     n_global_crops: int = 2,
     n_local_crops: int = 8,
     mode: Literal["ssl", "sl"] = "sl",
-    ra_kwargs: dict = None,
-    ta_kwargs: dict = None,
-    cj_kwargs: dict = None,
-    gc_kwargs: dict = None,
-    lc_kwargs: dict = None,
+    ra_kwargs: dict | None = None,
+    ta_kwargs: dict | None = None,
+    cj_kwargs: dict | None = None,
+    gc_kwargs: dict | None = None,
+    lc_kwargs: dict | None = None,
     crop_type: str = "random_resized",
     crop_kwargs: dict | None = None,
     interpolation: str = "bilinear",
@@ -146,7 +146,7 @@ def make_augmentations(
                 interpolation=interpolation,
                 **crop_kwargs,
             )
-            aug_image = aug_fn(cropped_image, seeds[1], **_aug_kwargs)
+            aug_image = aug_fn(cropped_image, seed=seeds[1], **_aug_kwargs)
             res["image"] = aug_image
         else:
             raise ValueError(f"Unknown mode `{mode}`. Expected one of ['sl', 'ssl']")
@@ -259,8 +259,8 @@ def make_postprocessing(
     label_mode: Literal["single_label", "multi_label"] = "single_label",
     class_names: tuple[str, ...] | list[str] | None = None,
     keep_hard_label_in_metadata: bool = True,
-    image_keys: list[str] = None,
-    label_keys: list[str] = None,
+    image_keys: list[str] | None = None,
+    label_keys: list[str] | None = None,
     val_resize_size: int | None | Literal["auto"] = "auto",
     eval_view_config: dict | None = None,
 ):

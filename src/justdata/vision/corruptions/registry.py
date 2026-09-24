@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict
 import tensorflow as tf
 
 from justdata.core.metadata import stable_int64_hash
+from justdata.core.registry import qualified_name
 
 PlainValue = str | int | float | bool | None | tuple["PlainValue", ...]
 SeverityParameters = tuple[
@@ -181,11 +182,11 @@ def register_corruption(
                 identity = name if version is None else f"{name}@{version}"
                 raise ValueError(
                     f"Corruption '{identity}' already registered by "
-                    f"{registered.__module__}.{registered.__qualname__}"
+                    f"{qualified_name(registered)}"
                 )
             _CORRUPTION_REGISTRY[key] = fn
             if descriptor is not None:
-                _CORRUPTION_DESCRIPTOR_REGISTRY[key] = descriptor
+                _CORRUPTION_DESCRIPTOR_REGISTRY[(name, descriptor.version)] = descriptor
         return fn
 
     return decorator

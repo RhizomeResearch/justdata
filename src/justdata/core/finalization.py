@@ -304,7 +304,7 @@ def finalize_dataset(
                 num_parallel_calls=parallel_calls,
                 deterministic=deterministic,
             )
-        else:
+        elif rng is not None:
             ds = ds.map(
                 lambda batch: late_augment_fn(
                     batch,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from typing import Any, Protocol
 
 import tensorflow as tf
 
@@ -10,12 +11,16 @@ from justdata.acoustic.segment import segment_waveform
 from justdata.acoustic.schema import DURATION, METADATA, SAMPLE_RATE, WAVEFORM
 
 
+class SeededSampleStage(Protocol):
+    def __call__(self, sample: dict, seed: tf.Tensor | int | None = None) -> dict: ...
+
+
 def make_segment_stage(
-    config: SegmentStrategyConfig,
+    config: SegmentStrategyConfig | Mapping[str, Any],
     *,
     is_training: bool,
     audio_key: str = WAVEFORM,
-) -> Callable[[dict, tf.Tensor | int | None], dict]:
+) -> SeededSampleStage:
     config = SegmentStrategyConfig.from_dict(config)
 
     def stage(sample: dict, seed: tf.Tensor | int | None = None) -> dict:

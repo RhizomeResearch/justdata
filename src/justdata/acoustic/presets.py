@@ -36,6 +36,7 @@ from justdata.acoustic.configs import (
     AudioPreset,
     FrontendConfig,
     LabelTransformConfig,
+    LabelTransformMode,
     LogCompressionConfig,
     MelConfig,
     STFTConfig,
@@ -93,7 +94,9 @@ def _preprocess(sample_rate: int) -> AudioPreprocessConfig:
     )
 
 
-def _label(mode: str, num_classes: int | None = None) -> LabelTransformConfig:
+def _label(
+    mode: LabelTransformMode, num_classes: int | None = None
+) -> LabelTransformConfig:
     return LabelTransformConfig(mode=mode, num_classes=num_classes)
 
 

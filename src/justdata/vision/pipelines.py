@@ -534,10 +534,10 @@ def _resolve_segmentation_config(config, is_training):
     "vision/classification", config_resolver=_resolve_classification_config
 )
 def default_classification_pipeline(
-    preproc_kwargs: dict = None,
-    aug_kwargs: dict = None,
-    laug_kwargs: dict = None,
-    postproc_kwargs: dict = None,
+    preproc_kwargs: dict | None = None,
+    aug_kwargs: dict | None = None,
+    laug_kwargs: dict | None = None,
+    postproc_kwargs: dict | None = None,
     **kwargs,
 ) -> PipelineFuncs:
     preproc_kwargs = preproc_kwargs or {}
@@ -569,10 +569,10 @@ def default_classification_pipeline(
 
 @register_pipeline("vision/segmentation", config_resolver=_resolve_segmentation_config)
 def default_segmentation_pipeline(
-    preproc_kwargs: dict = None,
-    aug_kwargs: dict = None,
-    laug_kwargs: dict = None,
-    postproc_kwargs: dict = None,
+    preproc_kwargs: dict | None = None,
+    aug_kwargs: dict | None = None,
+    laug_kwargs: dict | None = None,
+    postproc_kwargs: dict | None = None,
     geometry_kwargs: dict | None = None,
     **kwargs,
 ) -> PipelineFuncs:

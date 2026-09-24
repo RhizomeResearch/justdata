@@ -58,7 +58,7 @@ def create_global_crops(
 
     crops = []
     crops_heatmaps = []
-    label_crops = [] if should_transform_label else None
+    label_crops = []
     for i in range(crops_number):
         seeds = tf.random.split(seed_crops[i], 5)
 

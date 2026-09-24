@@ -20,6 +20,7 @@ from justdata.acoustic.configs import (
     SegmentStrategyConfig,
 )
 from justdata.acoustic.labels import transform_label
+from justdata.acoustic.layouts import AudioLayout
 from justdata.acoustic.postprocessing import make_model_input_stage, preset_info
 from justdata.acoustic.preprocessing import make_preprocessing as _make_preprocessing
 from justdata.acoustic.schema import FEATURES, LABEL, METADATA
@@ -124,6 +125,7 @@ def make_late_augmentations(**kwargs):
         make_spectrogram_augmentation_stage,
         normalize_spectrogram_augment_specs,
     )
+    from justdata.acoustic.augment.spectrogram import SpectrogramLayout
 
     known_batch_augments = {
         "batch_mixstyle",
@@ -183,7 +185,11 @@ def make_late_augmentations(**kwargs):
         return _identity_batch
 
     sample_layouts = {"tf", "tfc", "cft"}
-    batch_to_sample_layout = {"btf": "tf", "btfc": "tfc", "bcft": "cft"}
+    batch_to_sample_layout: dict[str, SpectrogramLayout] = {
+        "btf": "tf",
+        "btfc": "tfc",
+        "bcft": "cft",
+    }
     layout_source = spectrogram_layout or model_layout
     if not spectrogram_specs:
         sample_spectrogram_layout = None
@@ -327,7 +333,7 @@ def make_postprocessing(
     segment_config: SegmentStrategyConfig | dict | None = None,
     is_training: bool = False,
     frontend: dict | None = None,
-    layout: str | None = None,
+    layout: AudioLayout | None = None,
     dtype: str = "float32",
     output_key: str | None = None,
     static_shape: tuple[int | None, ...] | None = None,

@@ -19,6 +19,7 @@ from justdata.vision.augmentations.registry import (
     get_augment_strategy,
     get_crop_strategy,
     get_crop_strategy_metadata,
+    register_augment_strategy,
 )
 from justdata.vision.presets import get_dataset_presets
 from justdata.vision.tasks.classification import (
@@ -323,6 +324,17 @@ class TestRandomResizedHVFlip:
         )
         assert first["label"].numpy() == imagenet_sample["label"].numpy()
         assert first["metadata"]["wilds_index"].numpy() == 7
+
+    def test_augment_strategy_receives_seed_by_keyword(self, imagenet_sample, seed):
+        name = "test_keyword_only_seed_augment"
+
+        @register_augment_strategy(name)
+        def keyword_only_seed(image, *, seed, **kwargs):
+            return image
+
+        augmentation = make_augmentations(image_size=224, augment_type=name)
+
+        assert augmentation(imagenet_sample, seed=seed)["image"].shape == (224, 224, 3)
 
     def test_crop_kwargs_reject_legacy_top_level_key_conflicts(self):
         with pytest.raises(ValueError, match="interpolation"):

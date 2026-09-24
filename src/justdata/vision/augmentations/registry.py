@@ -7,6 +7,7 @@ from justdata.core.augmentations import (
     AugmentationMetadata,
     attach_augmentation_metadata,
 )
+from justdata.core.registry import qualified_name
 
 
 class CropStrategyFn(Protocol):
@@ -42,7 +43,7 @@ def register_crop_strategy(
             if name in _CROP_STRATEGIES:
                 raise ValueError(
                     f"Crop strategy '{name}' already registered by "
-                    f"{_CROP_STRATEGIES[name].__module__}.{_CROP_STRATEGIES[name].__qualname__}"
+                    f"{qualified_name(_CROP_STRATEGIES[name])}"
                 )
             _CROP_STRATEGIES[name] = fn
             _CROP_STRATEGY_METADATA[name] = metadata
@@ -70,7 +71,7 @@ def register_augment_strategy(
             if name in _AUGMENT_STRATEGIES:
                 raise ValueError(
                     f"Augment strategy '{name}' already registered by "
-                    f"{_AUGMENT_STRATEGIES[name].__module__}.{_AUGMENT_STRATEGIES[name].__qualname__}"
+                    f"{qualified_name(_AUGMENT_STRATEGIES[name])}"
                 )
             _AUGMENT_STRATEGIES[name] = fn
             _AUGMENT_STRATEGY_METADATA[name] = metadata

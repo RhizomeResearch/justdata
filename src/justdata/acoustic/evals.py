@@ -37,10 +37,10 @@ def macro_classwise_accuracy(y_true, y_pred, num_classes: int = 10) -> float:
 def _group_accuracy(y_true, y_pred, groups: Sequence[Any]) -> dict[Any, float]:
     true = _labels(y_true)
     pred = _predictions(y_pred)
-    groups = np.asarray(groups)
+    group_values = np.asarray(groups)
     result = {}
-    for group in sorted(set(groups.tolist()), key=str):
-        mask = groups == group
+    for group in sorted(set(group_values.tolist()), key=str):
+        mask = group_values == group
         result[group] = float(np.mean(pred[mask] == true[mask]))
     return result
 

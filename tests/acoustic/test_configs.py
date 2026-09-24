@@ -86,6 +86,12 @@ def test_audio_preset_requires_target_sample_rate():
         AudioPreset.from_dict(data)
 
 
+@pytest.mark.parametrize("config_type", [STFTConfig, AudioPreset])
+def test_from_dict_rejects_other_config_types(config_type):
+    with pytest.raises(TypeError, match="requires a mapping"):
+        config_type.from_dict(LabelTransformConfig(mode="index"))
+
+
 def test_invalid_layout_rejected():
     with pytest.raises(ValueError, match="layout"):
         make_preset(layout="tb")

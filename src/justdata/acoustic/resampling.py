@@ -53,7 +53,6 @@ def _soxr_resample_numpy(
         waveform.astype(np.float32, copy=False),
         int(original_sample_rate),
         int(target_sample_rate),
-        axis=0,
     )
     return result.astype(np.float32, copy=False)
 

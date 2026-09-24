@@ -152,7 +152,7 @@ def _iter_group_feature_pairs(
 
 def _partial_state(
     observations: np.ndarray,
-) -> tuple[int, np.ndarray | None, np.ndarray | None]:
+) -> tuple[int, np.float64 | np.ndarray | None, np.float64 | np.ndarray | None]:
     count = int(observations.shape[0])
     if count == 0:
         return 0, None, None
@@ -167,8 +167,8 @@ def _partial_state(
 def _merge_partial_state(
     state: dict[str, Any],
     count_b: int,
-    mean_b: np.ndarray | None,
-    m2_b: np.ndarray | None,
+    mean_b: np.float64 | np.ndarray | None,
+    m2_b: np.float64 | np.ndarray | None,
 ) -> None:
     if count_b == 0:
         return

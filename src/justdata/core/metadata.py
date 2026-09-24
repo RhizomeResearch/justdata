@@ -562,6 +562,15 @@ def _contains_string(value: Any) -> bool:
     return False
 
 
+def _require_one_sidecar_source(
+    sidecar: MetadataSidecar | None, path: str | None
+) -> None:
+    if (sidecar is None) == (path is None):
+        raise ValueError(
+            "Choose either a sidecar path or an immutable metadata sidecar."
+        )
+
+
 def attach_sidecar_views(
     ds: tf.data.Dataset,
     *,
@@ -570,13 +579,14 @@ def attach_sidecar_views(
     map_parallel_calls: int = tf.data.AUTOTUNE,
 ) -> tf.data.Dataset:
     """Persist string view metadata under a distinct numeric view key."""
+    _require_one_sidecar_source(sidecar, path)
     known = (
-        None
+        {}
         if sidecar is None
         else {key: json_value(value) for key, value in sidecar.records.items()}
     )
     known_views = (
-        None
+        {}
         if sidecar is None
         else {key: json_value(value) for key, value in sidecar.view_records.items()}
     )
@@ -599,7 +609,7 @@ def attach_sidecar_views(
             )
             source_id = int(full["row_id"])
             source_records = (
-                known if known is not None else MetadataSidecar.read_jsonl(path).records
+                known if path is None else MetadataSidecar.read_jsonl(path).records
             )
             if source_id not in source_records:
                 raise ValueError(f"Unknown sidecar ID {source_id}.")
@@ -660,7 +670,8 @@ def verify_sidecar_keys(
     map_parallel_calls: int = tf.data.AUTOTUNE,
 ) -> tf.data.Dataset:
     """Check joins after caches that can skip the source mapping callback."""
-    known = None if sidecar is None else _sidecar_fingerprints(sidecar)
+    _require_one_sidecar_source(sidecar, path)
+    known = ({}, {}) if sidecar is None else _sidecar_fingerprints(sidecar)
 
     def verify(sample):
         metadata = sample.get("metadata")
@@ -678,7 +689,7 @@ def verify_sidecar_keys(
             key = int(python_value(value))
             available, available_views = (
                 known
-                if known is not None
+                if path is None
                 else _sidecar_fingerprints(MetadataSidecar.read_jsonl(path))
             )
             if key not in available:

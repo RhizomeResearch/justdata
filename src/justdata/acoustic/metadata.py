@@ -32,12 +32,12 @@ class MetadataEncoder:
             examples_or_vocab
         ):
             self.vocab = {
-                field: {str(value): int(i) for i, value in enumerate(values)}
-                for field, values in examples_or_vocab.items()
-                if field in self._FIELD_KEYS
+                field: {
+                    str(value): i
+                    for i, value in enumerate(examples_or_vocab.get(field, ()))
+                }
+                for field in self._FIELD_KEYS
             }
-            for field in self._FIELD_KEYS:
-                self.vocab.setdefault(field, {})
             return self
 
         examples = (
@@ -99,12 +99,12 @@ class MetadataEncoder:
         return decoded
 
     @staticmethod
-    def _looks_like_vocab(value: Mapping[str, Any]) -> bool:
+    def _looks_like_vocab(value: Mapping[Any, Any]) -> bool:
         return all(isinstance(v, (list, tuple, set)) for v in value.values())
 
     @staticmethod
     def _first_present(
-        metadata: Mapping[str, Any], keys: tuple[str, ...]
+        metadata: Mapping[Any, Any], keys: tuple[str, ...]
     ) -> Any | None:
         for key in keys:
             if key in metadata:

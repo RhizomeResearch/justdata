@@ -669,7 +669,7 @@ def _prepare_ds(
     if filter_fn is not None:
         ds = ds.filter(filter_fn)
 
-    finalize_defaults = {
+    finalize_defaults: dict[str, Any] = {
         "postprocess_fn": postprocess_fn,
         "num_classes": num_classes,
         "batch_size": batch_size,
@@ -947,7 +947,7 @@ def _prepare_ds(
         )
         augment_seed, late_augment_seed = tf.unstack(tf.random.split(master_seed, 2))
 
-        if apply_augmentation:
+        if apply_augmentation and augment_fn is not None:
             epoch_ds = epoch_ds.enumerate().map(
                 lambda index, sample: augment_fn(
                     sample,
@@ -1005,7 +1005,7 @@ def _prepare_ds(
             return (*result, executed_config(preparation="raw"))
         return result
 
-    if apply_augmentation:
+    if apply_augmentation and augment_fn is not None:
 
         def seeded_augment(sample):
             return augment_fn(sample, seed=rng.make_seeds(1)[:, 0])

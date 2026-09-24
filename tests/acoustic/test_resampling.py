@@ -37,3 +37,11 @@ def test_resample_waveform_changes_time_dimension():
     result = resample_waveform(audio, 16000, 8000)
 
     assert result.shape == (80, 1)
+
+
+def test_resample_waveform_soxr_resamples_each_channel():
+    audio = tf.zeros([160, 2], dtype=tf.float32)
+
+    result = resample_waveform(audio, 16000, 8000, method="soxr")
+
+    assert result.shape == (80, 2)

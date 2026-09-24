@@ -151,7 +151,7 @@ def sample_dense_geometry(
         if seed.dtype not in (tf.int32, tf.int64):
             raise TypeError("seed must have int32 or int64 dtype")
         seeds = tf.random.experimental.stateless_split(seed, 4)
-        if config.train_scale_range is None:
+        if config.train_resize_range is not None:
             low, high = config.train_resize_range
             target = tf.random.stateless_uniform(
                 [], seeds[0], low, high + 1, dtype=tf.int32
@@ -159,7 +159,7 @@ def sample_dense_geometry(
             scale = tf.cast(target, tf.float64) / tf.cast(
                 tf.reduce_min(original), tf.float64
             )
-        else:
+        elif config.train_scale_range is not None:
             low, high = config.train_scale_range
             fraction = tf.random.stateless_uniform([], seeds[0], dtype=tf.float64)
             factor = low + (high - low) * fraction

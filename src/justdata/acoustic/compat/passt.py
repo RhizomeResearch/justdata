@@ -5,12 +5,14 @@ from justdata.acoustic._dcase import _dcase_label_transform
 from justdata.acoustic.configs import (
     AudioPreprocessConfig,
     AudioPreset,
+    DurationPolicy,
     FeatureNormConfig,
     FrontendConfig,
     LabelTransformConfig,
     LogCompressionConfig,
     MelConfig,
     STFTConfig,
+    SegmentPadMode,
     SegmentStrategyConfig,
 )
 
@@ -137,7 +139,9 @@ def dcase2025_task1_passt_32k_1s() -> AudioPreset:
     )
 
 
-def _dcase_10s(name: str, *, duration_policy: str, pad_mode: str) -> AudioPreset:
+def _dcase_10s(
+    name: str, *, duration_policy: DurationPolicy, pad_mode: SegmentPadMode
+) -> AudioPreset:
     metadata = _metadata(source_duration=1.0)
     metadata["model_input_duration"] = 10.0
     return _preset(

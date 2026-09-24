@@ -285,7 +285,10 @@ def _download_file(
 ) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     parts = _checksum_parts(checksum)
-    digest = hashlib.new(parts[0]) if parts is not None else None
+    digest = expected_digest = None
+    if parts is not None:
+        algorithm, expected_digest = parts
+        digest = hashlib.new(algorithm)
     started_at = time.monotonic()
     bytes_downloaded = 0
     tmp_path: Path | None = None
@@ -329,7 +332,7 @@ def _download_file(
                     f"Zenodo download size mismatch: expected {expected_size} "
                     f"bytes, received {bytes_downloaded}."
                 )
-            if parts is not None and digest.hexdigest().lower() != parts[1]:
+            if digest is not None and digest.hexdigest().lower() != expected_digest:
                 raise ValueError(
                     f"Downloaded Zenodo file {target.name!r} failed checksum "
                     "validation."
@@ -1172,7 +1175,8 @@ def _wilds_fmow_datetime_compat(enabled: bool) -> Iterator[None]:
             compat_kwargs["format"] = "ISO8601"
             return original_to_datetime(arg, *args, **compat_kwargs)
 
-    pd.to_datetime = to_datetime_compat
+    # Scoped monkeypatch: the wrapper forwards to pandas' overloaded function.
+    pd.to_datetime = to_datetime_compat  # ty: ignore[invalid-assignment]
     try:
         yield
     finally:
@@ -1210,21 +1214,22 @@ def _split_to_dataset(
             else:
                 wilds_index = int(_as_numpy(indices[subset_index]).reshape(()))
 
+            sample_metadata: dict[str, Any] = {
+                "dataset": spec.name,
+                "split": split,
+                "example_id": str(wilds_index),
+                "wilds_index": np.int64(wilds_index),
+                "split_scheme": split_scheme,
+                "version": version,
+                "wilds": _metadata_to_int64_dict(metadata, metadata_fields),
+            }
             sample = {
                 "image": _image_to_uint8_array(image),
-                "metadata": {
-                    "dataset": spec.name,
-                    "split": split,
-                    "example_id": str(wilds_index),
-                    "wilds_index": np.int64(wilds_index),
-                    "split_scheme": split_scheme,
-                    "version": version,
-                    "wilds": _metadata_to_int64_dict(metadata, metadata_fields),
-                },
+                "metadata": sample_metadata,
             }
             if source_metadata:
                 try:
-                    sample["metadata"]["wilds_source"] = {
+                    sample_metadata["wilds_source"] = {
                         field: source_metadata[field][wilds_index]
                         for field in spec.source_metadata
                     }

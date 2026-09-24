@@ -16,6 +16,11 @@ class DatasetInfo:
     preset: str | None = None
 
 
+def qualified_name(fn: object) -> str:
+    """Name a registered callable, including partials and callable instances."""
+    return f"{fn.__module__}.{getattr(fn, '__qualname__', type(fn).__qualname__)}"
+
+
 _REGISTRY_LOCK = threading.Lock()
 _DATASETS: Dict[str, DatasetInfo] = {}
 _PIPELINES: Dict[str, Callable[..., PipelineFuncs]] = {}
@@ -189,7 +194,7 @@ def register_pipeline(
             if name in _PIPELINES:
                 raise ValueError(
                     f"Pipeline '{name}' already registered by "
-                    f"{_PIPELINES[name].__module__}.{_PIPELINES[name].__qualname__}"
+                    f"{qualified_name(_PIPELINES[name])}"
                 )
             _PIPELINES[name] = fn
             if config_resolver is not None:

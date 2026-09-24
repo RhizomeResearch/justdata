@@ -11,7 +11,7 @@ import shutil
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import tensorflow as tf
 
@@ -97,7 +97,7 @@ class AdmittedInventory:
     path: Path
 
 
-def _fail(report, code, message, *, cause=None, **context):
+def _fail(report, code, message, *, cause=None, **context) -> NoReturn:
     issue = {"code": code, "message": message, **context}
     report["complete"] = False
     failures = report.get("failures", [])
@@ -384,7 +384,7 @@ def admit_inventory(
     copy of InventoryRecord.metadata; identity is supplied by the inventory.
     The parent of ``snapshot_dir`` must exist and the destination must not exist.
     """
-    report = {
+    report: dict[str, Any] = {
         "schema": _VERSION,
         "inventory_id": inventory_id if isinstance(inventory_id, str) else None,
         "complete": False,

@@ -7,6 +7,7 @@ from justdata.core.augmentations import (
     AugmentationMetadata,
     attach_augmentation_metadata,
 )
+from justdata.core.registry import qualified_name
 
 
 RegistryFn = TypeVar("RegistryFn", bound=Callable)
@@ -37,8 +38,7 @@ def _register(registry: dict[str, Callable], label: str, name: str):
             if name in registry:
                 existing = registry[name]
                 raise ValueError(
-                    f"{label} '{name}' already registered by "
-                    f"{existing.__module__}.{existing.__qualname__}"
+                    f"{label} '{name}' already registered by {qualified_name(existing)}"
                 )
             registry[name] = fn
         return fn
@@ -68,8 +68,7 @@ def _register_augment(
             if name in registry:
                 existing = registry[name]
                 raise ValueError(
-                    f"{label} '{name}' already registered by "
-                    f"{existing.__module__}.{existing.__qualname__}"
+                    f"{label} '{name}' already registered by {qualified_name(existing)}"
                 )
             registry[name] = fn
             metadata_registry[name] = metadata

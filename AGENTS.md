@@ -44,6 +44,7 @@ uv run pytest                        # default suite (excludes golden tests)
 uv run pytest tests/path.py::test    # focused test
 uv run ruff check .                  # lint
 uv run ruff format --check .         # formatting check
+uv run ty check src/                 # type check
 sh tests/doctor/test_lint.sh         # CI lint, including Markdown formatting
 devenv test                          # CI-equivalent default pytest entry point
 ```
@@ -102,7 +103,7 @@ batch-level and training-only.
   example.
 - Prefer focused tests while iterating. Before handoff, run the smallest set that fully covers the changed contract and
   report any checks not run.
-- For Python changes, run `uv run ruff check .` and `uv run ruff format --check .`.
+- For Python changes, run `uv run ruff check .`, `uv run ruff format --check .`, and `uv run ty check src/`.
 - For shared loader, registry, preset, metadata, batching, or padding changes, run
   `uv run pytest tests/test_cross_modal_parity.py` in addition to focused tests.
 - For broad or cross-cutting changes, run the full `uv run pytest` suite.

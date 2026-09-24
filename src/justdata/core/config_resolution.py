@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 import inspect
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import Any, Callable
 
 
@@ -25,7 +25,7 @@ def resolve_callable_config(
     supplied: Mapping[str, Any] | None,
     *,
     path: str,
-    omit: set[str] | None = None,
+    omit: Collection[str] | None = None,
 ) -> dict[str, Any]:
     """Validate keyword configuration and expand a callable's declared defaults."""
     if supplied is None:

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import tensorflow as tf
 
 import justdata.acoustic  # noqa: F401
@@ -6,6 +7,7 @@ from justdata.acoustic.compat.ast import (
     AST_MIX_LABEL,
     AST_MIX_LAMBDA,
     AST_MIX_WAVEFORM,
+    ast_pipeline,
 )
 from justdata.core.registry import get_pipeline
 
@@ -79,3 +81,8 @@ def test_ast_train_pipeline_mixes_explicit_partner_waveform_and_labels():
     assert result["label"].shape == (35,)
     np.testing.assert_allclose(result["label"].numpy()[1], 0.25, rtol=1e-6)
     np.testing.assert_allclose(result["label"].numpy()[3], 0.75, rtol=1e-6)
+
+
+def test_ast_pipeline_requires_a_static_time_dimension_without_target_length():
+    with pytest.raises(ValueError, match="static time dimension"):
+        ast_pipeline(static_shape=(None, 128))

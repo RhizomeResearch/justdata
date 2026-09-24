@@ -1239,6 +1239,7 @@ uv sync             # install/update dependencies
 uv run pytest       # run all tests
 uv run ruff check . # run lint checks
 uv run ruff format --check .  # check formatting
+uv run ty check src/          # type check the package
 uv run mdformat --check --wrap 120 ./*.md benchmarks docs examples src tests  # check Markdown formatting
 uv run pytest tests/path/to/test_file.py::test_name  # run a single test
 ```
@@ -1247,9 +1248,12 @@ The project targets Python 3.12 (see `.python-version`). `LD_LIBRARY_PATH` is co
 
 See [Performance checks](benchmarks/README.md) for reproducible CPU benchmarks and the performance audit results.
 
-GitLab runs `sh tests/doctor/test_lint.sh` in a pinned Debian-based uv image. This installs only the `lint` dependency
-group and checks Python with Ruff and Markdown with mdformat using the GFM, footnote, and MyST plugins. The image
-provides the standard Linux dynamic loader required by Ruff's PyPI executable, which the Nix image lacks.
+GitLab runs `sh tests/doctor/test_lint.sh` in a pinned Debian-based uv image. It checks Python with Ruff and Markdown
+with mdformat using the GFM, footnote, and MyST plugins from the `lint` dependency group alone, then type checks `src/`
+with ty against the locked development environment so that third-party imports resolve. TensorFlow attaches `Tensor`
+operators at runtime, so ty treats `tensorflow` imports as `Any` (see `[tool.ty.analysis]` in `pyproject.toml`). The
+image provides the standard Linux dynamic loader required by the Ruff and ty PyPI executables, which the Nix image
+lacks.
 
 ### Releases
 

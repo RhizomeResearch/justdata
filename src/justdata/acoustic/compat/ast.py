@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, TypedDict
 
 import tensorflow as tf
 
@@ -16,7 +16,7 @@ from justdata.acoustic.configs import (
     SegmentStrategyConfig,
 )
 from justdata.acoustic.labels import transform_label
-from justdata.acoustic.layouts import convert_audio_layout
+from justdata.acoustic.layouts import AudioLayout, convert_audio_layout
 from justdata.acoustic.preprocessing import make_preprocessing
 from justdata.acoustic.schema import FEATURES, LABEL, METADATA, SAMPLE_RATE, WAVEFORM
 from justdata.acoustic.segment import segment_waveform
@@ -28,7 +28,20 @@ AST_MIX_WAVEFORM = "ast_mix_waveform"
 AST_MIX_LABEL = "ast_mix_label"
 AST_MIX_LAMBDA = "ast_mix_lambda"
 
-AST_RECIPE_CONFIGS = {
+
+class _ASTRecipe(TypedDict):
+    target_length: int
+    freqm: int
+    timem: int
+    mixup: float
+    mean: float
+    std: float
+    noise: bool
+    input_duration: float
+    num_classes: int
+
+
+AST_RECIPE_CONFIGS: dict[str, _ASTRecipe] = {
     "audioset": {
         "target_length": 1024,
         "freqm": 48,
@@ -351,7 +364,9 @@ def _ast_config(
 
 
 def _target_length(
-    layout: str, static_shape: tuple[int | None, ...] | None, ast: Mapping[str, Any]
+    layout: AudioLayout,
+    static_shape: tuple[int | None, ...] | None,
+    ast: Mapping[str, Any],
 ) -> int:
     if "target_length" in ast:
         return int(ast["target_length"])
@@ -359,15 +374,19 @@ def _target_length(
         raise ValueError(
             "AST pipeline requires static_shape or metadata['ast']['target_length']"
         )
-    if layout == "btf":
-        return int(static_shape[0])
-    if layout == "bft":
-        return int(static_shape[1])
-    if layout == "bcft":
-        return int(static_shape[2])
-    if layout == "btfc":
-        return int(static_shape[0])
-    raise ValueError(f"Unsupported AST layout: {layout!r}")
+    if layout in ("btf", "btfc"):
+        target_length = static_shape[0]
+    elif layout == "bft":
+        target_length = static_shape[1]
+    elif layout == "bcft":
+        target_length = static_shape[2]
+    else:
+        raise ValueError(f"Unsupported AST layout: {layout!r}")
+    if target_length is None:
+        raise ValueError(
+            "AST pipeline requires a static time dimension in static_shape"
+        )
+    return int(target_length)
 
 
 def _transform_sample_label(
@@ -454,7 +473,7 @@ def _maybe_mix_waveform_and_label(
 def _make_ast_feature_stage(
     *,
     frontend: FrontendConfig,
-    layout: str,
+    layout: AudioLayout,
     dtype: str,
     output_key: str,
     static_shape: tuple[int | None, ...] | None,
@@ -529,7 +548,7 @@ def ast_pipeline(
     preprocess: dict | None = None,
     segment: dict | None = None,
     frontend: dict | FrontendConfig | None = None,
-    layout: str = "btf",
+    layout: AudioLayout = "btf",
     dtype: str = "float32",
     output_key: str | None = None,
     static_shape: tuple[int | None, ...] | None = None,

@@ -508,9 +508,8 @@ and batching requirements.
 For instance-aware labels, select `vision/panoptic_segmentation` with a segment-ID map and category table. It preserves
 thing instances, merges stuff by category, and excludes crowd pixels from panoptic supervision. The
 [panoptic contract](docs/vision.md#13-panoptic-segmentation) and
-[LaRS example](docs/vision.md#14-loading-local-lars-archives) show how to load either semantic or panoptic labels
-from local LaRS v1.0.0 archives and plot five images under the A1/A2/A3 presets
-with both label views.
+[LaRS example](docs/vision.md#14-loading-local-lars-archives) show how to load either semantic or panoptic labels from
+local LaRS v1.0.0 archives and plot five images under the A1/A2/A3 presets with both label views.
 
 ______________________________________________________________________
 
@@ -1037,23 +1036,19 @@ behavior is unchanged.
 
 For a verified local inventory, `load_replay_epoch` binds an immutable snapshot and executed configuration to an
 explicit committed-batch cursor. It rebuilds the full epoch before skipping committed batches. See
-[`docs/inventory.md`](docs/inventory.md#deterministic-epoch-replay) for checkpoint and resume usage. Count real rows with
-`count_real_examples(batch)` or the returned epoch's `remaining_examples`; padded rows have a false `padding_mask`.
+[`docs/inventory.md`](docs/inventory.md#deterministic-epoch-replay) for checkpoint and resume usage. Count real rows
+with `count_real_examples(batch)` or the returned epoch's `remaining_examples`; padded rows have a false `padding_mask`.
 The epoch path also accepts `prefetch=False` when finalization must precede a caller-controlled prefetch stage.
 
 ### Bounded input execution and protected caches
 
-Pass `prefetch=1` (or another positive batch count) to `load_ds`,
-`load_inventory`, or `finalize_fn` to bound final prefetch. `finalize_epoch`
-inherits the configured value unless overridden. `False` disables prefetch;
-`True` retains automatic tuning. A bounded input profile also sets positive
-integer `map_parallel_calls`, `private_threadpool_size`, and
-`max_intra_op_parallelism`, plus a finite shuffle buffer. The executed
-configuration records the effective values. Replay prefetches after skipping
-committed batches and defaults to one batch.
+Pass `prefetch=1` (or another positive batch count) to `load_ds`, `load_inventory`, or `finalize_fn` to bound final
+prefetch. `finalize_epoch` inherits the configured value unless overridden. `False` disables prefetch; `True` retains
+automatic tuning. A bounded input profile also sets positive integer `map_parallel_calls`, `private_threadpool_size`,
+and `max_intra_op_parallelism`, plus a finite shuffle buffer. The executed configuration records the effective values.
+Replay prefetches after skipping committed batches and defaults to one batch.
 
-When another framework uses the accelerator, configure TensorFlow before
-creating tensors or datasets:
+When another framework uses the accelerator, configure TensorFlow before creating tensors or datasets:
 
 ```python
 from justdata.core import configure_tensorflow_cpu
@@ -1062,16 +1057,13 @@ device_report = configure_tensorflow_cpu(intra_op_threads=1, inter_op_threads=1)
 assert device_report["logical_gpus"] == []
 ```
 
-The report includes physical and logical device names and process thread
-settings. The helper raises if the runtime has initialized too early for the
-requested change. Core, vision, acoustic, and audio imports permit this setup.
+The report includes physical and logical device names and process thread settings. The helper raises if the runtime has
+initialized too early for the requested change. Core, vision, acoustic, and audio imports permit this setup.
 
-`CachePolicy` enables identity-checked file caches on the existing preprocessing
-and model-input cache stages. The cache path is a directory whose parent exists.
-The input identity must cover ordered content. `load_inventory` binds its
-verified manifest automatically; other sources require a content-derived
-`input_identity`. Callers must declare deterministic callbacks because arbitrary
-callbacks cannot be inspected for stateful random operations.
+`CachePolicy` enables identity-checked file caches on the existing preprocessing and model-input cache stages. The cache
+path is a directory whose parent exists. The input identity must cover ordered content. `load_inventory` binds its
+verified manifest automatically; other sources require a content-derived `input_identity`. Callers must declare
+deterministic callbacks because arbitrary callbacks cannot be inspected for stateful random operations.
 
 ```python
 from justdata.core import CachePolicy, inspect_cache, load_inventory
@@ -1100,18 +1092,14 @@ assert policy.status("preprocess")["state"] == "complete"
 assert inspect_cache("/existing/cache-parent/prepared")["state"] == "complete"
 ```
 
-Lazy caches publish completion only after the source is fully exhausted.
-Eager caches finish before loading returns. Both modes record count, byte size,
-checksum, and a versioned stage/configuration identity. Changed input,
-normalization, geometry, or augmentation configuration rejects reuse at the
-same path. An incomplete or incompatible cache raises `CacheError`; choose a
-new path after inspecting or clearing the caller-owned artifact. Cache errors
-expose `code` and `path`. During lazy iteration TensorFlow may wrap the
-exception; `policy.status(stage)` retains its structured failure code. Quotas
-bound record count and serialized record bytes. Protected model-input caches
-require evaluation without active augmentation; preprocessing caches remain
-before per-epoch augmentation. Existing cache flags without a policy retain
-their behavior.
+Lazy caches publish completion only after the source is fully exhausted. Eager caches finish before loading returns.
+Both modes record count, byte size, checksum, and a versioned stage/configuration identity. Changed input,
+normalization, geometry, or augmentation configuration rejects reuse at the same path. An incomplete or incompatible
+cache raises `CacheError`; choose a new path after inspecting or clearing the caller-owned artifact. Cache errors expose
+`code` and `path`. During lazy iteration TensorFlow may wrap the exception; `policy.status(stage)` retains its
+structured failure code. Quotas bound record count and serialized record bytes. Protected model-input caches require
+evaluation without active augmentation; preprocessing caches remain before per-epoch augmentation. Existing cache flags
+without a policy retain their behavior.
 
 ### Loading a Hugging Face Dataset
 
@@ -1251,6 +1239,7 @@ uv sync             # install/update dependencies
 uv run pytest       # run all tests
 uv run ruff check . # run lint checks
 uv run ruff format --check .  # check formatting
+uv run mdformat --check --wrap 120 ./*.md benchmarks docs examples src tests  # check Markdown formatting
 uv run pytest tests/path/to/test_file.py::test_name  # run a single test
 ```
 
@@ -1259,7 +1248,8 @@ The project targets Python 3.12 (see `.python-version`). `LD_LIBRARY_PATH` is co
 See [Performance checks](benchmarks/README.md) for reproducible CPU benchmarks and the performance audit results.
 
 GitLab runs `sh tests/doctor/test_lint.sh` in a pinned Debian-based uv image. This installs only the `lint` dependency
-group and provides the standard Linux dynamic loader required by Ruff's PyPI executable, which the Nix image lacks.
+group and checks Python with Ruff and Markdown with mdformat using the GFM, footnote, and MyST plugins. The image
+provides the standard Linux dynamic loader required by Ruff's PyPI executable, which the Nix image lacks.
 
 ### Releases
 

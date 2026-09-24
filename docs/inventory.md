@@ -180,13 +180,11 @@ filtering creates a different population outside the admission report.
 
 Report counts describe admitted source records, independently of training shuffle, view expansion, dropped batches, or
 padded rows. `metadata_mode` retains its existing behavior: `numeric_only` removes string IDs and `none` removes
-metadata. To retain a complete mapping before iteration, call
-`MetadataSidecar.from_inventory(admitted)` and pass the result as
-`metadata_sidecar=` with `metadata_mode="numeric_only"`. Each real batch row
-receives numeric `metadata.row_id` and `metadata.row_fingerprint`; its sidecar
-record retains the full record ID, source, split, verified assets, and supplied
-metadata. Use `padding_mask` to exclude padded rows from joins. Numeric geometry
-generated for a view stays with its emitted row.
+metadata. To retain a complete mapping before iteration, call `MetadataSidecar.from_inventory(admitted)` and pass the
+result as `metadata_sidecar=` with `metadata_mode="numeric_only"`. Each real batch row receives numeric
+`metadata.row_id` and `metadata.row_fingerprint`; its sidecar record retains the full record ID, source, split, verified
+assets, and supplied metadata. Use `padding_mask` to exclude padded rows from joins. Numeric geometry generated for a
+view stays with its emitted row.
 
 ## Deterministic epoch replay
 
@@ -223,20 +221,20 @@ for batch in replay.batches:
 
 `train_step` and `save_checkpoint` above are caller-owned functions. Persist the advanced data state atomically with the
 corresponding model and optimizer update. Reading or prefetching a batch does not advance it. At a fresh epoch, omit
-`state` and pass the new epoch and view. `ReplayEpoch.remaining_batches` and `.remaining_examples` report work after
-the committed position. `ReplayState.to_dict()` and `from_dict()` are available for structured checkpoint backends.
+`state` and pass the new epoch and view. `ReplayEpoch.remaining_batches` and `.remaining_examples` report work after the
+committed position. `ReplayState.to_dict()` and `from_dict()` are available for structured checkpoint backends.
 
 The state binds the ordered snapshot digest, complete executed configuration, run seed, epoch, view, batch policy and
-Python, TensorFlow and JustData versions. A changed input order, batch size, map/thread setting or pipeline configuration
-requires a fresh replay state. Use the same implementation and hardware profile when exact tensor equality matters.
-`ReplayError.status` and `.reason` identify incompatible state, invalid positions, and unsupported replay without
-parsing exception text. Undeclared callbacks, opaque configurations, disk pipeline caches and streaming sidecar writers
-are unsupported by this route. Memory preprocessing caches, eligible model-input caches, and immutable metadata
+Python, TensorFlow and JustData versions. A changed input order, batch size, map/thread setting or pipeline
+configuration requires a fresh replay state. Use the same implementation and hardware profile when exact tensor equality
+matters. `ReplayError.status` and `.reason` identify incompatible state, invalid positions, and unsupported replay
+without parsing exception text. Undeclared callbacks, opaque configurations, disk pipeline caches and streaming sidecar
+writers are unsupported by this route. Memory preprocessing caches, eligible model-input caches, and immutable metadata
 sidecars are supported. Model-input caches are unavailable when augmentation is active. The route queues one batch after
 the committed-batch skip.
 
 Evaluation retains the final partial batch. `padding_mask=True` identifies each real row; the last batch remains padded
 to the requested shape. `count_real_examples(batch)` works for TensorFlow and NumPy batches even when the underlying
 dataset has unknown cardinality. For dense targets, combine row validity with `pixel_valid_mask`; synthetic zero-filled
-target rows and ignored pixels are excluded from losses and metrics. Training may explicitly set
-`drop_remainder=True`, in which case dropped inputs are excluded from `remaining_examples`.
+target rows and ignored pixels are excluded from losses and metrics. Training may explicitly set `drop_remainder=True`,
+in which case dropped inputs are excluded from `remaining_examples`.

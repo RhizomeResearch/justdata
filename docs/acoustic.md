@@ -1,52 +1,44 @@
 # Acoustic Pipelines
 
-`justdata.acoustic` is the audio modality package for TensorFlow-native loading,
-preprocessing, augmentation, batching, metadata, DCASE helpers, and corruption
-benchmarks.
+`justdata.acoustic` is the audio modality package for TensorFlow-native loading, preprocessing, augmentation, batching,
+metadata, DCASE helpers, and corruption benchmarks.
 
-The `hf_audio:` source uses Hugging Face Datasets and defaults to its
-TorchCodec decoder. The acoustic dependency set pins the compatible Torch 2.10
-and TorchCodec 0.10 pair. TorchCodec also requires FFmpeg shared libraries at
-runtime; the devenv shell supplies them. Set `decode_mode="justdata"` to ask
-Datasets for undecoded path/bytes records and use justdata's TensorFlow WAV
-decoder instead.
+The `hf_audio:` source uses Hugging Face Datasets and defaults to its TorchCodec decoder. The acoustic dependency set
+pins the compatible Torch 2.10 and TorchCodec 0.10 pair. TorchCodec also requires FFmpeg shared libraries at runtime;
+the devenv shell supplies them. Set `decode_mode="justdata"` to ask Datasets for undecoded path/bytes records and use
+justdata's TensorFlow WAV decoder instead.
 
-The vision counterpart is [docs/vision.md](vision.md). Keep the two documents
-aligned when changing shared loader behavior, preset contracts, metadata modes,
-or corruption dataset APIs.
+The vision counterpart is [docs/vision.md](vision.md). Keep the two documents aligned when changing shared loader
+behavior, preset contracts, metadata modes, or corruption dataset APIs.
 
-Shared bounded prefetch, CPU placement, and protected cache controls are
-documented in the [usage guide](../README.md#bounded-input-execution-and-protected-caches).
-The cache fingerprint includes the resolved frontend and normalization
-configuration; cached model inputs require deterministic preprocessing.
+Shared bounded prefetch, CPU placement, and protected cache controls are documented in the
+[usage guide](../README.md#bounded-input-execution-and-protected-caches). The cache fingerprint includes the resolved
+frontend and normalization configuration; cached model inputs require deterministic preprocessing.
 
 ## 1. Why justdata owns audio frontends
 
-Audio checkpoints usually assume exact frontend semantics: resampling, channel
-folding, segmentation, STFT windowing, mel scale, log compression, feature
-normalization, tensor layout, and static shape. If those steps live outside the
-data pipeline, training and evaluation can silently drift from the model contract.
+Audio checkpoints usually assume exact frontend semantics: resampling, channel folding, segmentation, STFT windowing,
+mel scale, log compression, feature normalization, tensor layout, and static shape. If those steps live outside the data
+pipeline, training and evaluation can silently drift from the model contract.
 
-`justdata` owns audio frontends so a preset can describe the full input contract
-in one hashable object and so TensorFlow, JAX/NumPy consumers, golden tests, and
-corruption benchmarks all use the same preprocessing path.
+`justdata` owns audio frontends so a preset can describe the full input contract in one hashable object and so
+TensorFlow, JAX/NumPy consumers, golden tests, and corruption benchmarks all use the same preprocessing path.
 
 ## 2. Acoustic canonical schema
 
 Raw or adapted acoustic samples use these keys:
 
-| Key | Meaning |
-| :-- | :-- |
-| `waveform` | Float waveform in time-major layout, normally `[time, channels]`. |
-| `sample_rate` | Integer sample rate for `waveform`. |
-| `label` | Optional class index, dense vector, string label, or event target. |
-| `features` | Optional model frontend output when the frontend is not raw waveform. |
-| `duration` | Optional duration in seconds. |
-| `metadata` | Optional nested metadata such as dataset, split, clip, device, source, city, and view fields. |
+| Key           | Meaning                                                                                       |
+| :------------ | :-------------------------------------------------------------------------------------------- |
+| `waveform`    | Float waveform in time-major layout, normally `[time, channels]`.                             |
+| `sample_rate` | Integer sample rate for `waveform`.                                                           |
+| `label`       | Optional class index, dense vector, string label, or event target.                            |
+| `features`    | Optional model frontend output when the frontend is not raw waveform.                         |
+| `duration`    | Optional duration in seconds.                                                                 |
+| `metadata`    | Optional nested metadata such as dataset, split, clip, device, source, city, and view fields. |
 
-DCASE-compatible adapters also preserve `dataset`, `split`, `example_id`,
-`clip_id`, `source_id`, `filename`, `path`, `start_time`, and `end_time` inside
-metadata when available.
+DCASE-compatible adapters also preserve `dataset`, `split`, `example_id`, `clip_id`, `source_id`, `filename`, `path`,
+`start_time`, and `end_time` inside metadata when available.
 
 ## 3. Four acoustic pipeline stages
 
@@ -62,60 +54,51 @@ The loader executes them as:
 fetch_ds -> adapter -> preprocess -> cache -> augment -> shuffle -> postprocess -> batch -> late_augment -> pad -> prefetch
 ```
 
-`cache_dataset/cache_path` controls the pre-augment cache. It is disabled by
-default: set `cache_dataset=True` with an empty path for an intentional memory
-cache, or provide a nonempty filesystem path. Large datasets should use an
-explicit disk path or remain uncached. This choice affects performance, not
-output values, and is separate from source-owned download caches under
-`data_dir`. `cache_model_inputs` can additionally cache deterministic
-postprocess outputs before batching; train use requires
-`allow_train_model_input_cache=True` because stochastic training views are
-materialized on first fill. The same opt-in is required when `augment_eval=True`.
+`cache_dataset/cache_path` controls the pre-augment cache. It is disabled by default: set `cache_dataset=True` with an
+empty path for an intentional memory cache, or provide a nonempty filesystem path. Large datasets should use an explicit
+disk path or remain uncached. This choice affects performance, not output values, and is separate from source-owned
+download caches under `data_dir`. `cache_model_inputs` can additionally cache deterministic postprocess outputs before
+batching; train use requires `allow_train_model_input_cache=True` because stochastic training views are materialized on
+first fill. The same opt-in is required when `augment_eval=True`.
 
 For acoustic data the stages are:
 
-| Stage | Acoustic responsibility |
-| :-- | :-- |
-| `preprocess` | Decode or accept waveform, cast to float32, standardize layout, resample, fold channels, normalize waveform, and attach base metadata. |
-| `augment` | Training-only per-sample segmentation plus waveform or spectrogram augmentations. Evaluation uses deterministic segmentation unless `augment_eval=True`. |
-| `postprocess` | Evaluation segmentation, frontend computation, layout conversion, dtype cast, static shape assignment, and label transform. |
+| Stage          | Acoustic responsibility                                                                                                                                    |
+| :------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `preprocess`   | Decode or accept waveform, cast to float32, standardize layout, resample, fold channels, normalize waveform, and attach base metadata.                     |
+| `augment`      | Training-only per-sample segmentation plus waveform or spectrogram augmentations. Evaluation uses deterministic segmentation unless `augment_eval=True`.   |
+| `postprocess`  | Evaluation segmentation, frontend computation, layout conversion, dtype cast, static shape assignment, and label transform.                                |
 | `late_augment` | Batch transforms such as Mixup, CutMixSpec, WavMix, and MixStyle. They run during training by default and during evaluation only when `augment_eval=True`. |
 
 ### Segmentation contract
 
-`SegmentStrategyConfig.pad_position` controls where short waveforms are padded:
-`right` preserves the existing behavior, `center` splits the deficit with an
-extra sample on the right, and `random` chooses the split statelessly from the
-sample seed. The position applies consistently to zero, repeat, and reflect
-padding.
+`SegmentStrategyConfig.pad_position` controls where short waveforms are padded: `right` preserves the existing behavior,
+`center` splits the deficit with an extra sample on the right, and `random` chooses the split statelessly from the
+sample seed. The position applies consistently to zero, repeat, and reflect padding.
 
-Evaluation `multi_crop` produces a fixed leading view axis `[V, ...]` through
-raw-waveform and feature frontends. Batching therefore produces `[B, V, ...]`,
-and `duration` describes one emitted view. View start/end times remain vectors
-in metadata. `sliding` has a data-dependent view count and is supported only by
-the direct segmentation/evaluation-view helpers; model-input static shaping and
-batching reject it with a clear error.
+Evaluation `multi_crop` produces a fixed leading view axis `[V, ...]` through raw-waveform and feature frontends.
+Batching therefore produces `[B, V, ...]`, and `duration` describes one emitted view. View start/end times remain
+vectors in metadata. `sliding` has a data-dependent view count and is supported only by the direct
+segmentation/evaluation-view helpers; model-input static shaping and batching reject it with a clear error.
 
-`drop_short=True` and non-`None` `min_duration` are rejected during config
-validation. They require dataset-level filtering, including an explicit
-cardinality and label contract, which is not implemented.
+`drop_short=True` and non-`None` `min_duration` are rejected during config validation. They require dataset-level
+filtering, including an explicit cardinality and label contract, which is not implemented.
 
 ## 4. How to choose a preset
 
-Choose the preset that matches the model frontend contract first, then the
-dataset duration policy:
+Choose the preset that matches the model frontend contract first, then the dataset duration policy:
 
-| Use case | Prefer |
-| :-- | :-- |
-| EfficientAT or DyMN checkpoints trained on 32 kHz log-mel inputs | `efficientat_32k_10s_logmel128`, `dymn_32k_10s_logmel128`, or the DCASE 1 s variants. |
-| PaSST checkpoints with 128-bin 32 kHz log-mel input and patchout | `passt_32k_10s_logmel128` or the DCASE 1 s variants. |
-| AST checkpoints from YuanGongND/ast | `ast_audioset_16k_10s_fbank128`, `ast_esc50_16k_5s_fbank128`, or `ast_speechcommands_16k_1s_fbank128` with `pipeline_name="acoustic/ast_classification"`. |
-| CED checkpoints using 16 kHz Kaldi-style fbank features | `ced_tiny_16k_logmel64`, `ced_mini_16k_logmel64`, `ced_small_16k_logmel64`, `ced_base_16k_logmel64`, or `dcase2025_task1_ced_16k_1s`. |
-| Generic waveform experiments | `audio_default_16k_waveform`. |
-| Generic log-mel experiments | `audio_default_32k_logmel64` or `audio_default_32k_logmel128`. |
+| Use case                                                         | Prefer                                                                                                                                                    |
+| :--------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| EfficientAT or DyMN checkpoints trained on 32 kHz log-mel inputs | `efficientat_32k_10s_logmel128`, `dymn_32k_10s_logmel128`, or the DCASE 1 s variants.                                                                     |
+| PaSST checkpoints with 128-bin 32 kHz log-mel input and patchout | `passt_32k_10s_logmel128` or the DCASE 1 s variants.                                                                                                      |
+| AST checkpoints from YuanGongND/ast                              | `ast_audioset_16k_10s_fbank128`, `ast_esc50_16k_5s_fbank128`, or `ast_speechcommands_16k_1s_fbank128` with `pipeline_name="acoustic/ast_classification"`. |
+| CED checkpoints using 16 kHz Kaldi-style fbank features          | `ced_tiny_16k_logmel64`, `ced_mini_16k_logmel64`, `ced_small_16k_logmel64`, `ced_base_16k_logmel64`, or `dcase2025_task1_ced_16k_1s`.                     |
+| Generic waveform experiments                                     | `audio_default_16k_waveform`.                                                                                                                             |
+| Generic log-mel experiments                                      | `audio_default_32k_logmel64` or `audio_default_32k_logmel128`.                                                                                            |
 
-Use `justdata.acoustic.presets.get_resolved_preset(name).hash()` in experiment
-metadata. A changed hash means the frontend or pipeline contract changed.
+Use `justdata.acoustic.presets.get_resolved_preset(name).hash()` in experiment metadata. A changed hash means the
+frontend or pipeline contract changed.
 
 ### Usage Examples
 
@@ -133,8 +116,8 @@ print(preset["frontend"]["name"])
 print(preset["layout"])
 ```
 
-Use a model preset with `load_ds` by resolving the matching acoustic pipeline
-and passing the resulting `DataPipeline` to the loader:
+Use a model preset with `load_ds` by resolving the matching acoustic pipeline and passing the resulting `DataPipeline`
+to the loader:
 
 ```python
 import justdata.acoustic
@@ -166,14 +149,12 @@ labels = batch["label"]
 padding_mask = batch["padding_mask"]
 ```
 
-For an admitted immutable inventory, the shared
-[`load_replay_epoch`](inventory.md#deterministic-epoch-replay) route resumes at
-the next committed batch. `count_real_examples(batch)` counts true
-`padding_mask` rows, including a final partial evaluation batch.
+For an admitted immutable inventory, the shared [`load_replay_epoch`](inventory.md#deterministic-epoch-replay) route
+resumes at the next committed batch. `count_real_examples(batch)` counts true `padding_mask` rows, including a final
+partial evaluation batch.
 
-AST presets use a dedicated pipeline because the original recipe applies fbank
-padding/cropping, SpecAugment, normalization, and optional waveform mixup in a
-specific order:
+AST presets use a dedicated pipeline because the original recipe applies fbank padding/cropping, SpecAugment,
+normalization, and optional waveform mixup in a specific order:
 
 ```python
 import tensorflow as tf
@@ -202,33 +183,26 @@ assert model_sample["label"].shape == (527,)
 
 ## 5. EfficientAT/DyMN, PaSST, CED, AST preset contracts
 
-EfficientAT and DyMN DCASE presets use 32 kHz mono audio, 128 mel bins, HTK mel
-scale, Kaldi-compatible filterbanks, log compression, `bcft` layout, 10 DCASE
-Task 1 scene labels, and deterministic center evaluation. DCASE variants either
+EfficientAT and DyMN DCASE presets use 32 kHz mono audio, 128 mel bins, HTK mel scale, Kaldi-compatible filterbanks, log
+compression, `bcft` layout, 10 DCASE Task 1 scene labels, and deterministic center evaluation. DCASE variants either
 keep the 1 second source view or pad/repeat to a 10 second model duration.
 
-PaSST presets use 32 kHz mono audio, 128 mel bins, Slaney mel normalization,
-`bcft` layout, and patchout train augmentation metadata. The DCASE variants
-share the DCASE 10-class label contract.
+PaSST presets use 32 kHz mono audio, 128 mel bins, Slaney mel normalization, `bcft` layout, and patchout train
+augmentation metadata. The DCASE variants share the DCASE 10-class label contract.
 
-CED presets use 16 kHz mono audio, Kaldi-style fbank features with 64 mel bins,
-Povey windowing, `btf` layout, and DCASE or AudioSet label contracts depending
-on the preset.
+CED presets use 16 kHz mono audio, Kaldi-style fbank features with 64 mel bins, Povey windowing, `btf` layout, and DCASE
+or AudioSet label contracts depending on the preset.
 
-AST presets use 16 kHz mono audio, the official AST Torchaudio/Kaldi fbank
-recipe with 128 mel bins, `btf` layout, target-frame right padding/front
-cropping, and AST normalization `(x - mean) / (std * 2)`. Use the dedicated
-`acoustic/ast_classification` pipeline so training SpecAugment runs after fbank
-padding/cropping and before normalization. Operation-exact waveform mixup is
-available when samples include explicit `ast_mix_waveform`, `ast_mix_label`,
-and `ast_mix_lambda` fields; the pipeline does not reproduce AST's Python,
-NumPy, and Torch RNG stream.
+AST presets use 16 kHz mono audio, the official AST Torchaudio/Kaldi fbank recipe with 128 mel bins, `btf` layout,
+target-frame right padding/front cropping, and AST normalization `(x - mean) / (std * 2)`. Use the dedicated
+`acoustic/ast_classification` pipeline so training SpecAugment runs after fbank padding/cropping and before
+normalization. Operation-exact waveform mixup is available when samples include explicit `ast_mix_waveform`,
+`ast_mix_label`, and `ast_mix_lambda` fields; the pipeline does not reproduce AST's Python, NumPy, and Torch RNG stream.
 
 ## 6. DCASE split safety
 
-DCASE 2025 Task 1 helpers distinguish source statistics from target evaluation.
-Statistics are allowed on `dev_train_25` and blocked on `dev_test` and `eval`
-unless `allow_override=True` is passed explicitly.
+DCASE 2025 Task 1 helpers distinguish source statistics from target evaluation. Statistics are allowed on `dev_train_25`
+and blocked on `dev_test` and `eval` unless `allow_override=True` is passed explicitly.
 
 ```python
 from justdata.acoustic.dcase2025 import make_source_dataset, make_target_dataset
@@ -243,72 +217,59 @@ target_ds, target_n = make_target_dataset(
 )
 ```
 
-Use source-domain filters such as `source_domain={"device": "A"}` only on
-source splits. Treat target splits as evaluation-only unless a benchmark protocol
-explicitly allows otherwise.
+Use source-domain filters such as `source_domain={"device": "A"}` only on source splits. Treat target splits as
+evaluation-only unless a benchmark protocol explicitly allows otherwise.
 
 ## 7. Metadata modes for JAX
 
 `load_ds(..., metadata_mode=...)` is shared by vision and acoustic:
 
-| Mode | Behavior |
-| :-- | :-- |
-| `full` | Keep all metadata, including strings. |
+| Mode           | Behavior                                                                                                                   |
+| :------------- | :------------------------------------------------------------------------------------------------------------------------- |
+| `full`         | Keep all metadata, including strings.                                                                                      |
 | `numeric_only` | Keep numeric metadata and remove strings from batches. This is the default acoustic preset policy for JAX-friendly arrays. |
-| `none` | Drop metadata from output batches. |
+| `none`         | Drop metadata from output batches.                                                                                         |
 
-When string metadata is needed for later joins, pass
-`sidecar_metadata_path="metadata.jsonl"` with `metadata_mode="numeric_only"`.
-The loader adds numeric `metadata.row_id` and `metadata.row_fingerprint` to each
-real row. The key joins to complete static source metadata; the fingerprint
-detects stale cache entries while batches remain NumPy/JAX friendly.
-Filter by `padding_mask` before joining; a padded row has no source identity.
-For a complete, replayable mapping, build `MetadataSidecar.from_metadata`
-before iteration and pass it as `metadata_sidecar=`. This accepts records with
-an integer/string `example_id` or the composite `dataset`, `split`, `clip_id`.
-The same source can have different per-view numeric times and indices in each
-batch without changing its sidecar entry.
+When string metadata is needed for later joins, pass `sidecar_metadata_path="metadata.jsonl"` with
+`metadata_mode="numeric_only"`. The loader adds numeric `metadata.row_id` and `metadata.row_fingerprint` to each real
+row. The key joins to complete static source metadata; the fingerprint detects stale cache entries while batches remain
+NumPy/JAX friendly. Filter by `padding_mask` before joining; a padded row has no source identity. For a complete,
+replayable mapping, build `MetadataSidecar.from_metadata` before iteration and pass it as `metadata_sidecar=`. This
+accepts records with an integer/string `example_id` or the composite `dataset`, `split`, `clip_id`. The same source can
+have different per-view numeric times and indices in each batch without changing its sidecar entry.
 
-String view descriptors, such as a corruption name, are stored separately in
-`sidecar.view_records[(row_id, view_id)]`; emitted batches carry numeric
-`metadata.view_id` and `metadata.view_fingerprint`. A zero `view_id` means the
-view has no separate string record. Numeric timing metadata remains in the
-batch.
+String view descriptors, such as a corruption name, are stored separately in `sidecar.view_records[(row_id, view_id)]`;
+emitted batches carry numeric `metadata.view_id` and `metadata.view_fingerprint`. A zero `view_id` means the view has no
+separate string record. Numeric timing metadata remains in the batch.
 
-For an immutable sidecar, add known string view descriptors with
-`sidecar.add_view_metadata(row_id, view_metadata)` before loading. An unknown
-string view fails rather than changing the immutable mapping during iteration.
+For an immutable sidecar, add known string view descriptors with `sidecar.add_view_metadata(row_id, view_metadata)`
+before loading. An unknown string view fails rather than changing the immutable mapping during iteration.
 
-An existing streaming sidecar resumes by default and is never cleared by a new
-iterator. `sidecar_metadata_policy="create"` requires a new path;
-`"overwrite"` replaces it explicitly. Identical records deduplicate and
-conflicting identities or metadata fail. Each accepted JSONL update is
-atomically replaced. A stream consumed only in part can leave an incomplete
-mapping; use a precomputed sidecar when a complete inventory is required.
+An existing streaming sidecar resumes by default and is never cleared by a new iterator.
+`sidecar_metadata_policy="create"` requires a new path; `"overwrite"` replaces it explicitly. Identical records
+deduplicate and conflicting identities or metadata fail. Each accepted JSONL update is atomically replaced. A stream
+consumed only in part can leave an incomplete mapping; use a precomputed sidecar when a complete inventory is required.
 Use one writer process per sidecar path.
 
 ## 8. Golden compatibility tests
 
-Golden tests live under `tests/acoustic/test_golden_*`. They are marked
-`golden` and excluded from default CI. AST golden tests run when
-`tests/acoustic/golden/ast/*.npz` fixtures have been generated with the
-Python 3.12-compatible Torch/Torchaudio stack in the `golden` extra. Run them
-only when reference packages, fixtures, or converted checkpoints are available:
+Golden tests live under `tests/acoustic/test_golden_*`. They are marked `golden` and excluded from default CI. AST
+golden tests run when `tests/acoustic/golden/ast/*.npz` fixtures have been generated with the Python 3.12-compatible
+Torch/Torchaudio stack in the `golden` extra. Run them only when reference packages, fixtures, or converted checkpoints
+are available:
 
 ```bash
 uv sync --extra golden
 uv run pytest -m golden
 ```
 
-Golden tests should compare exact frontend tensors or checkpoint logits against
-external reference implementations. Non-golden tests should keep using local
-synthetic data and must not depend on external checkpoints.
+Golden tests should compare exact frontend tensors or checkpoint logits against external reference implementations.
+Non-golden tests should keep using local synthetic data and must not depend on external checkpoints.
 
 ## 9. Audio corruption benchmark
 
-`create_audio_corruption_datasets` mirrors the vision Mini-C helper. It forks a
-raw preprocessed dataset, applies deterministic severity 1-5 waveform or
-spectrogram corruptions, runs postprocessing, batches, and preserves
+`create_audio_corruption_datasets` mirrors the vision Mini-C helper. It forks a raw preprocessed dataset, applies
+deterministic severity 1-5 waveform or spectrogram corruptions, runs postprocessing, batches, and preserves
 `padding_mask`.
 
 ```python
@@ -337,8 +298,8 @@ datasets, n = create_audio_corruption_datasets(
 
 ## 10. Vision/acoustic parity guarantees
 
-The parity harness in `tests/test_cross_modal_parity.py` checks that the final
-release surface does not drift between modalities.
+The parity harness in `tests/test_cross_modal_parity.py` checks that the final release surface does not drift between
+modalities.
 
 | Capability                      |   Vision | Acoustic |
 | ------------------------------- | -------: | -------: |
@@ -350,7 +311,6 @@ release surface does not drift between modalities.
 | JAX-friendly numeric metadata   | required | required |
 | Golden preprocessing tests      | required | required |
 
-Shared guarantees are implemented in `justdata.core` where possible:
-`metadata_mode`, `as_numpy`, padding masks, seeded execution, and preset hashing.
-Modality packages own schema-specific stages, registries, corruptions, and
-frontend contracts.
+Shared guarantees are implemented in `justdata.core` where possible: `metadata_mode`, `as_numpy`, padding masks, seeded
+execution, and preset hashing. Modality packages own schema-specific stages, registries, corruptions, and frontend
+contracts.

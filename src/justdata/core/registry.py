@@ -89,7 +89,6 @@ class DataPipeline:
         _preset_request: str | None = None,
         _apply_presets: bool = True,
         _strict_config: bool = False,
-        _explicit_overrides: Mapping[str, Any] | None = None,
         **kwargs,
     ):
         self.pipeline_name = pipeline_name
@@ -101,7 +100,6 @@ class DataPipeline:
         self.preset_request = _preset_request
         self.apply_presets = _apply_presets
         self._strict_config = _strict_config
-        self._explicit_overrides = copy.deepcopy(_explicit_overrides)
 
     def resolve_config(self, is_training: bool) -> dict[str, Any]:
         """Resolve a built-in pipeline into its serializable stage contract."""
@@ -336,7 +334,6 @@ def get_pipeline(
         _preset_request=preset_name,
         _apply_presets=apply_presets,
         _strict_config=overrides is not None,
-        _explicit_overrides=overrides,
         **kwargs,
     )
 

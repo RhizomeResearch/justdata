@@ -22,11 +22,11 @@ from justdata.vision.geometry import (
     DenseGeometryConfig,
     PanopticGeometryConfig,
     replay_dense_geometry,
+    replay_panoptic_geometry,
     restore_dense_scores,
     sample_dense_geometry,
     sample_panoptic_geometry,
 )
-from justdata.vision.panoptic_geometry import replay_panoptic_geometry
 
 
 CONFIG = dict(

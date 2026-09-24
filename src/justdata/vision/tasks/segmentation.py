@@ -4,7 +4,12 @@ from justdata.vision.augmentations.registry import (
     get_augment_strategy,
     get_crop_strategy,
 )
-from justdata.vision.stages import normalize_image_format, resize_and_normalize
+from justdata.vision.stages import (
+    finish_recorded_view,
+    normalize_image_format,
+    recorded_view_augmentations,
+    resize_and_normalize,
+)
 from justdata.vision.transforms import (
     normalize,
     pad_to_patch_multiple,
@@ -218,31 +223,19 @@ def make_dense_augmentations(
     geometry, color_jitter_kwargs=None, photometric_kwargs=None
 ):
     """Apply optional RGB distortion and paired, replayable geometry."""
-    from justdata.vision.augmentations.color import (
-        color_jitter,
-        photometric_distortion,
-    )
     from justdata.vision.geometry import replay_dense_geometry, sample_dense_geometry
 
-    def augmentations(sample, seed):
-        seeds = tf.random.experimental.stateless_split(seed, 2)
-        if photometric_kwargs is not None:
-            sample = sample | {
-                "image": photometric_distortion(
-                    sample["image"], seeds[1], **photometric_kwargs
-                )
-            }
+    def replay_view(sample, seed):
         record = sample_dense_geometry(
-            tf.shape(sample["image"])[:2], geometry, is_training=True, seed=seeds[0]
+            tf.shape(sample["image"])[:2], geometry, is_training=True, seed=seed
         )
-        sample = replay_dense_geometry(sample, record)
-        if color_jitter_kwargs is not None:
-            sample = sample | {
-                "image": color_jitter(sample["image"], seeds[1], **color_jitter_kwargs)
-            }
-        return sample
+        return replay_dense_geometry(sample, record)
 
-    return augmentations
+    return recorded_view_augmentations(
+        replay_view,
+        color_jitter_kwargs=color_jitter_kwargs,
+        photometric_kwargs=photometric_kwargs,
+    )
 
 
 def make_dense_postprocessing(
@@ -256,7 +249,6 @@ def make_dense_postprocessing(
     """Create deterministic evaluation geometry and normalize RGB exactly once."""
     from justdata.vision.geometry import replay_dense_geometry, sample_dense_geometry
     from justdata.vision.encodings import with_semantic_targets
-    from justdata.vision.transforms import nhwc_to_nchw
 
     def postprocessing(sample, **kwargs):
         if not is_training:
@@ -264,27 +256,15 @@ def make_dense_postprocessing(
                 tf.shape(sample["image"])[:2], geometry, is_training=False
             )
             sample = replay_dense_geometry(sample, record)
-        if is_training:
-            size = (
-                (geometry.train_crop_size + geometry.patch_size - 1)
-                // geometry.patch_size
-                * geometry.patch_size
-            )
-            sample["image"].set_shape([size, size, 3])
-            for key in (
-                "mask",
-                "source_valid_mask",
-                "pixel_valid_mask",
-                "annotation_valid_mask",
-            ):
-                if key in sample:
-                    sample[key].set_shape([size, size])
-        image = tf.cast(sample["image"], tf.float32)
-        if normalize_image:
-            image = normalize(image, *normalization_params)
-        if permute_image:
-            image = nhwc_to_nchw(image)
-        sample = sample | {"image": image}
+        sample = finish_recorded_view(
+            sample,
+            geometry,
+            is_training=is_training,
+            label_keys=("mask",),
+            normalize_image=normalize_image,
+            normalization_params=normalization_params,
+            permute_image=permute_image,
+        )
         if emit_semantic_targets:
             sample = with_semantic_targets(
                 sample,

@@ -6,6 +6,7 @@ from typing import Any, Literal
 import tensorflow as tf
 
 from justdata.core.cache import CachePolicy, protected_cache
+from justdata.core.config_resolution import is_positive_int
 from justdata.core.metadata import (
     MetadataSidecar,
     apply_metadata_mode,
@@ -17,6 +18,35 @@ from justdata.core.metadata import (
 
 
 MetadataMode = Literal["full", "numeric_only", "none"]
+
+
+def _validate_metadata_options(
+    metadata_mode: str,
+    sidecar_metadata_path: str | None,
+    metadata_sidecar: MetadataSidecar | None,
+    sidecar_metadata_policy: str,
+) -> None:
+    """Reject inconsistent metadata projection and sidecar transport options."""
+    if metadata_mode not in {"full", "numeric_only", "none"}:
+        raise ValueError(
+            "metadata_mode must be one of 'full', 'numeric_only', or 'none'."
+        )
+    if sidecar_metadata_path is not None and metadata_sidecar is not None:
+        raise ValueError(
+            "Choose either a sidecar path or an immutable metadata sidecar."
+        )
+    if (
+        sidecar_metadata_path is not None or metadata_sidecar is not None
+    ) and metadata_mode != "numeric_only":
+        raise ValueError("Sidecar transport requires metadata_mode='numeric_only'.")
+    if metadata_sidecar is not None and not isinstance(
+        metadata_sidecar, MetadataSidecar
+    ):
+        raise TypeError("metadata_sidecar must be a MetadataSidecar.")
+    if sidecar_metadata_policy not in {"resume", "create", "overwrite"}:
+        raise ValueError("Unknown sidecar metadata policy.")
+    if sidecar_metadata_path is None and sidecar_metadata_policy != "resume":
+        raise ValueError("Sidecar policy requires a sidecar path.")
 
 
 def _seed_for_index(seed: tf.Tensor, index: tf.Tensor) -> tf.Tensor:
@@ -120,26 +150,9 @@ def finalize_dataset(
     _protected_model_cache: tuple[CachePolicy, str] | None = None,
 ) -> tuple[Any, int | None]:
     """Finalize preprocessed samples into padded, model-ready batches."""
-    if metadata_mode not in {"full", "numeric_only", "none"}:
-        raise ValueError(
-            "metadata_mode must be one of 'full', 'numeric_only', or 'none'."
-        )
-    if sidecar_metadata_path is not None and metadata_sidecar is not None:
-        raise ValueError(
-            "Choose either a sidecar path or an immutable metadata sidecar."
-        )
-    if (
-        sidecar_metadata_path is not None or metadata_sidecar is not None
-    ) and metadata_mode != "numeric_only":
-        raise ValueError("Sidecar transport requires metadata_mode='numeric_only'.")
-    if metadata_sidecar is not None and not isinstance(
-        metadata_sidecar, MetadataSidecar
-    ):
-        raise TypeError("metadata_sidecar must be a MetadataSidecar.")
-    if sidecar_metadata_policy not in {"resume", "create", "overwrite"}:
-        raise ValueError("Unknown sidecar metadata policy.")
-    if sidecar_metadata_path is None and sidecar_metadata_policy != "resume":
-        raise ValueError("Sidecar policy requires a sidecar path.")
+    _validate_metadata_options(
+        metadata_mode, sidecar_metadata_path, metadata_sidecar, sidecar_metadata_policy
+    )
     if apply_late_augment is None:
         apply_late_augment = is_training
     if (
@@ -151,15 +164,9 @@ def finalize_dataset(
         raise ValueError(
             "rng or late_augment_seed is required when late augmentation is enabled."
         )
-    if map_parallel_calls is not None and (
-        isinstance(map_parallel_calls, bool)
-        or not isinstance(map_parallel_calls, int)
-        or map_parallel_calls <= 0
-    ):
+    if map_parallel_calls is not None and not is_positive_int(map_parallel_calls):
         raise ValueError("map_parallel_calls must be positive when provided")
-    if not isinstance(prefetch, bool) and (
-        not isinstance(prefetch, int) or prefetch <= 0
-    ):
+    if not isinstance(prefetch, bool) and not is_positive_int(prefetch):
         raise ValueError("prefetch must be a positive integer or boolean")
 
     parallel_calls = (

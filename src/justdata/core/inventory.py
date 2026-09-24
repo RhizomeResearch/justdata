@@ -15,12 +15,18 @@ from typing import Any
 
 import tensorflow as tf
 
+from justdata.core._records import (
+    RECORDS_FILE,
+    file_sha256,
+    read_examples,
+    serialize_example,
+)
 from justdata.core.adapters import DatasetAdapter, get_adapter
 from justdata.core.loader import _prepare_ds
 
 
 _VERSION = "justdata.inventory.v1"
-_ARTIFACTS = ("records.tfrecord", "schema.json", "report.json")
+_ARTIFACTS = (RECORDS_FILE, "schema.json", "report.json")
 _SHA256 = re.compile(r"[0-9a-fA-F]{64}\Z")
 
 
@@ -109,11 +115,6 @@ def _json_bytes(value):
     ).encode("utf-8")
 
 
-def _file_digest(path):
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
-
-
 def _schema(signature):
     """Encode only nested dictionaries and ordinary, known-rank TensorSpecs."""
     leaves = []
@@ -199,36 +200,6 @@ def _tensorize(sample, signature):
         return value
 
     return tf.nest.map_structure(tensor, signature, sample)
-
-
-def _serialize(sample):
-    features = {
-        str(i): tf.train.Feature(
-            bytes_list=tf.train.BytesList(value=[tf.io.serialize_tensor(value).numpy()])
-        )
-        for i, value in enumerate(tf.nest.flatten(sample))
-    }
-    return tf.train.Example(
-        features=tf.train.Features(feature=features)
-    ).SerializeToString()
-
-
-def _snapshot_dataset(path, signature, count):
-    specs = tf.nest.flatten(signature)
-    fields = {str(i): tf.io.FixedLenFeature([], tf.string) for i in range(len(specs))}
-
-    def parse(serialized):
-        values = tf.io.parse_single_example(serialized, fields)
-        tensors = [
-            tf.ensure_shape(tf.io.parse_tensor(values[str(i)], spec.dtype), spec.shape)
-            for i, spec in enumerate(specs)
-        ]
-        return tf.nest.pack_sequence_as(signature, tensors)
-
-    dataset = tf.data.TFRecordDataset(os.fspath(path / "records.tfrecord"))
-    return dataset.map(parse, num_parallel_calls=1, deterministic=True).apply(
-        tf.data.experimental.assert_cardinality(count)
-    )
 
 
 def _preflight(sources, splits_info, report):
@@ -465,7 +436,7 @@ def admit_inventory(
 
     published = False
     try:
-        with tf.io.TFRecordWriter(os.fspath(path / "records.tfrecord")) as writer:
+        with tf.io.TFRecordWriter(os.fspath(path / RECORDS_FILE)) as writer:
             for source, adapter, group, records in plans:
                 for record in records:
                     context = {
@@ -539,7 +510,7 @@ def admit_inventory(
                                 )
                             del validation_sample
                         # Freeze the tensors before selection can mutate its dictionary.
-                        serialized = _serialize(sample)
+                        serialized = serialize_example(sample)
                     except Exception as exc:
                         _fail(report, "invalid_record", str(exc), cause=exc, **context)
                     keep = True
@@ -578,17 +549,16 @@ def admit_inventory(
         _check_report(report, complete=False)
         (path / "schema.json").write_bytes(_json_bytes(schema))
         report["snapshot"] = {
-            name: _file_digest(path / name)
-            for name in ("records.tfrecord", "schema.json")
+            name: file_sha256(path / name) for name in (RECORDS_FILE, "schema.json")
         }
         report["complete"] = True
         (path / "report.json").write_bytes(_json_bytes(report))
         manifest = {
             "schema": _VERSION,
-            "artifacts": {name: _file_digest(path / name) for name in _ARTIFACTS},
+            "artifacts": {name: file_sha256(path / name) for name in _ARTIFACTS},
         }
         # Read back actual records before committing the manifest.
-        dataset = _snapshot_dataset(path, signature, report["retained_count"])
+        dataset = read_examples(path, signature, report["retained_count"])
         _verify_rows(dataset, report)
         (path / "manifest.pending").write_bytes(_json_bytes(manifest))
         (path / "manifest.pending").replace(path / "manifest.json")
@@ -707,7 +677,7 @@ def open_inventory(snapshot_dir: str | os.PathLike) -> AdmittedInventory:
             raise ValueError("Unsupported or incomplete snapshot manifest.")
         for name in _ARTIFACTS:
             expected = manifest["artifacts"][name]
-            actual = _file_digest(path / name)
+            actual = file_sha256(path / name)
             if expected != actual:
                 _fail(
                     report,
@@ -721,11 +691,10 @@ def open_inventory(snapshot_dir: str | os.PathLike) -> AdmittedInventory:
         report = json.loads((path / "report.json").read_bytes())
         _check_report(report)
         if report["snapshot"] != {
-            name: manifest["artifacts"][name]
-            for name in ("records.tfrecord", "schema.json")
+            name: manifest["artifacts"][name] for name in (RECORDS_FILE, "schema.json")
         }:
             raise ValueError("Report snapshot digests do not match the manifest.")
-        dataset = _snapshot_dataset(path, signature, report["retained_count"])
+        dataset = read_examples(path, signature, report["retained_count"])
         _verify_rows(dataset, report)
         return AdmittedInventory(dataset, report, path)
     except InventoryLoadError:
@@ -738,6 +707,11 @@ def open_inventory(snapshot_dir: str | os.PathLike) -> AdmittedInventory:
             cause=exc,
             path=os.fspath(path) if path is not None else None,
         )
+
+
+def _manifest_digest(admitted: AdmittedInventory) -> str:
+    """Identify a snapshot by the SHA-256 of its manifest bytes."""
+    return hashlib.sha256((admitted.path / "manifest.json").read_bytes()).hexdigest()
 
 
 def load_inventory(
@@ -761,14 +735,11 @@ def load_inventory(
             raise ValueError(
                 f"{name} is not supported; declare an InventoryFilter at admission."
             )
-    cache_identity = hashlib.sha256(
-        (admitted.path / "manifest.json").read_bytes()
-    ).hexdigest()
     return _prepare_ds(
         lambda: admitted.dataset,
         dataset_type=dataset_type,
         batch_size=batch_size,
         seed=seed,
-        _cache_input_identity=cache_identity,
+        _cache_input_identity=_manifest_digest(admitted),
         **pipeline_options,
     )

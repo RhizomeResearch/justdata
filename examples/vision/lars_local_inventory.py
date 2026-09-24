@@ -500,6 +500,7 @@ def main() -> None:
         sample_seed=args.sample_seed,
     )
     source_info = json.loads((args.output_dir / "source.json").read_text())
+    class_values, thing_class_values, _ = _category_contract(source_info["categories"])
     options = (
         {
             "geometry_kwargs": {
@@ -514,19 +515,8 @@ def main() -> None:
         if args.labels == "semantic"
         else {
             "panoptic_kwargs": {
-                "class_values": tuple(
-                    row["id"]
-                    for row in sorted(
-                        source_info["categories"], key=lambda row: row["id"]
-                    )
-                ),
-                "thing_class_values": tuple(
-                    row["id"]
-                    for row in sorted(
-                        source_info["categories"], key=lambda row: row["id"]
-                    )
-                    if row["isthing"]
-                ),
+                "class_values": class_values,
+                "thing_class_values": thing_class_values,
                 "max_segments": source_info["max_segments"],
             },
             "keep_original_annotations": args.split != "train",

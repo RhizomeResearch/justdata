@@ -90,6 +90,18 @@ def _identity_structure(value):
     return tf.identity(value)
 
 
+def _attach_metadata(sample: dict, fields: dict[str, tf.Tensor]) -> dict:
+    """Merge numeric transport fields into metadata once they have been computed.
+
+    Every output tensor depends on ``fields`` so a sidecar callback cannot be
+    pruned even when a later stage drops the transport fields.
+    """
+    with tf.control_dependencies(list(fields.values())):
+        result = _identity_structure(sample)
+        result["metadata"] = result["metadata"] | fields
+        return result
+
+
 def json_value(value: Any) -> Any:
     value = python_value(value)
     if isinstance(value, Mapping):
@@ -113,6 +125,14 @@ def _assign_nested(target: dict, path: tuple[str, ...], value: Any) -> None:
     for key in path[:-1]:
         current = current.setdefault(key, {})
     current[path[-1]] = value
+
+
+def _nested_metadata(values_by_path: dict[tuple[str, ...], Any]) -> dict:
+    """Rebuild nested metadata from flattened leaf paths."""
+    nested = {}
+    for path, value in values_by_path.items():
+        _assign_nested(nested, path, value)
+    return nested
 
 
 def _sidecar_example_id(values_by_path: dict[tuple[str, ...], Any]) -> int:
@@ -461,16 +481,7 @@ def attach_sidecar_writer(
                 leaf_path: python_value(value)
                 for leaf_path, value in zip(all_paths, values)
             }
-            source_metadata = {}
-            for leaf_path in all_paths:
-                if leaf_path in {("row_id",), ("row_fingerprint",)}:
-                    continue
-                _assign_nested(
-                    source_metadata,
-                    leaf_path,
-                    values_by_path[leaf_path],
-                )
-
+            source_metadata = _nested_metadata(values_by_path)
             example_id = _sidecar_example_id(values_by_path)
             pending = MetadataSidecar()
             pending.add(
@@ -486,13 +497,9 @@ def attach_sidecar_writer(
         )
         marker.set_shape([])
         fingerprint.set_shape([4])
-        with tf.control_dependencies([marker, fingerprint]):
-            result = _identity_structure(sample)
-            result["metadata"] = result["metadata"] | {
-                "row_id": marker,
-                "row_fingerprint": fingerprint,
-            }
-            return result
+        return _attach_metadata(
+            sample, {"row_id": marker, "row_fingerprint": fingerprint}
+        )
 
     return ds.map(add_writer, num_parallel_calls=map_parallel_calls)
 
@@ -523,11 +530,7 @@ def attach_sidecar_mapping(
         def lookup(*values):
             by_path = {path: python_value(value) for path, value in zip(paths, values)}
             key = _sidecar_example_id(by_path)
-            supplied = {}
-            for path, value in by_path.items():
-                if path in {("row_id",), ("row_fingerprint",)}:
-                    continue
-                _assign_nested(supplied, path, value)
+            supplied = _nested_metadata(by_path)
             if key not in records:
                 raise ValueError(f"Unknown sidecar ID {key}.")
             if _identity(supplied) != identities[key]:
@@ -542,13 +545,9 @@ def attach_sidecar_mapping(
         )
         row_id.set_shape([])
         fingerprint.set_shape([4])
-        with tf.control_dependencies([row_id, fingerprint]):
-            result = _identity_structure(sample)
-            result["metadata"] = result["metadata"] | {
-                "row_id": row_id,
-                "row_fingerprint": fingerprint,
-            }
-            return result
+        return _attach_metadata(
+            sample, {"row_id": row_id, "row_fingerprint": fingerprint}
+        )
 
     return ds.map(bind, num_parallel_calls=map_parallel_calls)
 
@@ -592,9 +591,12 @@ def attach_sidecar_views(
         paths = [leaf_path for leaf_path, _ in leaves]
 
         def register(*values):
-            full = {}
-            for leaf_path, value in zip(paths, values):
-                _assign_nested(full, leaf_path, python_value(value))
+            full = _nested_metadata(
+                {
+                    leaf_path: python_value(value)
+                    for leaf_path, value in zip(paths, values)
+                }
+            )
             source_id = int(full["row_id"])
             source_records = (
                 known if known is not None else MetadataSidecar.read_jsonl(path).records
@@ -628,15 +630,26 @@ def attach_sidecar_views(
         )
         view_id.set_shape([])
         fingerprint.set_shape([4])
-        with tf.control_dependencies([view_id, fingerprint]):
-            result = _identity_structure(sample)
-            result["metadata"] = result["metadata"] | {
-                "view_id": view_id,
-                "view_fingerprint": fingerprint,
-            }
-            return result
+        return _attach_metadata(
+            sample, {"view_id": view_id, "view_fingerprint": fingerprint}
+        )
 
     return ds.map(bind, num_parallel_calls=map_parallel_calls)
+
+
+def _sidecar_fingerprints(
+    sidecar: MetadataSidecar,
+) -> tuple[dict[int, np.ndarray], dict[tuple[int, int], np.ndarray]]:
+    """Fingerprint every source row and view of a sidecar mapping."""
+    rows = {
+        key: _record_fingerprint(value, sidecar.identities.get(key))
+        for key, value in sidecar.records.items()
+    }
+    views = {
+        key: _record_fingerprint(value, {"source_id": key[0], "view_id": key[1]})
+        for key, value in sidecar.view_records.items()
+    }
+    return rows, views
 
 
 def verify_sidecar_keys(
@@ -647,22 +660,7 @@ def verify_sidecar_keys(
     map_parallel_calls: int = tf.data.AUTOTUNE,
 ) -> tf.data.Dataset:
     """Check joins after caches that can skip the source mapping callback."""
-    known = (
-        None
-        if sidecar is None
-        else {
-            key: _record_fingerprint(value, sidecar.identities.get(key))
-            for key, value in sidecar.records.items()
-        }
-    )
-    known_views = (
-        None
-        if sidecar is None
-        else {
-            key: _record_fingerprint(value, {"source_id": key[0], "view_id": key[1]})
-            for key, value in sidecar.view_records.items()
-        }
-    )
+    known = None if sidecar is None else _sidecar_fingerprints(sidecar)
 
     def verify(sample):
         metadata = sample.get("metadata")
@@ -678,22 +676,11 @@ def verify_sidecar_keys(
 
         def check(value, fingerprint, view_value, view_fingerprint):
             key = int(python_value(value))
-            if known is not None:
-                available = known
-                available_views = known_views
-            else:
-                current = MetadataSidecar.read_jsonl(path)
-                available = {
-                    entry: _record_fingerprint(record, current.identities.get(entry))
-                    for entry, record in current.records.items()
-                }
-                available_views = {
-                    entry: _record_fingerprint(
-                        record,
-                        {"source_id": entry[0], "view_id": entry[1]},
-                    )
-                    for entry, record in current.view_records.items()
-                }
+            available, available_views = (
+                known
+                if known is not None
+                else _sidecar_fingerprints(MetadataSidecar.read_jsonl(path))
+            )
             if key not in available:
                 raise ValueError(f"Unknown sidecar ID {key}; rebuild the mapping.")
             if not np.array_equal(fingerprint, available[key]):
@@ -720,10 +707,7 @@ def verify_sidecar_keys(
             Tout=tf.int64,
         )
         marker.set_shape([])
-        with tf.control_dependencies([marker]):
-            result = _identity_structure(sample)
-            result["metadata"] = result["metadata"] | {"row_id": marker}
-            return result
+        return _attach_metadata(sample, {"row_id": marker})
 
     return ds.map(verify, num_parallel_calls=map_parallel_calls)
 

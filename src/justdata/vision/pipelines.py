@@ -19,12 +19,48 @@ _VISION_TOP_LEVEL = {
     "postproc_kwargs",
     "preproc_kwargs",
 }
+# Arguments that automatic augmentation policies receive from the pipeline.
+_POLICY_OMIT = frozenset(
+    {"image", "seed", "bboxes", "segmentation_mask", "segmentation_fill_value"}
+)
+# Options that only the recorded-geometry segmentation mode supports.
+_RECORDED_GEOMETRY_OPTIONS = (
+    "color_jitter_kwargs",
+    "photometric_kwargs",
+    "keep_original_mask",
+)
+
+
+def _configuration_snapshot(config):
+    """Copy the supplied configuration; ``model_input`` is always derived."""
+    return {
+        key: copy.deepcopy(value)
+        for key, value in config.items()
+        if key != "model_input"
+    }
+
+
+def _image_model_input(size, *, permute_image, normalization):
+    """Describe a float32 RGB model input, square when ``size`` is static."""
+    static_shape = None
+    if size is not None:
+        static_shape = [3, size, size] if permute_image else [size, size, 3]
+    return {
+        "output_key": "image",
+        "layout": "bchw" if permute_image else "bhwc",
+        "dtype": "float32",
+        "static_shape": static_shape,
+        "normalization": normalization,
+    }
 
 
 def _resolve_photometric(config):
     if config is None:
         return None
-    from justdata.vision.augmentations.color import photometric_distortion
+    from justdata.vision.augmentations.color import (
+        _validate_photometric_params,
+        photometric_distortion,
+    )
 
     resolved = resolve_callable_config(
         photometric_distortion,
@@ -32,28 +68,68 @@ def _resolve_photometric(config):
         path="photometric_kwargs",
         omit={"image", "seed"},
     )
-    for name in ("brightness", "contrast", "saturation", "hue"):
-        value = resolved[name]
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-            or value < 0
-        ):
-            raise ValueError(
-                f"photometric_kwargs.{name} must be finite and nonnegative"
-            )
-    if resolved["hue"] > 0.5:
-        raise ValueError("photometric_kwargs.hue must be at most 0.5")
-    value = resolved["probability"]
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(value)
-        or not 0 <= value <= 1
-    ):
-        raise ValueError("photometric_kwargs.probability must be in [0, 1]")
+    try:
+        _validate_photometric_params(**resolved)
+    except ValueError as exc:
+        raise ValueError(f"photometric_kwargs.{exc}") from exc
     return resolved
+
+
+def _resolve_color_options(config):
+    """Resolve the mutually exclusive post- and pre-geometry RGB augmentations."""
+    from justdata.vision.augmentations.color import color_jitter
+
+    jitter = config.get("color_jitter_kwargs")
+    photometric = _resolve_photometric(config.get("photometric_kwargs"))
+    if jitter is not None and photometric is not None:
+        raise ValueError("color_jitter_kwargs and photometric_kwargs are exclusive")
+    if jitter is not None:
+        jitter = resolve_callable_config(
+            color_jitter, jitter, path="color_jitter_kwargs", omit={"image", "seed"}
+        )
+    return jitter, photometric
+
+
+def _validate_recorded_postprocess(post, flags):
+    """Check recorded-geometry normalization and boolean postprocess flags."""
+    normalization = _normalization_contract(post)
+    if normalization["kind"] == "mean_std" and (
+        any(not math.isfinite(v) for row in post["normalization_params"] for v in row)
+        or any(v <= 0 for v in post["normalization_params"][1])
+    ):
+        raise ValueError("normalization_params must be finite with positive std")
+    for key in flags:
+        if type(post[key]) is not bool:
+            raise ValueError(f"postproc_kwargs.{key} must be boolean")
+    return normalization
+
+
+def _recorded_geometry_contract(geometry, is_training):
+    """Describe the version-1 geometry shared by semantic and panoptic views."""
+    if not is_training:
+        resize_policy = "long_side_cap"
+    elif geometry["train_scale_range"] is not None:
+        resize_policy = "uniform_fit_scale"
+    else:
+        resize_policy = "uniform_integer_short_side"
+    return geometry | {
+        "record_version": 1,
+        "resize_policy": resize_policy,
+        "image_interpolation": "bilinear",
+        "mask_interpolation": "nearest",
+        "resize_alignment": "half_pixel",
+        "dimension_rounding": "half_up_min_one",
+        "padding_placement": "bottom_right",
+    }
+
+
+def _reject_recorded_geometry_options(config):
+    """Reject recorded-geometry options in the legacy segmentation mode."""
+    if (config.get("postproc_kwargs") or {}).get("emit_semantic_targets", False):
+        raise ValueError("emit_semantic_targets requires geometry_kwargs")
+    for name in _RECORDED_GEOMETRY_OPTIONS:
+        if name in config:
+            raise ValueError(f"{name} requires geometry_kwargs")
 
 
 def _validate_positive(value, *, path):
@@ -94,11 +170,7 @@ def _validate_classification_nested(aug):
     from justdata.vision.augmentations.registry import get_crop_strategy
 
     nested = (
-        (
-            "ra_kwargs",
-            rand_augment,
-            {"image", "seed", "bboxes", "segmentation_mask", "segmentation_fill_value"},
-        ),
+        ("ra_kwargs", rand_augment, _POLICY_OMIT),
         (
             "ta_kwargs",
             (
@@ -106,7 +178,7 @@ def _validate_classification_nested(aug):
                 if aug["augment_type"] == "trivial_augment_wide"
                 else trivial_augment
             ),
-            {"image", "seed", "bboxes", "segmentation_mask", "segmentation_fill_value"},
+            _POLICY_OMIT,
         ),
         ("cj_kwargs", color_jitter, {"image", "seed"}),
         ("gc_kwargs", create_global_crops, {"image", "seed", "crops_number"}),
@@ -201,12 +273,6 @@ def _resolve_classification_config(config, is_training):
         if is_training and post["train_image_size"] is not None
         else post["image_size"]
     )
-    layout = "bchw" if post["permute_image"] else "bhwc"
-    shape = (
-        [3, effective_size, effective_size]
-        if post["permute_image"]
-        else [effective_size, effective_size, 3]
-    )
     val_resize = post["val_resize_size"]
     if val_resize == "auto":
         val_resize = int(post["image_size"] / 0.875)
@@ -222,13 +288,11 @@ def _resolve_classification_config(config, is_training):
         )
     )
 
-    model_input = {
-        "output_key": "image",
-        "layout": layout,
-        "dtype": "float32",
-        "static_shape": shape,
-        "normalization": _normalization_contract(post),
-    }
+    model_input = _image_model_input(
+        effective_size,
+        permute_image=post["permute_image"],
+        normalization=_normalization_contract(post),
+    )
     if is_training and aug["mode"] == "ssl":
         model_input = {
             "dtype": "float32",
@@ -312,11 +376,7 @@ def _resolve_classification_config(config, is_training):
         }
 
     return {
-        "configuration": {
-            key: copy.deepcopy(value)
-            for key, value in config.items()
-            if key != "model_input"
-        },
+        "configuration": _configuration_snapshot(config),
         "stages": {
             "preprocess": {"active": True, "config": preproc},
             "augment": {
@@ -363,11 +423,7 @@ def _resolve_classification_config(config, is_training):
 def _resolve_segmentation_config(config, is_training):
     if config.get("geometry_kwargs") is not None:
         return _resolve_dense_segmentation_config(config, is_training)
-    if (config.get("postproc_kwargs") or {}).get("emit_semantic_targets", False):
-        raise ValueError("emit_semantic_targets requires geometry_kwargs")
-    for name in ("color_jitter_kwargs", "photometric_kwargs", "keep_original_mask"):
-        if name in config:
-            raise ValueError(f"{name} requires geometry_kwargs")
+    _reject_recorded_geometry_options(config)
 
     from justdata.vision.augmentations.auto import (
         rand_augment,
@@ -410,13 +466,7 @@ def _resolve_segmentation_config(config, is_training):
         rand_augment,
         aug["ra_kwargs"],
         path="aug_kwargs.ra_kwargs",
-        omit={
-            "image",
-            "seed",
-            "bboxes",
-            "segmentation_mask",
-            "segmentation_fill_value",
-        },
+        omit=_POLICY_OMIT,
     )
     resolve_callable_config(
         (
@@ -426,13 +476,7 @@ def _resolve_segmentation_config(config, is_training):
         ),
         aug["ta_kwargs"],
         path="aug_kwargs.ta_kwargs",
-        omit={
-            "image",
-            "seed",
-            "bboxes",
-            "segmentation_mask",
-            "segmentation_fill_value",
-        },
+        omit=_POLICY_OMIT,
     )
     _validate_positive(aug["image_size"], path="aug_kwargs.image_size")
     _validate_positive(post["image_size"], path="postproc_kwargs.image_size")
@@ -441,38 +485,18 @@ def _resolve_segmentation_config(config, is_training):
     normalization = _normalization_contract(post | {"normalization_mode": "mean_std"})
     augment_eval = bool(config.get("augment_eval", False))
     apply_augmentation = is_training or augment_eval
-    layout = "bchw" if post["permute_image"] else "bhwc"
-    static_shape = None
-    if not post["patch_align"] or is_training:
-        static_shape = (
-            [3, post["image_size"], post["image_size"]]
-            if post["permute_image"]
-            else [post["image_size"], post["image_size"], 3]
-        )
+    crop_resizes = aug["crop_type"] in {"random_resized", "random_resized_hvflip"}
+    output_size = post["image_size"] if not post["patch_align"] or is_training else None
     return {
-        "configuration": {
-            key: copy.deepcopy(value)
-            for key, value in config.items()
-            if key != "model_input"
-        },
+        "configuration": _configuration_snapshot(config),
         "stages": {
             "preprocess": {"active": True, "config": preproc},
             "augment": {
                 "active": apply_augmentation and bool(aug["enable"]),
                 "config": aug,
                 "geometry": {
-                    "crop_image_interpolation": (
-                        "bilinear"
-                        if aug["crop_type"]
-                        in {"random_resized", "random_resized_hvflip"}
-                        else None
-                    ),
-                    "crop_mask_interpolation": (
-                        "nearest"
-                        if aug["crop_type"]
-                        in {"random_resized", "random_resized_hvflip"}
-                        else None
-                    ),
+                    "crop_image_interpolation": "bilinear" if crop_resizes else None,
+                    "crop_mask_interpolation": "nearest" if crop_resizes else None,
                     "policy_image_interpolation": "bilinear",
                     "policy_mask_interpolation": "nearest",
                     "mask_fill_value": aug["mask_fill_value"],
@@ -497,13 +521,11 @@ def _resolve_segmentation_config(config, is_training):
                 },
             },
         },
-        "model_input": {
-            "output_key": "image",
-            "layout": layout,
-            "dtype": "float32",
-            "static_shape": static_shape,
-            "normalization": normalization,
-        },
+        "model_input": _image_model_input(
+            output_size,
+            permute_image=post["permute_image"],
+            normalization=normalization,
+        ),
         "requirements": {"num_classes": False},
     }
 
@@ -566,11 +588,7 @@ def default_segmentation_pipeline(
                 "postproc_kwargs": postproc_kwargs,
             }
         )
-    if (postproc_kwargs or {}).get("emit_semantic_targets", False):
-        raise ValueError("emit_semantic_targets requires geometry_kwargs")
-    for name in ("color_jitter_kwargs", "photometric_kwargs", "keep_original_mask"):
-        if name in kwargs:
-            raise ValueError(f"{name} requires geometry_kwargs")
+    _reject_recorded_geometry_options(kwargs | {"postproc_kwargs": postproc_kwargs})
 
     preproc_kwargs = preproc_kwargs or {}
     aug_kwargs = aug_kwargs or {}
@@ -593,19 +611,12 @@ def default_segmentation_pipeline(
 
 
 def _resolve_dense_segmentation_config(config, is_training):
-    from justdata.vision.augmentations.color import color_jitter
-    from justdata.vision.geometry import DenseGeometryConfig
+    from justdata.vision.geometry import DenseGeometryConfig, _train_input_size
     from justdata.vision.tasks.segmentation import make_dense_postprocessing
 
     reject_unknown_keys(
         config,
-        _VISION_TOP_LEVEL
-        | {
-            "geometry_kwargs",
-            "color_jitter_kwargs",
-            "photometric_kwargs",
-            "keep_original_mask",
-        },
+        _VISION_TOP_LEVEL | {"geometry_kwargs", *_RECORDED_GEOMETRY_OPTIONS},
         path="pipeline",
     )
     for name in ("preproc_kwargs", "aug_kwargs", "laug_kwargs"):
@@ -636,62 +647,24 @@ def _resolve_dense_segmentation_config(config, is_training):
         path="postproc_kwargs",
         omit={"geometry"},
     )
-    normalization = _normalization_contract(post)
-    if normalization["kind"] == "mean_std":
-        import math
-
-        if any(
-            not math.isfinite(v) for row in post["normalization_params"] for v in row
-        ) or any(v <= 0 for v in post["normalization_params"][1]):
-            raise ValueError("normalization_params must be finite with positive std")
-    for key in ("normalize_image", "permute_image"):
-        if type(post[key]) is not bool:
-            raise ValueError(f"postproc_kwargs.{key} must be boolean")
-    if type(post["emit_semantic_targets"]) is not bool:
-        raise ValueError("postproc_kwargs.emit_semantic_targets must be boolean")
+    normalization = _validate_recorded_postprocess(
+        post, ("normalize_image", "permute_image", "emit_semantic_targets")
+    )
     keep_original = config.get("keep_original_mask", True)
     if type(keep_original) is not bool:
         raise ValueError("keep_original_mask must be boolean")
-    jitter = config.get("color_jitter_kwargs")
-    photometric = _resolve_photometric(config.get("photometric_kwargs"))
-    if jitter is not None and photometric is not None:
-        raise ValueError("color_jitter_kwargs and photometric_kwargs are exclusive")
-    if jitter is not None:
-        jitter = resolve_callable_config(
-            color_jitter, jitter, path="color_jitter_kwargs", omit={"image", "seed"}
-        )
-    geometry_contract = geometry | {
-        "record_version": 1,
-        "image_interpolation": "bilinear",
-        "mask_interpolation": "nearest",
-        "resize_alignment": "half_pixel",
-        "dimension_rounding": "half_up_min_one",
-        "padding_placement": "bottom_right",
+    jitter, photometric = _resolve_color_options(config)
+    geometry_contract = _recorded_geometry_contract(geometry, is_training) | {
         "image_padding_domain": "rgb_0_255_before_normalization",
         "mask_padding_value": geometry["ignore_value"],
-        "resize_policy": (
-            "uniform_fit_scale"
-            if geometry["train_scale_range"] is not None
-            else "uniform_integer_short_side"
-        )
-        if is_training
-        else "long_side_cap",
     }
     size = (
-        (geometry["train_crop_size"] + geometry["patch_size"] - 1)
-        // geometry["patch_size"]
-    ) * geometry["patch_size"]
-    shape = (
-        ([3, size, size] if post["permute_image"] else [size, size, 3])
+        _train_input_size(geometry["train_crop_size"], geometry["patch_size"])
         if is_training
         else None
     )
     return {
-        "configuration": {
-            key: copy.deepcopy(value)
-            for key, value in config.items()
-            if key != "model_input"
-        },
+        "configuration": _configuration_snapshot(config),
         "stages": {
             "preprocess": {
                 "active": True,
@@ -729,13 +702,9 @@ def _resolve_dense_segmentation_config(config, is_training):
                 ),
             },
         },
-        "model_input": {
-            "output_key": "image",
-            "layout": "bchw" if post["permute_image"] else "bhwc",
-            "dtype": "float32",
-            "static_shape": shape,
-            "normalization": normalization,
-        },
+        "model_input": _image_model_input(
+            size, permute_image=post["permute_image"], normalization=normalization
+        ),
         "requirements": {"num_classes": False},
     }
 
@@ -781,10 +750,7 @@ def _panoptic_options(class_values, thing_class_values, max_segments, void_value
 
 
 def _resolve_panoptic_config(config, is_training):
-    import math
-
-    from justdata.vision.augmentations.color import color_jitter
-    from justdata.vision.geometry import PanopticGeometryConfig
+    from justdata.vision.geometry import PanopticGeometryConfig, _train_input_size
     from justdata.vision.tasks.panoptic import make_panoptic_postprocessing
 
     reject_unknown_keys(
@@ -824,51 +790,19 @@ def _resolve_panoptic_config(config, is_training):
         path="postproc_kwargs",
         omit={"config", "geometry"},
     )
-    normalization = _normalization_contract(post)
-    if normalization["kind"] == "mean_std" and (
-        any(not math.isfinite(v) for row in post["normalization_params"] for v in row)
-        or any(v <= 0 for v in post["normalization_params"][1])
-    ):
-        raise ValueError("normalization_params must be finite with positive std")
-    for key in ("normalize_image", "permute_image", "emit_panoptic_targets"):
-        if type(post[key]) is not bool:
-            raise ValueError(f"postproc_kwargs.{key} must be boolean")
+    normalization = _validate_recorded_postprocess(
+        post, ("normalize_image", "permute_image", "emit_panoptic_targets")
+    )
     keep_original = config.get("keep_original_annotations", False)
     if type(keep_original) is not bool:
         raise ValueError("keep_original_annotations must be boolean")
-    jitter = config.get("color_jitter_kwargs")
-    photometric = _resolve_photometric(config.get("photometric_kwargs"))
-    if jitter is not None and photometric is not None:
-        raise ValueError("color_jitter_kwargs and photometric_kwargs are exclusive")
-    if jitter is not None:
-        jitter = resolve_callable_config(
-            color_jitter, jitter, path="color_jitter_kwargs", omit={"image", "seed"}
-        )
+    jitter, photometric = _resolve_color_options(config)
     size = (
-        (geometry["train_crop_size"] + geometry["patch_size"] - 1)
-        // geometry["patch_size"]
-        * geometry["patch_size"]
-    )
-    shape = (
-        ([3, size, size] if post["permute_image"] else [size, size, 3])
+        _train_input_size(geometry["train_crop_size"], geometry["patch_size"])
         if is_training
         else None
     )
-    geometry_contract = {
-        **geometry,
-        "record_version": 1,
-        "resize_policy": (
-            "uniform_fit_scale"
-            if geometry["train_scale_range"] is not None
-            else "uniform_integer_short_side"
-        )
-        if is_training
-        else "long_side_cap",
-        "image_interpolation": "bilinear",
-        "mask_interpolation": "nearest",
-        "resize_alignment": "half_pixel",
-        "dimension_rounding": "half_up_min_one",
-        "padding_placement": "bottom_right",
+    geometry_contract = _recorded_geometry_contract(geometry, is_training) | {
         "void_value": panoptic["void_value"],
     }
     return {
@@ -916,13 +850,9 @@ def _resolve_panoptic_config(config, is_training):
                 else None,
             },
         },
-        "model_input": {
-            "output_key": "image",
-            "layout": "bchw" if post["permute_image"] else "bhwc",
-            "dtype": "float32",
-            "static_shape": shape,
-            "normalization": normalization,
-        },
+        "model_input": _image_model_input(
+            size, permute_image=post["permute_image"], normalization=normalization
+        ),
         "requirements": {"num_classes": False},
     }
 

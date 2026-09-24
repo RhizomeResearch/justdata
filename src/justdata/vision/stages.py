@@ -3,7 +3,9 @@ from typing import Literal
 
 import tensorflow as tf
 
+from justdata.vision.augmentations.color import color_jitter, photometric_distortion
 from justdata.vision.augmentations.registry import get_crop_strategy
+from justdata.vision.geometry import _train_input_size
 from justdata.vision.transforms import nhwc_to_nchw, normalize, resize_image
 
 
@@ -254,6 +256,68 @@ def resize_and_normalize(
 
         res[key] = image
     return sample | res
+
+
+def recorded_view_augmentations(
+    replay_view, *, color_jitter_kwargs=None, photometric_kwargs=None
+):
+    """Wrap one sampled geometry replay with optional RGB augmentation.
+
+    ``replay_view(sample, seed)`` samples a training geometry record from
+    ``seed`` and replays it. Photometric distortion runs before geometry, so
+    padding keeps its configured value; color jitter runs after it.
+    """
+
+    def augmentations(sample, seed):
+        geometry_seed, color_seed = tf.unstack(
+            tf.random.experimental.stateless_split(seed, 2)
+        )
+        if photometric_kwargs is not None:
+            sample = sample | {
+                "image": photometric_distortion(
+                    sample["image"], color_seed, **photometric_kwargs
+                )
+            }
+        sample = replay_view(sample, geometry_seed)
+        if color_jitter_kwargs is not None:
+            sample = sample | {
+                "image": color_jitter(
+                    sample["image"], color_seed, **color_jitter_kwargs
+                )
+            }
+        return sample
+
+    return augmentations
+
+
+def finish_recorded_view(
+    sample: dict,
+    geometry,
+    *,
+    is_training: bool,
+    label_keys: tuple[str, ...],
+    normalize_image: bool,
+    normalization_params,
+    permute_image: bool,
+) -> dict:
+    """Fix static training view shapes, then normalize and permute RGB once."""
+    if is_training:
+        size = _train_input_size(geometry.train_crop_size, geometry.patch_size)
+        sample["image"].set_shape([size, size, 3])
+        for key in (
+            *label_keys,
+            "source_valid_mask",
+            "pixel_valid_mask",
+            "annotation_valid_mask",
+        ):
+            if key in sample:
+                sample[key].set_shape([size, size])
+    image = tf.cast(sample["image"], tf.float32)
+    if normalize_image:
+        image = normalize(image, *normalization_params)
+    if permute_image:
+        image = nhwc_to_nchw(image)
+    return sample | {"image": image}
 
 
 def apply_crop_strategy(

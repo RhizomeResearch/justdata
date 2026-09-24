@@ -593,7 +593,10 @@ segment IDs use exact nearest-neighbor integer gathers. A crop keeps original se
 invisible segments, and recomputes per-segment `area` and `bbox=[left, top, width, height]` in the view.
 `source_valid_mask` marks image support; `pixel_valid_mask` additionally excludes void, crowds, and unavailable
 annotation. Evaluation is deterministic. `restore_dense_scores` accepts version-1 records from either mode to restore
-floating scores to original image coordinates.
+floating scores to original image coordinates. Outside the pipeline,
+`sample_panoptic_geometry(original_size, PanopticGeometryConfig(...), void_value=..., is_training=..., seed=...)` and
+`replay_panoptic_geometry(original_sample, record, class_values=..., thing_class_values=..., void_value=..., max_segments=...)`
+live beside their semantic counterparts in `justdata.vision.geometry`.
 
 Set `postproc_kwargs={"emit_panoptic_targets": True}` to create fixed-capacity `targets`: `masks` is bool
 `[max_segments, H, W]`, with matching `class_ids`, `class_indices`, `segment_ids`, `is_thing`, `target_valid_mask`,

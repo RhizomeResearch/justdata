@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import tensorflow as tf
 
+from justdata.core.config_resolution import is_positive_int
+
 
 def configure_tensorflow_cpu(
     *, intra_op_threads: int | None = None, inter_op_threads: int | None = None
@@ -17,9 +19,7 @@ def configure_tensorflow_cpu(
         ("intra_op_threads", intra_op_threads),
         ("inter_op_threads", inter_op_threads),
     ):
-        if value is not None and (
-            isinstance(value, bool) or not isinstance(value, int) or value <= 0
-        ):
+        if value is not None and not is_positive_int(value):
             raise ValueError(f"{name} must be a positive integer")
     physical_gpus = tf.config.list_physical_devices("GPU")
     tf.config.set_visible_devices([], "GPU")

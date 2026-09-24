@@ -6,6 +6,11 @@ from collections.abc import Mapping
 from typing import Any, Callable
 
 
+def is_positive_int(value: Any) -> bool:
+    """Return whether ``value`` is a positive ``int``, excluding ``bool``."""
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
 def reject_unknown_keys(
     config: Mapping[str, Any], allowed: set[str], *, path: str
 ) -> None:
@@ -50,4 +55,4 @@ def resolve_callable_config(
     return resolved
 
 
-__all__ = ["reject_unknown_keys", "resolve_callable_config"]
+__all__ = ["is_positive_int", "reject_unknown_keys", "resolve_callable_config"]

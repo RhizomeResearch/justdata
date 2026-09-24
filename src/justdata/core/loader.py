@@ -10,14 +10,95 @@ from loguru import logger
 from justdata import __version__
 from justdata.core.adapters import get_adapter
 from justdata.core.cache import CachePolicy, protected_cache
+from justdata.core.config_resolution import is_positive_int
 from justdata.core.executed_config import ExecutedConfig
-from justdata.core.finalization import _seed_for_index, finalize_dataset
+from justdata.core.finalization import (
+    _seed_for_index,
+    _validate_metadata_options,
+    finalize_dataset,
+)
 from justdata.core.metadata import (
     MetadataSidecar,
     attach_sidecar_mapping,
     attach_sidecar_writer,
 )
 from justdata.core.sources import get_source_loader
+
+
+_STAGE_ORDER = (
+    "fetch_ds",
+    "adapter",
+    "preprocess",
+    "cache",
+    "augment",
+    "shuffle",
+    "postprocess",
+    "batch",
+    "late_augment",
+    "pad",
+    "prefetch",
+)
+# Stages that ``return_raw_ds`` leaves to ``finalize_fn`` or ``finalize_epoch``.
+_RAW_PENDING_STAGES = _STAGE_ORDER[_STAGE_ORDER.index("augment") :]
+# Finalization callbacks that an executed configuration cannot describe.
+_OPAQUE_FINALIZATION_CALLBACKS = frozenset(
+    {"postprocess_fn", "late_augment_fn", "post_postprocess_transform"}
+)
+# Finalization overrides that keep a protected model-input cache valid.
+_PROTECTED_MODEL_CACHE_OVERRIDES = frozenset(
+    {
+        "as_numpy",
+        "prefetch",
+        "map_parallel_calls",
+        "deterministic",
+        "shuffle_buffer",
+        "shuffle_seed",
+        "reshuffle_each_iteration",
+        "drop_remainder",
+        "batch_size",
+        "rng",
+        "late_augment_seed",
+    }
+)
+# Source identities are bound during preparation and cannot change afterwards.
+_SIDECAR_BINDINGS = frozenset(
+    {
+        "sidecar_metadata_path",
+        "metadata_sidecar",
+        "sidecar_metadata_policy",
+        "_sidecar_already_bound",
+    }
+)
+
+
+def _parallelism_label(value: int | None):
+    return "AUTOTUNE" if value is None else value
+
+
+def _prefetch_label(value: bool | int):
+    if value is True:
+        return "AUTOTUNE"
+    if value is False:
+        return "disabled"
+    return value
+
+
+def _resolve_pipeline_config(pipeline, is_training: bool, num_classes: int | None):
+    """Resolve the executed stage contract and bind the runtime ``num_classes``."""
+    resolved = pipeline.resolve_config(is_training)
+    if (
+        resolved.get("requirements", {}).get("num_classes", False)
+        and num_classes is None
+    ):
+        raise ValueError(
+            "num_classes is required by the resolved pipeline configuration"
+        )
+    postprocess_config = (
+        resolved.get("stages", {}).get("postprocess", {}).get("config", {})
+    )
+    if num_classes is not None and "num_classes" in postprocess_config:
+        postprocess_config["num_classes"] = num_classes
+    return resolved
 
 
 def _concatenate_tf_datasets(
@@ -90,11 +171,7 @@ def fetch_ds(
           and that dataset is skipped. The function will attempt to proceed
           with other dataset names.
     """
-    if map_parallel_calls is not None and (
-        isinstance(map_parallel_calls, bool)
-        or not isinstance(map_parallel_calls, int)
-        or map_parallel_calls <= 0
-    ):
+    if map_parallel_calls is not None and not is_positive_int(map_parallel_calls):
         raise ValueError("map_parallel_calls must be positive when provided")
 
     parallel_calls = (
@@ -407,62 +484,32 @@ def _prepare_ds(
             if pipeline is not None
             else "full"
         )
-    if metadata_mode not in {"full", "numeric_only", "none"}:
-        raise ValueError(
-            "metadata_mode must be one of 'full', 'numeric_only', or 'none'."
-        )
-    if sidecar_metadata_path is not None and metadata_sidecar is not None:
-        raise ValueError(
-            "Choose either a sidecar path or an immutable metadata sidecar."
-        )
-    if (
-        sidecar_metadata_path is not None or metadata_sidecar is not None
-    ) and metadata_mode != "numeric_only":
-        raise ValueError("Sidecar transport requires metadata_mode='numeric_only'.")
-    if sidecar_metadata_policy not in {"resume", "create", "overwrite"}:
-        raise ValueError("Unknown sidecar metadata policy.")
-    if metadata_sidecar is not None and not isinstance(
-        metadata_sidecar, MetadataSidecar
-    ):
-        raise TypeError("metadata_sidecar must be a MetadataSidecar.")
-    if sidecar_metadata_path is None and sidecar_metadata_policy != "resume":
-        raise ValueError("Sidecar policy requires a sidecar path.")
+    _validate_metadata_options(
+        metadata_mode, sidecar_metadata_path, metadata_sidecar, sidecar_metadata_policy
+    )
     if metadata_sidecar is not None:
         metadata_sidecar = copy.deepcopy(metadata_sidecar)
 
-    if (
-        isinstance(batch_size, bool)
-        or not isinstance(batch_size, int)
-        or batch_size <= 0
-    ):
+    if not is_positive_int(batch_size):
         raise ValueError("batch_size must be a positive integer")
-    if num_classes is not None and (
-        isinstance(num_classes, bool)
-        or not isinstance(num_classes, int)
-        or num_classes <= 0
-    ):
+    if num_classes is not None and not is_positive_int(num_classes):
         raise ValueError("num_classes must be a positive integer when provided")
     is_training = dataset_type == "train"
-    if is_training:
-        if shuffle_buffer is not None and (
-            isinstance(shuffle_buffer, bool)
-            or not isinstance(shuffle_buffer, int)
-            or shuffle_buffer <= 0
-        ):
-            raise ValueError("shuffle_buffer must be a positive integer for training")
+    if (
+        is_training
+        and shuffle_buffer is not None
+        and not is_positive_int(shuffle_buffer)
+    ):
+        raise ValueError("shuffle_buffer must be a positive integer for training")
 
     for name, value in (
         ("map_parallel_calls", map_parallel_calls),
         ("private_threadpool_size", private_threadpool_size),
         ("max_intra_op_parallelism", max_intra_op_parallelism),
     ):
-        if value is not None and (
-            isinstance(value, bool) or not isinstance(value, int) or value <= 0
-        ):
+        if value is not None and not is_positive_int(value):
             raise ValueError(f"{name} must be a positive integer when provided")
-    if not isinstance(prefetch, bool) and (
-        not isinstance(prefetch, int) or prefetch <= 0
-    ):
+    if not isinstance(prefetch, bool) and not is_positive_int(prefetch):
         raise ValueError("prefetch must be a positive integer or boolean")
     augment_eval = bool(
         pipeline is not None and pipeline.kwargs.get("augment_eval", False)
@@ -528,19 +575,7 @@ def _prepare_ds(
             raise ValueError(
                 "Strict configuration requires a DataPipeline with a config_resolver"
             )
-        resolved_pipeline = pipeline.resolve_config(is_training)
-        if (
-            resolved_pipeline.get("requirements", {}).get("num_classes", False)
-            and num_classes is None
-        ):
-            raise ValueError(
-                "num_classes is required by the resolved pipeline configuration"
-            )
-        postprocess_config = (
-            resolved_pipeline.get("stages", {}).get("postprocess", {}).get("config", {})
-        )
-        if num_classes is not None and "num_classes" in postprocess_config:
-            postprocess_config["num_classes"] = num_classes
+        resolved_pipeline = _resolve_pipeline_config(pipeline, is_training, num_classes)
         if return_config:
             ExecutedConfig.from_dict({"schema_version": 1, **resolved_pipeline})
 
@@ -589,10 +624,6 @@ def _prepare_ds(
         options.threading.max_intra_op_parallelism = max_intra_op_parallelism
 
     ds = ds.with_options(options)
-
-    def seeded_augment(sample):
-        seed = rng.make_seeds(1)[:, 0]
-        return augment_fn(sample, seed=seed)
 
     parallel_calls = (
         tf.data.AUTOTUNE if map_parallel_calls is None else map_parallel_calls
@@ -676,21 +707,9 @@ def _prepare_ds(
                     "Executed configuration export requires a registered "
                     "DataPipeline with a config_resolver"
                 )
-            resolved_pipeline = pipeline.resolve_config(is_training)
-            if (
-                resolved_pipeline.get("requirements", {}).get("num_classes", False)
-                and num_classes is None
-            ):
-                raise ValueError(
-                    "num_classes is required by the resolved pipeline configuration"
-                )
-            postprocess_config = (
-                resolved_pipeline.get("stages", {})
-                .get("postprocess", {})
-                .get("config", {})
+            resolved_pipeline = _resolve_pipeline_config(
+                pipeline, is_training, num_classes
             )
-            if num_classes is not None and "num_classes" in postprocess_config:
-                postprocess_config["num_classes"] = num_classes
         return resolved_pipeline
 
     def executed_config(
@@ -705,12 +724,7 @@ def _prepare_ds(
         resolved = pipeline_snapshot()
         supplied_finalization = finalization_overrides or {}
         final = finalize_defaults | supplied_finalization
-        callback_overrides = {
-            "postprocess_fn",
-            "late_augment_fn",
-            "post_postprocess_transform",
-        }.intersection(supplied_finalization)
-        if callback_overrides:
+        if _OPAQUE_FINALIZATION_CALLBACKS.intersection(supplied_finalization):
             raise ValueError(
                 "return_config does not support opaque finalization callbacks"
             )
@@ -748,7 +762,6 @@ def _prepare_ds(
             "presets_applied": bool(getattr(pipeline, "apply_presets", False)),
         }
         effective_is_training = bool(final.get("is_training", is_training))
-        final_map_parallel_calls = final.get("map_parallel_calls", map_parallel_calls)
         return ExecutedConfig.from_dict(
             {
                 "schema_version": 1,
@@ -758,32 +771,10 @@ def _prepare_ds(
                 "stages": stages,
                 "model_input": resolved.get("model_input"),
                 "execution": {
-                    "stage_order": [
-                        "fetch_ds",
-                        "adapter",
-                        "preprocess",
-                        "cache",
-                        "augment",
-                        "shuffle",
-                        "postprocess",
-                        "batch",
-                        "late_augment",
-                        "pad",
-                        "prefetch",
-                    ],
+                    "stage_order": _STAGE_ORDER,
                     "preparation": preparation,
                     "pending_stages": (
-                        [
-                            "augment",
-                            "shuffle",
-                            "postprocess",
-                            "batch",
-                            "late_augment",
-                            "pad",
-                            "prefetch",
-                        ]
-                        if preparation == "raw"
-                        else []
+                        _RAW_PENDING_STAGES if preparation == "raw" else ()
                     ),
                     "dataset_type": dataset_type,
                     "is_training": effective_is_training,
@@ -867,25 +858,15 @@ def _prepare_ds(
                         },
                     },
                     "limits": {
-                        "map_parallel_calls": (
-                            "AUTOTUNE"
-                            if final_map_parallel_calls is None
-                            else final_map_parallel_calls
+                        "map_parallel_calls": _parallelism_label(
+                            final.get("map_parallel_calls", map_parallel_calls)
                         ),
-                        "preparation_map_parallel_calls": (
-                            "AUTOTUNE"
-                            if map_parallel_calls is None
-                            else map_parallel_calls
+                        "preparation_map_parallel_calls": _parallelism_label(
+                            map_parallel_calls
                         ),
                         "private_threadpool_size": private_threadpool_size,
                         "max_intra_op_parallelism": max_intra_op_parallelism,
-                        "prefetch": (
-                            "AUTOTUNE"
-                            if final.get("prefetch", prefetch) is True
-                            else "disabled"
-                            if final.get("prefetch", prefetch) is False
-                            else final.get("prefetch", prefetch)
-                        ),
+                        "prefetch": _prefetch_label(final.get("prefetch", prefetch)),
                     },
                     "deterministic": bool(final.get("deterministic", deterministic)),
                     "preparation_deterministic": deterministic,
@@ -900,44 +881,20 @@ def _prepare_ds(
                 "Protected model-input caching requires the prepared dataset"
             )
         if cache_policy is not None and cache_model_inputs:
-            safe_overrides = {
-                "as_numpy",
-                "prefetch",
-                "map_parallel_calls",
-                "deterministic",
-                "shuffle_buffer",
-                "shuffle_seed",
-                "reshuffle_each_iteration",
-                "drop_remainder",
-                "batch_size",
-                "rng",
-                "late_augment_seed",
-            }
-            if forbidden := overrides.keys() - safe_overrides:
+            if forbidden := overrides.keys() - _PROTECTED_MODEL_CACHE_OVERRIDES:
                 raise ValueError(
                     "Protected model-input cache cannot override "
                     + ", ".join(sorted(forbidden))
                 )
         if cache_policy is not None and (
-            {
-                "post_postprocess_transform",
-                "postprocess_fn",
-                "late_augment_fn",
-                "_protected_model_cache",
-            }
+            (_OPAQUE_FINALIZATION_CALLBACKS | {"_protected_model_cache"})
             & overrides.keys()
         ):
             raise ValueError(
                 "Protected caching does not accept unrecorded finalization transforms"
             )
         if finalize_defaults["_sidecar_already_bound"]:
-            locked = {
-                "sidecar_metadata_path",
-                "metadata_sidecar",
-                "sidecar_metadata_policy",
-                "_sidecar_already_bound",
-            }.intersection(overrides)
-            if locked:
+            if locked := _SIDECAR_BINDINGS.intersection(overrides):
                 raise ValueError(
                     "Source identity mapping is fixed during finalization: "
                     + ", ".join(sorted(locked))
@@ -1002,16 +959,16 @@ def _prepare_ds(
                 deterministic=deterministic,
             )
 
+        epoch_as_numpy = default_as_numpy if as_numpy is None else as_numpy
+        epoch_prefetch = finalize_defaults["prefetch"] if prefetch is None else prefetch
         result = finalize_fn(
             epoch_ds,
             rng=None,
             late_augment_seed=late_augment_seed,
             shuffle_seed=seed,
             reshuffle_each_iteration=False,
-            as_numpy=default_as_numpy if as_numpy is None else as_numpy,
-            prefetch=prefetch
-            if prefetch is not None
-            else finalize_defaults["prefetch"],
+            as_numpy=epoch_as_numpy,
+            prefetch=epoch_prefetch,
         )
         if not return_config:
             return result
@@ -1021,16 +978,14 @@ def _prepare_ds(
                 preparation="epoch",
                 epoch_seed=seed,
                 reshuffle_each_iteration=False,
-                effective_as_numpy=default_as_numpy if as_numpy is None else as_numpy,
+                effective_as_numpy=epoch_as_numpy,
                 augment_is_stateless=augment_is_stateless,
                 finalization_overrides={
                     "rng": None,
                     "shuffle_seed": seed,
                     "reshuffle_each_iteration": False,
-                    "as_numpy": default_as_numpy if as_numpy is None else as_numpy,
-                    "prefetch": prefetch
-                    if prefetch is not None
-                    else finalize_defaults["prefetch"],
+                    "as_numpy": epoch_as_numpy,
+                    "prefetch": epoch_prefetch,
                 },
             ),
         )
@@ -1051,6 +1006,10 @@ def _prepare_ds(
         return result
 
     if apply_augmentation:
+
+        def seeded_augment(sample):
+            return augment_fn(sample, seed=rng.make_seeds(1)[:, 0])
+
         ds = ds.map(
             seeded_augment,
             num_parallel_calls=1 if deterministic else parallel_calls,

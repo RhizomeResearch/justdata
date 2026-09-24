@@ -2,6 +2,8 @@
 
 import tensorflow as tf
 
+from justdata.vision.encodings.semantic_targets import _CATEGORICAL_DTYPES
+
 
 def decode_panoptic_rgb(rgb):
     """Decode COCO/LaRS RGB segment IDs without floating-point conversion."""
@@ -58,10 +60,42 @@ def validate_panoptic_sample(
     return result
 
 
+def _valid_sorted_segments(segments):
+    """Return valid segment IDs, categories, and crowd flags ordered by ID."""
+    ids, categories, crowd = (
+        tf.boolean_mask(segments[key], segments["valid_mask"])
+        for key in ("segment_ids", "category_ids", "is_crowd")
+    )
+    order = tf.argsort(ids, stable=True)
+    return tuple(tf.gather(value, order) for value in (ids, categories, crowd))
+
+
+def _pad_segment_table(ids, categories, crowd, max_segments, **columns):
+    """Pad a segment table to its static capacity, with valid rows first."""
+    pad = max_segments - tf.size(ids)
+
+    def padded(value):
+        paddings = [[0, pad]] + [[0, 0]] * (value.shape.rank - 1)
+        return tf.ensure_shape(
+            tf.pad(value, paddings), [max_segments, *value.shape[1:]]
+        )
+
+    table = {
+        "segment_ids": padded(ids),
+        "category_ids": padded(categories),
+        "is_crowd": padded(crowd),
+        "valid_mask": tf.ensure_shape(
+            tf.concat([tf.ones_like(ids, tf.bool), tf.zeros([pad], tf.bool)], 0),
+            [max_segments],
+        ),
+    }
+    return table | {key: padded(value) for key, value in columns.items()}
+
+
 def _validate_map_segments(mask, source, classes, void_value, max_segments):
     """Check exact map references and normalize a table without allocating RGB."""
     mask = tf.convert_to_tensor(mask)
-    if mask.dtype not in (tf.uint8, tf.uint16, tf.int16, tf.int32, tf.int64):
+    if mask.dtype not in _CATEGORICAL_DTYPES:
         raise TypeError("panoptic_mask must have an integer categorical dtype")
     mask = tf.ensure_shape(mask, [None, None])
     mask = tf.cast(mask, tf.int64)
@@ -85,9 +119,7 @@ def _validate_map_segments(mask, source, classes, void_value, max_segments):
         tf.debugging.assert_equal(
             tf.shape(value)[0], tf.shape(segments["segment_ids"])[0]
         )
-    ids = tf.boolean_mask(segments["segment_ids"], segments["valid_mask"])
-    categories = tf.boolean_mask(segments["category_ids"], segments["valid_mask"])
-    crowd = tf.boolean_mask(segments["is_crowd"], segments["valid_mask"])
+    ids, categories, crowd = _valid_sorted_segments(segments)
     tf.debugging.assert_less_equal(
         tf.size(ids), max_segments, message="segment capacity exceeded"
     )
@@ -105,34 +137,14 @@ def _validate_map_segments(mask, source, classes, void_value, max_segments):
     unique_ids = tf.unique(tf.reshape(mask, [-1])).y
     present = tf.sort(tf.boolean_mask(unique_ids, unique_ids != void_value))
     tf.debugging.assert_equal(
-        present, tf.sort(ids), message="panoptic map and segment table disagree"
+        present, ids, message="panoptic map and segment table disagree"
     )
-    order = tf.argsort(ids, stable=True)
-    ids, categories, crowd = (
-        tf.gather(value, order) for value in (ids, categories, crowd)
-    )
-    pad = max_segments - tf.size(ids)
-    padded = {
-        "segment_ids": tf.ensure_shape(tf.pad(ids, [[0, pad]]), [max_segments]),
-        "category_ids": tf.ensure_shape(tf.pad(categories, [[0, pad]]), [max_segments]),
-        "is_crowd": tf.ensure_shape(tf.pad(crowd, [[0, pad]]), [max_segments]),
-        "valid_mask": tf.ensure_shape(
-            tf.concat([tf.ones_like(ids, tf.bool), tf.zeros([pad], tf.bool)], 0),
-            [max_segments],
-        ),
-    }
-    return mask, padded
+    return mask, _pad_segment_table(ids, categories, crowd, max_segments)
 
 
 def _lookup(mask, segments):
     """Map each segment ID to its category and crowd flag."""
-    ids = tf.boolean_mask(segments["segment_ids"], segments["valid_mask"])
-    categories = tf.boolean_mask(segments["category_ids"], segments["valid_mask"])
-    crowd = tf.boolean_mask(segments["is_crowd"], segments["valid_mask"])
-    order = tf.argsort(ids, stable=True)
-    ids, categories, crowd = (
-        tf.gather(value, order) for value in (ids, categories, crowd)
-    )
+    ids, categories, crowd = _valid_sorted_segments(segments)
     flat = tf.reshape(mask, [-1])
 
     def nonempty():

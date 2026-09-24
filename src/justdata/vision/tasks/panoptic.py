@@ -6,10 +6,12 @@ from justdata.vision.encodings.panoptic_targets import (
     validate_panoptic_sample,
     with_panoptic_targets,
 )
-from justdata.vision.geometry import sample_panoptic_geometry
-from justdata.vision.panoptic_geometry import replay_panoptic_geometry
-from justdata.vision.stages import normalize_image_format
-from justdata.vision.transforms import nhwc_to_nchw, normalize
+from justdata.vision.geometry import replay_panoptic_geometry, sample_panoptic_geometry
+from justdata.vision.stages import (
+    finish_recorded_view,
+    normalize_image_format,
+    recorded_view_augmentations,
+)
 
 
 def make_panoptic_preprocessing(
@@ -45,34 +47,21 @@ def make_panoptic_preprocessing(
 def make_panoptic_augmentations(
     config, geometry, *, color_jitter_kwargs=None, photometric_kwargs=None
 ):
-    from justdata.vision.augmentations.color import (
-        color_jitter,
-        photometric_distortion,
-    )
-
-    def augmentations(sample, seed):
-        seeds = tf.random.experimental.stateless_split(seed, 2)
-        if photometric_kwargs is not None:
-            sample = sample | {
-                "image": photometric_distortion(
-                    sample["image"], seeds[1], **photometric_kwargs
-                )
-            }
+    def replay_view(sample, seed):
         record = sample_panoptic_geometry(
             tf.shape(sample["image"])[:2],
             geometry,
             void_value=config["void_value"],
             is_training=True,
-            seed=seeds[0],
+            seed=seed,
         )
-        sample = replay_panoptic_geometry(sample, record, **config)
-        if color_jitter_kwargs is not None:
-            sample = sample | {
-                "image": color_jitter(sample["image"], seeds[1], **color_jitter_kwargs)
-            }
-        return sample
+        return replay_panoptic_geometry(sample, record, **config)
 
-    return augmentations
+    return recorded_view_augmentations(
+        replay_view,
+        color_jitter_kwargs=color_jitter_kwargs,
+        photometric_kwargs=photometric_kwargs,
+    )
 
 
 def make_panoptic_postprocessing(
@@ -94,27 +83,15 @@ def make_panoptic_postprocessing(
                 is_training=False,
             )
             sample = replay_panoptic_geometry(sample, record, **config)
-        else:
-            size = (
-                (geometry.train_crop_size + geometry.patch_size - 1)
-                // geometry.patch_size
-                * geometry.patch_size
-            )
-            sample["image"].set_shape([size, size, 3])
-            for key in (
-                "panoptic_mask",
-                "source_valid_mask",
-                "pixel_valid_mask",
-                "annotation_valid_mask",
-            ):
-                if key in sample:
-                    sample[key].set_shape([size, size])
-        image = tf.cast(sample["image"], tf.float32)
-        if normalize_image:
-            image = normalize(image, *normalization_params)
-        if permute_image:
-            image = nhwc_to_nchw(image)
-        sample = sample | {"image": image}
+        sample = finish_recorded_view(
+            sample,
+            geometry,
+            is_training=is_training,
+            label_keys=("panoptic_mask",),
+            normalize_image=normalize_image,
+            normalization_params=normalization_params,
+            permute_image=permute_image,
+        )
         if emit_panoptic_targets:
             sample = with_panoptic_targets(sample, **config)
         return sample

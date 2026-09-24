@@ -12,7 +12,13 @@ from typing import Any
 import tensorflow as tf
 
 from justdata.core.executed_config import ExecutedConfig
-from justdata.core.inventory import AdmittedInventory, load_inventory, open_inventory
+from justdata.core.config_resolution import is_positive_int
+from justdata.core.inventory import (
+    AdmittedInventory,
+    _manifest_digest,
+    load_inventory,
+    open_inventory,
+)
 from justdata.core.registry import DataPipeline
 
 
@@ -81,9 +87,7 @@ class ReplayState:
                     "invalid_replay_cursor", "state_format", f"Invalid {name}."
                 )
         if (
-            isinstance(self.batch_size, bool)
-            or not isinstance(self.batch_size, int)
-            or self.batch_size <= 0
+            not is_positive_int(self.batch_size)
             or not isinstance(self.drop_remainder, bool)
             or self.next_batch > self.total_batches
         ):
@@ -211,16 +215,11 @@ def load_replay_epoch(
         ("private_threadpool_size", private_threadpool_size),
         ("max_intra_op_parallelism", max_intra_op_parallelism),
     ):
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        if not is_positive_int(value):
             raise ValueError(f"{name} must be a positive integer")
     if not isinstance(callbacks_are_stateless, bool):
         raise TypeError("callbacks_are_stateless must be boolean")
-    if prefetch is True or (
-        prefetch is not False
-        and (
-            isinstance(prefetch, bool) or not isinstance(prefetch, int) or prefetch <= 0
-        )
-    ):
+    if prefetch is not False and not is_positive_int(prefetch):
         raise ValueError("Replay prefetch must be disabled or a positive integer")
     if not callbacks_are_stateless:
         _unsupported(
@@ -329,12 +328,9 @@ def load_replay_epoch(
         if drop_remainder
         else (total_examples + batch_size - 1) // batch_size
     )
-    manifest_digest = hashlib.sha256(
-        (verified.path / "manifest.json").read_bytes()
-    ).hexdigest()
     expected = ReplayState(
         schema=_SCHEMA,
-        inventory_digest=manifest_digest,
+        inventory_digest=_manifest_digest(verified),
         config_digest=hashlib.sha256(config.to_bytes()).hexdigest(),
         run_seed=seed,
         epoch=epoch,

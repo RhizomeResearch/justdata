@@ -10,6 +10,17 @@ from dataclasses import asdict, dataclass
 
 import tensorflow as tf
 
+from justdata.vision.encodings.panoptic_targets import (
+    _lookup,
+    _pad_segment_table,
+    validate_panoptic_sample,
+)
+from justdata.vision.encodings.semantic_targets import (
+    _assert_declared_labels,
+    _categorical_mask,
+    _class_contract,
+)
+
 
 @dataclass(frozen=True)
 class DenseGeometryConfig:
@@ -37,17 +48,7 @@ class DenseGeometryConfig:
     image_antialias: bool = True
 
     def __post_init__(self):
-        values = tuple(self.class_values)
-        if not values or any(type(v) is not int for v in values):
-            raise ValueError("class_values must contain integer class IDs")
-        if len(set(values)) != len(values):
-            raise ValueError("class_values must be unique")
-        if type(self.ignore_value) is not int or self.ignore_value in values:
-            raise ValueError(
-                "ignore_value must be an integer distinct from class_values"
-            )
-        if any(not -(2**31) <= v < 2**31 for v in (*values, self.ignore_value)):
-            raise ValueError("class_values and ignore_value must fit int32")
+        values = _class_contract(self.class_values, self.ignore_value)
         for name in ("train_crop_size", "eval_long_side", "patch_size"):
             if type(getattr(self, name)) is not int or getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be a positive integer")
@@ -117,12 +118,20 @@ class PanopticGeometryConfig:
     image_antialias: bool = True
 
     def __post_init__(self):
-        validated = DenseGeometryConfig(
-            class_values=(0,), ignore_value=-1, **asdict(self)
-        )
+        validated = _spatial_config(self)
         object.__setattr__(self, "train_resize_range", validated.train_resize_range)
         object.__setattr__(self, "train_scale_range", validated.train_scale_range)
         object.__setattr__(self, "image_pad_value", validated.image_pad_value)
+
+
+def _spatial_config(config: PanopticGeometryConfig) -> DenseGeometryConfig:
+    """Express panoptic spatial settings through the semantic implementation."""
+    return DenseGeometryConfig(class_values=(0,), ignore_value=-1, **asdict(config))
+
+
+def _train_input_size(train_crop_size: int, patch_size: int) -> int:
+    """Side of a square training view: the crop padded to the patch multiple."""
+    return (train_crop_size + patch_size - 1) // patch_size * patch_size
 
 
 def _bottom_right(amount):
@@ -216,9 +225,8 @@ def sample_panoptic_geometry(
     original_size, config: PanopticGeometryConfig, *, void_value, is_training, seed=None
 ):
     """Sample version-1 geometry with a panoptic label contract."""
-    spatial = DenseGeometryConfig(class_values=(0,), ignore_value=-1, **asdict(config))
     record = sample_dense_geometry(
-        original_size, spatial, is_training=is_training, seed=seed
+        original_size, _spatial_config(config), is_training=is_training, seed=seed
     )
     return record | {
         "mask_fill_value": tf.constant(void_value, tf.int64),
@@ -274,46 +282,17 @@ def _check_record(record):
     return record
 
 
-def _mask_2d(mask):
-    mask = tf.convert_to_tensor(mask)
-    if mask.dtype not in (tf.uint8, tf.uint16, tf.int16, tf.int32, tf.int64):
-        raise TypeError(
-            "categorical mask must have uint8/uint16/int16/int32/int64 dtype"
-        )
-    if mask.shape.rank == 3:
-        mask = tf.squeeze(mask, axis=-1)
-    return tf.ensure_shape(mask, [None, None])
-
-
 def validate_dense_sample(sample, class_values, ignore_value):
     """Check HWC RGB and integer HW/HW1 masks before any resampling or crop."""
     image = tf.ensure_shape(sample["image"], [None, None, 3])
     tf.debugging.assert_positive(tf.shape(image)[:2])
     result = sample | {"image": image}
     if "mask" in sample:
-        mask = _mask_2d(sample["mask"])
+        mask = _categorical_mask(sample["mask"])
         tf.debugging.assert_equal(
             tf.shape(mask), tf.shape(image)[:2], message="image/mask size mismatch"
         )
-        fill = tf.cast(ignore_value, tf.int64)
-        tf.debugging.assert_greater_equal(
-            fill,
-            tf.constant(mask.dtype.min, tf.int64),
-            message="ignore value does not fit mask dtype",
-        )
-        tf.debugging.assert_less_equal(
-            fill,
-            tf.constant(mask.dtype.max, tf.int64),
-            message="ignore value does not fit mask dtype",
-        )
-        allowed = tf.concat([tf.cast(class_values, tf.int64), tf.reshape(fill, [1])], 0)
-        labels = tf.unique(tf.reshape(tf.cast(mask, tf.int64), [-1])).y
-        valid = tf.reduce_any(labels[:, None] == allowed[None, :], axis=1)
-        tf.debugging.assert_equal(
-            tf.reduce_all(valid),
-            True,
-            message="mask contains undeclared class/ignore values",
-        )
+        _assert_declared_labels(mask, class_values, ignore_value)
         result["mask"] = mask
     if "annotation_valid_mask" in sample:
         valid = tf.convert_to_tensor(sample["annotation_valid_mask"])
@@ -437,6 +416,93 @@ def _replay_spatial(sample, record):
     return result, categorical
 
 
+def _visible_segments(mask, segments, max_segments):
+    """Keep segments visible in a replayed view and recompute area and bbox."""
+    flat = tf.reshape(mask, [-1])
+    width = tf.shape(mask)[1]
+    unique, index = tf.unique(flat)
+    size = tf.size(unique)
+    counts = tf.math.unsorted_segment_sum(tf.ones_like(index), index, size)
+    rows = tf.range(tf.size(flat)) // width
+    cols = tf.range(tf.size(flat)) % width
+    top = tf.math.unsorted_segment_min(rows, index, size)
+    left = tf.math.unsorted_segment_min(cols, index, size)
+    bottom = tf.math.unsorted_segment_max(rows, index, size)
+    right = tf.math.unsorted_segment_max(cols, index, size)
+    order = tf.argsort(unique, stable=True)
+    sorted_ids = tf.gather(unique, order)
+    source_ids = segments["segment_ids"]
+    pos = tf.minimum(
+        tf.searchsorted(sorted_ids, source_ids, out_type=tf.int32), size - 1
+    )
+    # Row of each source segment in the per-ID statistics above.
+    slot = tf.gather(order, pos)
+    found = (tf.gather(sorted_ids, pos) == source_ids) & segments["valid_mask"]
+    areas = tf.where(found, tf.gather(counts, slot), 0)
+    box_left, box_top = tf.gather(left, slot), tf.gather(top, slot)
+    boxes = tf.stack(
+        [
+            box_left,
+            box_top,
+            tf.gather(right, slot) - box_left + 1,
+            tf.gather(bottom, slot) - box_top + 1,
+        ],
+        axis=-1,
+    )
+    boxes = tf.where(found[:, None], boxes, 0)
+    kept = found & (areas > 0)
+    return _pad_segment_table(
+        tf.boolean_mask(source_ids, kept),
+        tf.boolean_mask(segments["category_ids"], kept),
+        tf.boolean_mask(segments["is_crowd"], kept),
+        max_segments,
+        area=tf.boolean_mask(areas, kept),
+        bbox=tf.boolean_mask(boxes, kept),
+    )
+
+
+def replay_panoptic_geometry(
+    sample, record, *, class_values, thing_class_values, void_value, max_segments
+):
+    """Replay a version-1 record, including integer map and crowd validity."""
+    record = _check_record(record)
+    tf.debugging.assert_equal(
+        tf.size(record["class_values"]),
+        0,
+        message="panoptic geometry must not contain semantic class values",
+    )
+    if record["mask_fill_value"].dtype != tf.int64:
+        raise TypeError("panoptic geometry mask fill must be int64")
+    tf.debugging.assert_equal(
+        record["mask_fill_value"],
+        tf.cast(void_value, tf.int64),
+        message="panoptic geometry void value mismatch",
+    )
+    sample = validate_panoptic_sample(
+        sample,
+        class_values=class_values,
+        thing_class_values=thing_class_values,
+        void_value=void_value,
+        max_segments=max_segments,
+    )
+    result, categorical = _replay_spatial(sample, record)
+    mask = categorical(sample["panoptic_mask"], void_value)
+    segments = _visible_segments(mask, sample["segments"], max_segments)
+    support = result["source_valid_mask"]
+    valid = support & (mask != void_value)
+    if "annotation_valid_mask" in sample:
+        annotation = categorical(sample["annotation_valid_mask"], False)
+        result["annotation_valid_mask"] = annotation
+        valid &= annotation
+    _, crowd = _lookup(mask, segments)
+    valid &= ~crowd
+    return result | {
+        "panoptic_mask": mask,
+        "segments": segments,
+        "pixel_valid_mask": valid,
+    }
+
+
 def _validate_scores(scores):
     scores = tf.convert_to_tensor(scores)
     if not scores.dtype.is_floating:
@@ -507,6 +573,7 @@ __all__ = [
     "sample_panoptic_geometry",
     "validate_dense_sample",
     "replay_dense_geometry",
+    "replay_panoptic_geometry",
     "restore_dense_scores",
     "restore_dense_predictions",
 ]

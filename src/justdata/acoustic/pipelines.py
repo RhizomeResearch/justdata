@@ -32,6 +32,14 @@ _ACOUSTIC_TOP_LEVEL = {
     "train_augment",
     "waveform_augmentations",
 }
+_FEATURE_DTYPES = {"float32", "float16", "bfloat16"}
+# Position of the time axis in one example for each feature layout.
+_TIME_AXIS = {"btf": 0, "bft": 1, "bcft": 2, "btfc": 0}
+
+
+def _validate_dtype(dtype):
+    if dtype not in _FEATURE_DTYPES:
+        raise ValueError("pipeline.dtype must be 'float32', 'float16', or 'bfloat16'")
 
 
 def _validate_dataclass_mapping(cls, value, *, path, nested=None):
@@ -99,9 +107,10 @@ def _resolve_acoustic_config(config, is_training, *, implementation="default"):
     augment_eval = bool(config.get("augment_eval", False))
     apply_augmentation = is_training or augment_eval
 
+    preprocess_config = None
     if preprocess is not None:
         preproc.setdefault("config", preprocess)
-        AudioPreprocessConfig.from_dict(preprocess)
+        preprocess_config = AudioPreprocessConfig.from_dict(preprocess)
     aug.setdefault("is_training", is_training)
     aug.setdefault("augment_eval", augment_eval)
     late.setdefault("is_training", is_training)
@@ -138,10 +147,7 @@ def _resolve_acoustic_config(config, is_training, *, implementation="default"):
         if layout is None:
             raise ValueError("pipeline.layout is required when frontend is configured")
         dtype = config.get("dtype", "float32")
-        if dtype not in {"float32", "float16", "bfloat16"}:
-            raise ValueError(
-                "pipeline.dtype must be 'float32', 'float16', or 'bfloat16'"
-            )
+        _validate_dtype(dtype)
         output_kind = frontend_output_kind(frontend_config)
         valid_layouts = (
             {"bt", "btc"}
@@ -168,20 +174,17 @@ def _resolve_acoustic_config(config, is_training, *, implementation="default"):
             raise ValueError(
                 "pipeline.target_sample_rate must be a positive integer when set"
             )
-        if preprocess is not None and target_sample_rate is not None:
-            preprocess_sample_rate = AudioPreprocessConfig.from_dict(
-                preprocess
-            ).target_sample_rate
-            if preprocess_sample_rate != target_sample_rate:
-                raise ValueError(
-                    "pipeline.target_sample_rate must match "
-                    "preprocess.target_sample_rate"
-                )
+        if (
+            preprocess_config is not None
+            and target_sample_rate is not None
+            and preprocess_config.target_sample_rate != target_sample_rate
+        ):
+            raise ValueError(
+                "pipeline.target_sample_rate must match preprocess.target_sample_rate"
+            )
         effective_sample_rate = target_sample_rate
-        if effective_sample_rate is None and preprocess is not None:
-            effective_sample_rate = AudioPreprocessConfig.from_dict(
-                preprocess
-            ).target_sample_rate
+        if effective_sample_rate is None and preprocess_config is not None:
+            effective_sample_rate = preprocess_config.target_sample_rate
         if (
             effective_sample_rate is not None
             and frontend_config.stft is not None
@@ -354,9 +357,8 @@ def _resolve_ast_config(config, is_training):
     frontend = FrontendConfig.from_dict(config.get("frontend") or ast_frontend())
     layout = config.get("layout") or "btf"
     dtype = config.get("dtype", "float32")
-    if dtype not in {"float32", "float16", "bfloat16"}:
-        raise ValueError("pipeline.dtype must be 'float32', 'float16', or 'bfloat16'")
-    if layout not in {"btf", "bft", "bcft", "btfc"}:
+    _validate_dtype(dtype)
+    if layout not in _TIME_AXIS:
         raise ValueError(f"pipeline.layout {layout!r} is invalid for AST output")
 
     ast = {}
@@ -378,12 +380,10 @@ def _resolve_ast_config(config, is_training):
             "by the AST pipeline"
         )
     else:
-        time_axis = {"btf": 0, "bft": 1, "bcft": 2, "btfc": 0}[layout]
-        target_length = int(static_shape[time_axis])
+        target_length = int(static_shape[_TIME_AXIS[layout]])
 
     if static_shape is not None:
-        time_axis = {"btf": 0, "bft": 1, "bcft": 2, "btfc": 0}[layout]
-        if static_shape[time_axis] not in {None, target_length}:
+        if static_shape[_TIME_AXIS[layout]] not in {None, target_length}:
             raise ValueError(
                 "pipeline.static_shape time dimension conflicts with "
                 "metadata.ast.target_length"
@@ -430,14 +430,13 @@ def _resolve_ast_config(config, is_training):
         if config.get(key) is not None
     }
     frontend_stage["ast"] = ast_stage
+    # Training computes AST features during augmentation; evaluation does so
+    # during postprocessing.
+    resolved["stages"]["late_augment"] = {"active": False, "config": {}}
     if is_training:
         resolved["stages"]["augment"] = {
             "active": True,
             "config": {"ast_feature_stage": frontend_stage},
-        }
-        resolved["stages"]["late_augment"] = {
-            "active": False,
-            "config": {},
         }
         resolved["stages"]["postprocess"] = {
             "active": config.get("label_transform") is not None,
@@ -445,10 +444,6 @@ def _resolve_ast_config(config, is_training):
         }
     else:
         resolved["stages"]["augment"] = {"active": False, "config": {}}
-        resolved["stages"]["late_augment"] = {
-            "active": False,
-            "config": {},
-        }
         resolved["stages"]["postprocess"] = {
             "active": True,
             "config": {"ast_feature_stage": frontend_stage},

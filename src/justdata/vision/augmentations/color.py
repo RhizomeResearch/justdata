@@ -7,22 +7,7 @@ from justdata.vision.augmentations.registry import register_augment_strategy
 from justdata.vision.utils import _brightness, _color, _contrast, gaussian_filter2d
 
 
-@tf.function
-def photometric_distortion(
-    image: tf.Tensor,
-    seed,
-    brightness: float = 32 / 255,
-    contrast: float = 0.5,
-    saturation: float = 0.5,
-    hue: float = 0.05,
-    probability: float = 0.5,
-) -> tf.Tensor:
-    """Stateless, float32 RGB distortion for dense segmentation.
-
-    Input and output use the unnormalized [0, 255] RGB domain. The four
-    operations are independently gated; contrast is placed on either side of
-    saturation and hue with equal probability.
-    """
+def _validate_photometric_params(*, brightness, contrast, saturation, hue, probability):
     for name, value in (
         ("brightness", brightness),
         ("contrast", contrast),
@@ -45,6 +30,31 @@ def photometric_distortion(
         or not 0 <= probability <= 1
     ):
         raise ValueError("probability must be in [0, 1]")
+
+
+@tf.function
+def photometric_distortion(
+    image: tf.Tensor,
+    seed,
+    brightness: float = 32 / 255,
+    contrast: float = 0.5,
+    saturation: float = 0.5,
+    hue: float = 0.05,
+    probability: float = 0.5,
+) -> tf.Tensor:
+    """Stateless, float32 RGB distortion for dense segmentation.
+
+    Input and output use the unnormalized [0, 255] RGB domain. The four
+    operations are independently gated; contrast is placed on either side of
+    saturation and hue with equal probability.
+    """
+    _validate_photometric_params(
+        brightness=brightness,
+        contrast=contrast,
+        saturation=saturation,
+        hue=hue,
+        probability=probability,
+    )
 
     seeds = tf.random.experimental.stateless_split(seed, 9)
     image = tf.cast(image, tf.float32)

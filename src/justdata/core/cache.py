@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,6 +9,14 @@ from typing import Any, Literal
 
 import tensorflow as tf
 
+from justdata.core._records import (
+    RECORDS_FILE,
+    file_sha256,
+    parse_example_fn,
+    read_examples,
+    serialize_example,
+)
+from justdata.core.config_resolution import is_positive_int
 from justdata.core.executed_config import canonical_config_json
 
 
@@ -39,7 +46,7 @@ class CachePolicy:
         callbacks_are_deterministic: bool = False,
     ):
         for name, value in (("max_bytes", max_bytes), ("max_examples", max_examples)):
-            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            if not is_positive_int(value):
                 raise ValueError(f"{name} must be a positive integer")
         if input_identity is not None and (
             not isinstance(input_identity, str) or not input_identity
@@ -72,11 +79,6 @@ def _canonical_bytes(value: dict) -> bytes:
     return canonical_config_json(value).encode("utf-8")
 
 
-def _digest(path: Path) -> str:
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
-
-
 def inspect_cache(path: str | os.PathLike) -> dict[str, Any]:
     """Report persisted completion without opening source datasets."""
     root = Path(path)
@@ -98,7 +100,7 @@ def inspect_cache(path: str | os.PathLike) -> dict[str, Any]:
                 )
             except (OSError, ValueError, TypeError):
                 result["failure_code"] = "unreadable_failure_record"
-        data = root / "records.tfrecord"
+        data = root / RECORDS_FILE
         if data.is_file():
             result["bytes"] = data.stat().st_size
         return result
@@ -110,10 +112,10 @@ def inspect_cache(path: str | os.PathLike) -> dict[str, Any]:
             raise ValueError("invalid record count")
         if not isinstance(manifest.get("bytes"), int) or manifest["bytes"] < 0:
             raise ValueError("invalid byte count")
-        data = root / "records.tfrecord"
+        data = root / RECORDS_FILE
         if (
             data.stat().st_size != manifest["bytes"]
-            or _digest(data) != manifest["sha256"]
+            or file_sha256(data) != manifest["sha256"]
         ):
             raise ValueError("record checksum mismatch")
         return {
@@ -125,41 +127,6 @@ def inspect_cache(path: str | os.PathLike) -> dict[str, Any]:
         }
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return {"state": "corrupt", "path": os.fspath(root), "reason": str(exc)}
-
-
-def _record(sample: Any) -> bytes:
-    features = {
-        str(index): tf.train.Feature(
-            bytes_list=tf.train.BytesList(value=[tf.io.serialize_tensor(value).numpy()])
-        )
-        for index, value in enumerate(tf.nest.flatten(sample))
-    }
-    return tf.train.Example(
-        features=tf.train.Features(feature=features)
-    ).SerializeToString()
-
-
-def _read(path: Path, signature: Any, count: int | None) -> tf.data.Dataset:
-    specs = tf.nest.flatten(signature)
-    fields = {
-        str(index): tf.io.FixedLenFeature([], tf.string) for index in range(len(specs))
-    }
-
-    def parse(serialized):
-        values = tf.io.parse_single_example(serialized, fields)
-        leaves = [
-            tf.ensure_shape(
-                tf.io.parse_tensor(values[str(index)], spec.dtype), spec.shape
-            )
-            for index, spec in enumerate(specs)
-        ]
-        return tf.nest.pack_sequence_as(signature, leaves)
-
-    ds = tf.data.TFRecordDataset(os.fspath(path / "records.tfrecord"))
-    ds = ds.map(parse, num_parallel_calls=1, deterministic=True)
-    if count is not None:
-        ds = ds.apply(tf.data.experimental.assert_cardinality(count))
-    return ds
 
 
 def protected_cache(
@@ -189,19 +156,23 @@ def protected_cache(
         signature,
     )
     schema_bytes = _canonical_bytes({"element_spec": schema})
+
+    def check_compatible(complete: dict[str, Any]) -> None:
+        if (
+            complete["fingerprint"] != fingerprint
+            or (root / "schema.json").read_bytes() != schema_bytes
+        ):
+            raise CacheError(
+                "incompatible", os.fspath(root), "Cache identity or schema changed."
+            )
+
     existing = inspect_cache(root)
     if existing["state"] != "missing":
         if existing["state"] != "complete":
             raise CacheError(
                 existing["state"], os.fspath(root), "Cache is incomplete or corrupt."
             )
-        if (
-            existing["fingerprint"] != fingerprint
-            or (root / "schema.json").read_bytes() != schema_bytes
-        ):
-            raise CacheError(
-                "incompatible", os.fspath(root), "Cache identity or schema changed."
-            )
+        check_compatible(existing)
         if (
             existing["count"] > policy.max_examples
             or existing["bytes"] > policy.max_bytes
@@ -209,21 +180,13 @@ def protected_cache(
             raise CacheError(
                 "quota_exceeded", os.fspath(root), "Existing cache exceeds limits."
             )
-        return _read(root, signature, existing["count"])
+        return read_examples(root, signature, existing["count"])
 
     def records():
         current = inspect_cache(root)
         if current["state"] == "complete":
-            if (
-                current["fingerprint"] != fingerprint
-                or (root / "schema.json").read_bytes() != schema_bytes
-            ):
-                raise CacheError(
-                    "incompatible", os.fspath(root), "Cache identity or schema changed."
-                )
-            for serialized in tf.data.TFRecordDataset(
-                os.fspath(root / "records.tfrecord")
-            ):
+            check_compatible(current)
+            for serialized in tf.data.TFRecordDataset(os.fspath(root / RECORDS_FILE)):
                 yield serialized.numpy()
             return
         try:
@@ -241,9 +204,9 @@ def protected_cache(
         size = 0
         try:
             (root / "schema.json").write_bytes(schema_bytes)
-            with tf.io.TFRecordWriter(os.fspath(root / "records.tfrecord")) as writer:
+            with tf.io.TFRecordWriter(os.fspath(root / RECORDS_FILE)) as writer:
                 for sample in ds:
-                    serialized = _record(sample)
+                    serialized = serialize_example(sample)
                     count += 1
                     size += len(serialized) + 16
                     if count > policy.max_examples or size > policy.max_bytes:
@@ -252,7 +215,7 @@ def protected_cache(
                         )
                     writer.write(serialized)
                     yield serialized
-            data = root / "records.tfrecord"
+            data = root / RECORDS_FILE
             actual_size = data.stat().st_size
             if actual_size > policy.max_bytes:
                 raise CacheError(
@@ -263,7 +226,7 @@ def protected_cache(
                 "fingerprint": fingerprint,
                 "count": count,
                 "bytes": actual_size,
-                "sha256": _digest(data),
+                "sha256": file_sha256(data),
             }
             pending = root / "manifest.pending"
             pending.write_bytes(_canonical_bytes(manifest))
@@ -294,27 +257,14 @@ def protected_cache(
     if policy.materialization == "eager":
         for _ in records():
             pass
-        return _read(root, signature, count=inspect_cache(root)["count"])
+        return read_examples(root, signature, count=inspect_cache(root)["count"])
 
     encoded = tf.data.Dataset.from_generator(
         records, output_signature=tf.TensorSpec([], tf.string)
     )
-    specs = tf.nest.flatten(signature)
-    fields = {
-        str(index): tf.io.FixedLenFeature([], tf.string) for index in range(len(specs))
-    }
-
-    def parse(serialized):
-        values = tf.io.parse_single_example(serialized, fields)
-        leaves = [
-            tf.ensure_shape(
-                tf.io.parse_tensor(values[str(index)], spec.dtype), spec.shape
-            )
-            for index, spec in enumerate(specs)
-        ]
-        return tf.nest.pack_sequence_as(signature, leaves)
-
-    return encoded.map(parse, num_parallel_calls=1, deterministic=True)
+    return encoded.map(
+        parse_example_fn(signature), num_parallel_calls=1, deterministic=True
+    )
 
 
 __all__ = ["CacheError", "CachePolicy", "inspect_cache"]

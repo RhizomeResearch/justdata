@@ -8,7 +8,6 @@ import tensorflow as tf
 
 import justdata.vision  # noqa: F401
 from justdata.core import ExecutedConfig, get_pipeline, load_ds
-from justdata.core.registry import list_pipelines
 from justdata.vision.geometry import (
     DenseGeometryConfig,
     replay_dense_geometry,
@@ -331,11 +330,6 @@ def _pipeline(*, strict=True, **overrides):
         apply_presets=False,
         **({"overrides": config} if strict else config),
     )
-
-
-def test_dense_geometry_uses_the_segmentation_registration():
-    assert "vision/segmentation" in list_pipelines()
-    assert "vision/dense_segmentation" not in list_pipelines()
 
 
 @pytest.mark.parametrize(

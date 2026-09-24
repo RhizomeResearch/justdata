@@ -1,16 +1,10 @@
-from unittest.mock import patch
-
 import numpy as np
 import pytest
 import tensorflow as tf
 
 from justdata.acoustic.augment.batch import audio_mixup
 from justdata.acoustic.tasks import make_late_augmentations
-from justdata.core.loader import load_ds
-
-
-def _identity(sample, *args, **kwargs):
-    return sample
+from loader_harness import load_mocked
 
 
 def test_mixup_single_label_converts_to_soft_one_hot():
@@ -75,33 +69,6 @@ def test_mixup_event_frames_shape():
     assert mixed_y.shape == labels.shape
 
 
-def test_mixup_same_seed_same_permutation():
-    x = tf.reshape(tf.range(4 * 3, dtype=tf.float32), [4, 3])
-    labels = tf.constant([0, 1, 2, 3], dtype=tf.int64)
-
-    first = audio_mixup(
-        x,
-        labels,
-        seed=[6, 0],
-        alpha=2.0,
-        prob=1.0,
-        label_mode="single_label",
-        num_classes=4,
-    )
-    second = audio_mixup(
-        x,
-        labels,
-        seed=[6, 0],
-        alpha=2.0,
-        prob=1.0,
-        label_mode="single_label",
-        num_classes=4,
-    )
-
-    np.testing.assert_allclose(first[0].numpy(), second[0].numpy())
-    np.testing.assert_allclose(first[1].numpy(), second[1].numpy())
-
-
 def test_mixup_prob_zero_noop():
     x = tf.reshape(tf.range(2 * 3, dtype=tf.float32), [2, 3])
     labels = tf.constant([0, 1], dtype=tf.int64)
@@ -153,23 +120,17 @@ def test_load_ds_mixup_does_not_mix_with_final_batch_padding():
         input_kind="waveform",
     )
 
-    with patch("justdata.core.loader.fetch_ds", return_value=raw_ds):
-        ds, _n = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="train",
-            dataset_type="train",
-            batch_size=2,
-            seed=11,
-            num_classes=3,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=late_augment,
-            postprocess_fn=_identity,
-            shuffle_buffer=1,
-            cache_dataset=False,
-            drop_remainder=False,
-            deterministic=True,
-        )
+    ds, _n = load_mocked(
+        raw_ds,
+        dataset_type="train",
+        seed=11,
+        num_classes=3,
+        late_augment_fn=late_augment,
+        shuffle_buffer=1,
+        cache_dataset=False,
+        drop_remainder=False,
+        deterministic=True,
+    )
 
     final_batch = list(ds)[-1]
 

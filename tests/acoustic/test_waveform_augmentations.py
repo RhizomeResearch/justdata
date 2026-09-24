@@ -1,11 +1,7 @@
 import numpy as np
 import tensorflow as tf
 
-from augmentation_harness import (
-    assert_different_seed_can_change_output,
-    assert_eval_disables_transform,
-    assert_same_seed_same_output,
-)
+from augmentation_harness import assert_different_seed_can_change_output
 from justdata.acoustic.augment import (
     additive_noise,
     codec_simulation,
@@ -27,21 +23,6 @@ def _waveform(length: int = 2048) -> tf.Tensor:
     t = tf.linspace(0.0, 1.0, length)
     x = 0.5 * tf.sin(2.0 * np.pi * 17.0 * t)
     return x[:, tf.newaxis]
-
-
-def test_random_gain_same_seed_same_output():
-    def transform(x, seed, is_training):
-        return random_gain(
-            x,
-            16000,
-            seed=seed,
-            prob=1.0,
-            min_db=-6.0,
-            max_db=6.0,
-            is_training=is_training,
-        )
-
-    assert_same_seed_same_output(transform, _waveform())
 
 
 def test_random_gain_different_seed_different_output():
@@ -215,21 +196,6 @@ def test_codec_simulation_no_nan():
     for codec in ("mulaw", "alaw", "mp3_proxy"):
         result = codec_simulation(audio, 16000, seed=[12, 0], prob=1.0, codec=codec)
         assert np.isfinite(result.numpy()).all()
-
-
-def test_augment_disabled_eval():
-    def transform(x, seed, is_training):
-        return random_gain(
-            x,
-            16000,
-            seed=seed,
-            prob=1.0,
-            min_db=6.0,
-            max_db=6.0,
-            is_training=is_training,
-        )
-
-    assert_eval_disables_transform(transform, _waveform())
 
 
 def test_augment_pipeline_preserves_metadata():

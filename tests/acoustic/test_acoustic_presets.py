@@ -9,7 +9,6 @@ from justdata.acoustic.configs import (
     SegmentStrategyConfig,
 )
 from justdata.acoustic.presets import get_resolved_preset, register_preset
-from justdata.vision.presets import get_resolved_preset as get_vision_resolved_preset
 
 
 def make_audio_preset(name: str) -> AudioPreset:
@@ -44,17 +43,3 @@ def test_acoustic_resolved_preset_serializes_and_hashes():
     assert data["target_sample_rate"] == 16000
     assert data["frontend"]["name"] == "raw_waveform"
     assert resolved.hash() == get_resolved_preset(name).hash()
-
-
-def test_vision_resolved_preset_serializes_and_hashes():
-    resolved = get_vision_resolved_preset("cifar10")
-    data = json.loads(resolved.to_json())
-
-    assert data["postproc_kwargs"]["image_size"] == 32
-    assert data["model_input"]["output_key"] == "image"
-    assert data["model_input"]["layout"] == "bchw"
-    assert data["model_input"]["dtype"] == "float32"
-    assert data["model_input"]["static_shape"] == [3, 32, 32]
-    assert data["model_input"]["normalization"]["kind"] == "mean_std"
-    assert len(resolved.hash()) == 16
-    assert resolved.hash() == get_vision_resolved_preset("cifar10").hash()

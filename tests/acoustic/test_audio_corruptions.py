@@ -120,15 +120,6 @@ def test_packet_dropout_inserts_gaps():
     assert int(tf.reduce_sum(tf.cast(tf.equal(corrupted, 0.0), tf.int32)).numpy()) > 0
 
 
-def test_corruption_same_seed_same_output():
-    audio = _sine(1000.0)
-
-    first = apply_audio_corruption(audio, "additive_white_noise", 3, SEED)
-    second = apply_audio_corruption(audio, "additive_white_noise", 3, SEED)
-
-    np.testing.assert_allclose(first.numpy(), second.numpy())
-
-
 def test_corruption_different_seed_can_change_output():
     audio = _sine(1000.0)
 

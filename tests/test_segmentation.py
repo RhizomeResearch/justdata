@@ -247,3 +247,52 @@ def test_segmentation_pipeline():
     batch = laug(batch)
     assert "image" in batch
     assert "mask" in batch
+
+
+def _large_sample(height, width):
+    np.random.seed(0)
+    return {
+        "image": tf.constant(
+            np.random.randint(0, 256, (height, width, 3), dtype=np.uint8)
+        ),
+        "mask": tf.constant(np.random.randint(0, 5, (height, width), dtype=np.int32)),
+    }
+
+
+def test_patch_aligned_evaluation_pads_image_and_mask_to_patch_multiple():
+    postproc = make_postprocessing(
+        image_size=224,
+        is_training=False,
+        patch_align=True,
+        patch_size=14,
+    )
+    result = postproc(_large_sample(480, 640))
+    # Image should be CHW and patch-aligned
+    assert result["image"].shape[0] == 3
+    assert result["image"].shape[1] % 14 == 0
+    assert result["image"].shape[2] % 14 == 0
+    # Mask should also be aligned
+    assert result["mask"].shape[0] % 14 == 0
+    assert result["mask"].shape[1] % 14 == 0
+
+
+def test_standard_evaluation_resizes_to_fixed_square():
+    postproc = make_postprocessing(
+        image_size=224,
+        is_training=False,
+        patch_align=False,
+    )
+    result = postproc(_large_sample(480, 640))
+    assert result["image"].shape == (3, 224, 224)
+
+
+def test_training_ignores_patch_align():
+    postproc = make_postprocessing(
+        image_size=32,
+        is_training=True,
+        patch_align=True,
+        patch_size=14,
+    )
+    result = postproc(_large_sample(32, 32))
+    # Standard resize, not patch-aligned
+    assert result["image"].shape == (3, 32, 32)

@@ -1,20 +1,11 @@
 import json
-from unittest.mock import patch
 
 import numpy as np
 import pytest
 import tensorflow as tf
 
-from justdata.core.loader import load_ds
-from justdata.core.metadata import (
-    MetadataSidecar,
-    attach_sidecar_writer,
-    stable_int64_hash,
-)
-
-
-def _identity(sample, *args, **kwargs):
-    return sample
+from justdata.core.metadata import MetadataSidecar, attach_sidecar_writer
+from loader_harness import load_mocked
 
 
 def _nested_metadata_ds():
@@ -36,30 +27,12 @@ def _nested_metadata_ds():
 
 
 def _load(metadata_mode="full", sidecar_metadata_path=None):
-    with patch("justdata.core.loader.fetch_ds", return_value=_nested_metadata_ds()):
-        return load_ds(
-            dataset_names_arg="mock",
-            splits_arg="validation",
-            dataset_type="validation",
-            batch_size=2,
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=_identity,
-            postprocess_fn=_identity,
-            cache_dataset=False,
-            metadata_mode=metadata_mode,
-            sidecar_metadata_path=sidecar_metadata_path,
-        )
-
-
-def test_numeric_only_drops_strings_from_batch():
-    ds, _n = _load(metadata_mode="numeric_only")
-    batch = next(iter(ds))
-
-    assert "clip_id" not in batch["metadata"]
-    assert "city" not in batch["metadata"]["nested"]
-    assert "score" in batch["metadata"]["nested"]
+    return load_mocked(
+        _nested_metadata_ds(),
+        cache_dataset=False,
+        metadata_mode=metadata_mode,
+        sidecar_metadata_path=sidecar_metadata_path,
+    )
 
 
 def test_loader_sidecar_writes_strings_by_example_id(tmp_path):
@@ -99,11 +72,6 @@ def test_sidecar_preserves_valid_id_hashes_and_json_shape(
 
     list(attach_sidecar_writer(ds, str(path)))
 
-    assert expected_id == (
-        stable_int64_hash("example-a")
-        if metadata.get("example_id") == b"example-a"
-        else expected_id
-    )
     record = json.loads(path.read_text(encoding="utf-8"))
     assert record == {
         "example_id": expected_id,
@@ -190,33 +158,8 @@ def test_partial_consumption_writes_joinable_sidecar_records(tmp_path):
         assert int(example_id) in sidecar.records
 
 
-def test_recursive_padding_nested_metadata():
-    ds, _n = _load()
-    batches = list(ds.take(2))
-    final = batches[-1]
-
-    np.testing.assert_allclose(final["metadata"]["nested"]["score"].numpy(), [0.3, 0.0])
-    np.testing.assert_array_equal(
-        final["metadata"]["clip_id"].numpy(), [b"clip-c", b""]
-    )
-
-
-def test_padding_mask_added_for_short_final_batch():
-    ds, _n = _load()
-    final = list(ds.take(2))[-1]
-
-    np.testing.assert_array_equal(final["padding_mask"].numpy(), [True, False])
-
-
-def test_metadata_none_removes_metadata():
-    ds, _n = _load(metadata_mode="none")
-    batch = next(iter(ds))
-
-    assert "metadata" not in batch
-
-
 @pytest.mark.parametrize("metadata_mode", ["full", "numeric_only", "none"])
-def test_padding_preserves_top_level_strings_across_metadata_modes(metadata_mode):
+def test_padding_and_metadata_modes_for_nested_metadata(metadata_mode):
     ds, _n = _load(metadata_mode=metadata_mode)
     first, final = list(ds.take(2))
 
@@ -225,13 +168,20 @@ def test_padding_preserves_top_level_strings_across_metadata_modes(metadata_mode
     np.testing.assert_array_equal(final["padding_mask"].numpy(), [True, False])
 
     if metadata_mode == "none":
+        assert "metadata" not in first
         assert "metadata" not in final
         return
 
     np.testing.assert_allclose(final["metadata"]["nested"]["score"].numpy(), [0.3, 0.0])
     if metadata_mode == "full":
         np.testing.assert_array_equal(
+            final["metadata"]["clip_id"].numpy(), [b"clip-c", b""]
+        )
+        np.testing.assert_array_equal(
             final["metadata"]["nested"]["city"].numpy(), [b"Rome", b""]
         )
     else:
-        assert "city" not in final["metadata"]["nested"]
+        for batch in (first, final):
+            assert "clip_id" not in batch["metadata"]
+            assert "city" not in batch["metadata"]["nested"]
+            assert "score" in batch["metadata"]["nested"]

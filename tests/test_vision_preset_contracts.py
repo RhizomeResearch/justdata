@@ -174,6 +174,112 @@ EXPECTED_CONTRACTS = {
 }
 
 
+_TIMM_MIXING = {
+    "laug_kwargs.random_erasing_prob": 0.25,
+    "laug_kwargs.mixup_alpha": 0.8,
+    "laug_kwargs.cutmix_alpha": 1.0,
+}
+
+# Published recipe values beyond EXPECTED_CONTRACTS, keyed by dotted preset path.
+RECIPE_VALUES = {
+    # RandomCrop(32, padding=4, zeros), TrivialAugmentWide, timm mixing defaults.
+    "cifar10": {
+        "aug_kwargs.pad_mode": "CONSTANT",
+        "aug_kwargs.augment_type": "trivial_augment_wide",
+        "laug_kwargs.switch_prob": 0.5,
+        "model_input.output_key": "image",
+        "model_input.dtype": "float32",
+        "model_input.normalization.kind": "mean_std",
+        **_TIMM_MIXING,
+    },
+    "cifar100": {"aug_kwargs.pad_mode": "CONSTANT"},
+    # ViT/ConvNeXt: bicubic RandomResizedCrop and RandAugment(n=2, m=9).
+    "imagenet": {
+        "aug_kwargs.augment_type": "rand_augment",
+        "aug_kwargs.interpolation": "bicubic",
+        "aug_kwargs.ra_kwargs.num_layers": 2,
+        "aug_kwargs.ra_kwargs.magnitude": 9.0,
+        **_TIMM_MIXING,
+    },
+    # ResNet legacy: ColorJitter(0.4, 0.4, 0.4, 0.1).
+    "imagenet_resnet": {
+        "aug_kwargs.augment_type": "color_jitter",
+        "aug_kwargs.cj_kwargs.brightness": 0.4,
+        "aug_kwargs.cj_kwargs.contrast": 0.4,
+        "aug_kwargs.cj_kwargs.saturation": 0.4,
+        "aug_kwargs.cj_kwargs.hue": 0.1,
+        "laug_kwargs.mixup_alpha": 0.2,
+    },
+    # ResNet Strikes Back A1/A2/A3; A3 trains at 160 px (FixRes).
+    "imagenet_a1": {
+        "aug_kwargs.ra_kwargs.num_layers": 2,
+        "aug_kwargs.ra_kwargs.magnitude": 7.0,
+        "laug_kwargs.random_erasing_prob": 0.35,
+        "laug_kwargs.mixup_alpha": 0.2,
+        "laug_kwargs.cutmix_alpha": 1.0,
+    },
+    "imagenet_a2": {
+        "aug_kwargs.ra_kwargs.magnitude": 6.0,
+        "laug_kwargs.random_erasing_prob": 0.25,
+        "laug_kwargs.mixup_alpha": 0.2,
+    },
+    "imagenet_a3": {
+        "aug_kwargs.image_size": 160,
+        "aug_kwargs.ra_kwargs.magnitude": 6.0,
+        "laug_kwargs.random_erasing_prob": 0.0,
+        "laug_kwargs.mixup_alpha": 0.1,
+    },
+    # DINOv2 asymmetric multi-crop.
+    "dinov2": {
+        "aug_kwargs.gc_kwargs.p_gaussian_blur": (1.0, 0.1),
+        "aug_kwargs.gc_kwargs.p_solarize": (0.0, 0.2),
+        "aug_kwargs.gc_kwargs.p_color_jitter": 0.8,
+        "aug_kwargs.gc_kwargs.brightness": 0.4,
+        "aug_kwargs.gc_kwargs.contrast": 0.4,
+        "aug_kwargs.gc_kwargs.saturation": 0.2,
+        "aug_kwargs.gc_kwargs.hue": 0.1,
+        "aug_kwargs.gc_kwargs.p_grayscale": 0.2,
+        "aug_kwargs.lc_kwargs.size": 96,
+        "aug_kwargs.lc_kwargs.scale": (0.05, 0.32),
+        "aug_kwargs.lc_kwargs.p_gaussian_blur": 0.5,
+        "aug_kwargs.lc_kwargs.p_solarize": 0.0,
+    },
+    # WILDS reference recipes; strong variants are explicit opt-ins.
+    "wilds:camelyon17": {"laug_kwargs.enable": False},
+    "wilds:fmow": {"laug_kwargs.enable": False},
+    "wilds:iwildcam": {"laug_kwargs.enable": False},
+    "wilds:rxrx1": {"aug_kwargs.enable": True, "laug_kwargs.enable": False},
+    "wilds:camelyon17_strong": {"aug_kwargs.augment_type": "color_jitter"},
+    "wilds:fmow_strong": {"aug_kwargs.ra_kwargs.magnitude": 9.0},
+    "wilds:iwildcam_strong": {
+        "aug_kwargs.image_size": 448,
+        "aug_kwargs.ra_kwargs.translate_const": 203.0,
+    },
+    "wilds:rxrx1_strong": {
+        "laug_kwargs.random_erasing_prob": 0.25,
+        "laug_kwargs.mixup_alpha": 0.0,
+        "laug_kwargs.cutmix_alpha": 0.0,
+    },
+}
+
+
+def _preset_value(preset, path):
+    for key in path.split("."):
+        preset = preset[key]
+    return preset
+
+
+@pytest.mark.parametrize("name", sorted(RECIPE_VALUES))
+def test_vision_presets_match_recipe_values(name):
+    preset = get_dataset_presets(name)
+    for path, expected in RECIPE_VALUES[name].items():
+        actual = _preset_value(preset, path)
+        if isinstance(expected, bool):
+            assert actual is expected, path
+        else:
+            assert actual == expected, path
+
+
 @pytest.mark.parametrize("name", sorted(EXPECTED_HASHES))
 def test_vision_preset_contract_fields_and_hash(name):
     preset = get_dataset_presets(name)

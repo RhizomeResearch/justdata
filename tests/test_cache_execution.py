@@ -12,6 +12,7 @@ import tensorflow as tf
 from justdata.core import (
     CacheError,
     CachePolicy,
+    get_pipeline,
     inspect_cache,
     load_ds,
     register_pipeline,
@@ -100,8 +101,6 @@ def _policy(identity="input-v1", *, mode="eager", max_examples=8, max_bytes=100_
 
 
 def test_eager_cache_reuse_and_changed_input_and_preprocessing(tmp_path):
-    from justdata.core.registry import get_pipeline
-
     path = str(tmp_path / "prepared")
     pipeline = get_pipeline(pipeline_name="tests/cache-execution", offset=3)
     policy = _policy()
@@ -176,8 +175,6 @@ def test_eager_cache_reuse_and_changed_input_and_preprocessing(tmp_path):
 
 
 def test_lazy_cache_completion_and_interruption(tmp_path):
-    from justdata.core.registry import get_pipeline
-
     pipeline = get_pipeline(pipeline_name="tests/cache-execution")
     path = str(tmp_path / "lazy")
     policy = _policy(mode="lazy")
@@ -219,8 +216,6 @@ def test_lazy_cache_completion_and_interruption(tmp_path):
 
 
 def test_lazy_cache_second_writer_reports_ownership(tmp_path):
-    from justdata.core.registry import get_pipeline
-
     pipeline = get_pipeline(pipeline_name="tests/cache-execution")
     path = str(tmp_path / "concurrent")
     first, _ = _load(
@@ -249,8 +244,6 @@ def test_lazy_cache_second_writer_reports_ownership(tmp_path):
 
 
 def test_cache_quota_and_model_input_stage(tmp_path):
-    from justdata.core.registry import get_pipeline
-
     pipeline = get_pipeline(pipeline_name="tests/cache-execution")
     too_small = _policy(max_examples=2)
     with pytest.raises(CacheError) as error:

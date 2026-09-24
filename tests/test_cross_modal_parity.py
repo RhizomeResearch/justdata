@@ -15,16 +15,12 @@ from justdata.acoustic.registry import (
     list_audio_frontends,
     list_audio_waveform_augments,
 )
-from justdata.core.loader import load_ds
 from justdata.core.registry import get_pipeline, list_pipelines
 from justdata.vision.augmentations import list_augment_strategies, list_crop_strategies
 from justdata.vision.corruptions import list_corruptions
 from justdata.vision.minic import create_minic_datasets
 from justdata.vision.presets import get_resolved_preset as get_vision_preset
-
-
-def _identity(sample, *args, **kwargs):
-    return sample
+from loader_harness import identity, load_mocked
 
 
 def _vision_dataset(num_examples=3):
@@ -74,23 +70,6 @@ def _string_label_dataset():
     ).apply(tf.data.experimental.assert_cardinality(3))
 
 
-def _load_with_mocked_fetch(raw_ds, **kwargs):
-    with patch("justdata.core.loader.fetch_ds", return_value=raw_ds):
-        return load_ds(
-            dataset_names_arg="mock",
-            splits_arg="validation",
-            dataset_type="validation",
-            batch_size=kwargs.pop("batch_size", 2),
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=_identity,
-            postprocess_fn=_identity,
-            cache_dataset=False,
-            **kwargs,
-        )
-
-
 def _corruption_postprocess(sample, num_classes=None):
     del num_classes
     return sample
@@ -112,7 +91,7 @@ def test_both_modalities_have_hashable_presets():
 
 def test_both_modalities_have_metadata_mode():
     for raw_ds in (_vision_dataset(), _acoustic_dataset()):
-        ds, _n = _load_with_mocked_fetch(raw_ds, metadata_mode="numeric_only")
+        ds, _n = load_mocked(raw_ds, metadata_mode="numeric_only")
         batch = next(iter(ds))
 
         assert "metadata" in batch
@@ -131,22 +110,14 @@ def test_both_modalities_have_reusable_epoch_finalization(raw_ds):
             "epoch_random": tf.random.stateless_uniform([], seed=seed),
         }
 
-    with patch("justdata.core.loader.fetch_ds", return_value=raw_ds):
-        prepared_ds, tools = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="train",
-            dataset_type="train",
-            batch_size=2,
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=augment,
-            late_augment_fn=_identity,
-            postprocess_fn=_identity,
-            shuffle_buffer=3,
-            cache_dataset=False,
-            deterministic=True,
-            return_raw_ds=True,
-        )
+    prepared_ds, tools = load_mocked(
+        raw_ds,
+        dataset_type="train",
+        augment_fn=augment,
+        shuffle_buffer=3,
+        deterministic=True,
+        return_raw_ds=True,
+    )
 
     first_ds, first_n = tools["finalize_epoch"](prepared_ds, seed=17)
     second_ds, second_n = tools["finalize_epoch"](prepared_ds, seed=17)
@@ -167,7 +138,7 @@ class _IdentityPipeline:
 
     def build(self, is_training):
         del is_training
-        return _identity, _identity, _identity, _identity
+        return identity, identity, identity, identity
 
 
 @pytest.mark.parametrize(
@@ -186,20 +157,9 @@ def test_acoustic_preset_metadata_mode_reaches_loader(
     assert preset_pipeline.kwargs["metadata_mode"] == "numeric_only"
     pipeline = _IdentityPipeline(preset_pipeline.kwargs)
 
-    with patch(
-        "justdata.core.loader.fetch_ds",
-        return_value=_acoustic_dataset(),
-    ):
-        ds, _n = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="validation",
-            dataset_type="validation",
-            batch_size=2,
-            seed=0,
-            pipeline=pipeline,
-            cache_dataset=False,
-            metadata_mode=metadata_mode,
-        )
+    ds, _n = load_mocked(
+        _acoustic_dataset(), pipeline=pipeline, metadata_mode=metadata_mode
+    )
 
     batch = next(iter(ds))
     if metadata_mode == "none":
@@ -279,9 +239,9 @@ def test_both_modalities_have_corruption_dataset_api():
             dataset_type="validation",
             batch_size=2,
             seed=0,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=_identity,
+            preprocess_fn=identity,
+            augment_fn=identity,
+            late_augment_fn=identity,
             postprocess_fn=_corruption_postprocess,
             cache_dataset=False,
         )
@@ -303,9 +263,9 @@ def test_both_modalities_have_corruption_dataset_api():
             split="validation",
             batch_size=2,
             seed=0,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=_identity,
+            preprocess_fn=identity,
+            augment_fn=identity,
+            late_augment_fn=identity,
             postprocess_fn=_corruption_postprocess,
             cache_dataset=False,
         )
@@ -330,9 +290,9 @@ def test_minic_uses_shared_metadata_and_numpy_finalization(metadata_mode):
             dataset_type="validation",
             batch_size=2,
             seed=0,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=_identity,
+            preprocess_fn=identity,
+            augment_fn=identity,
+            late_augment_fn=identity,
             postprocess_fn=_corruption_postprocess,
             cache_dataset=False,
             metadata_mode=metadata_mode,
@@ -356,7 +316,7 @@ def test_minic_uses_shared_metadata_and_numpy_finalization(metadata_mode):
 
 def test_both_modalities_preserve_padding_mask():
     for raw_ds in (_vision_dataset(), _acoustic_dataset()):
-        ds, _n = _load_with_mocked_fetch(raw_ds, batch_size=2)
+        ds, _n = load_mocked(raw_ds)
         final_batch = list(ds.take(2))[-1]
 
         np.testing.assert_array_equal(
@@ -370,7 +330,7 @@ def test_both_modalities_support_as_numpy():
         (_vision_dataset(), "image"),
         (_acoustic_dataset(), "waveform"),
     ):
-        iterator, _n = _load_with_mocked_fetch(raw_ds, as_numpy=True)
+        iterator, _n = load_mocked(raw_ds, as_numpy=True)
         batch = next(iter(iterator))
 
         assert isinstance(batch[key], np.ndarray)
@@ -378,10 +338,8 @@ def test_both_modalities_support_as_numpy():
 
 
 def test_as_numpy_preserves_top_level_string_labels_with_numeric_metadata():
-    iterator, _n = _load_with_mocked_fetch(
-        _string_label_dataset(),
-        as_numpy=True,
-        metadata_mode="numeric_only",
+    iterator, _n = load_mocked(
+        _string_label_dataset(), as_numpy=True, metadata_mode="numeric_only"
     )
     first, final = list(iterator)
 

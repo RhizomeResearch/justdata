@@ -3,20 +3,13 @@ from justdata.acoustic.metadata import (
     MetadataSidecar,
     stable_int64_hash,
 )
-from justdata.core.metadata import MetadataSidecar as CoreMetadataSidecar
-from justdata.core.metadata import stable_int64_hash as core_stable_int64_hash
+from justdata.core import metadata as core_metadata
 
 
-def test_metadata_encoder_stable_hash():
-    assert stable_int64_hash is core_stable_int64_hash
-    assert stable_int64_hash("example-a") == 5862446126654077062
-    assert stable_int64_hash("dataset::train::clip-a") == 1147561614405543418
-    assert stable_int64_hash("dataset::train::clip-a") == stable_int64_hash(
-        "dataset::train::clip-a"
-    )
-    assert stable_int64_hash("dataset::train::clip-a") != stable_int64_hash(
-        "dataset::train::clip-b"
-    )
+def test_acoustic_metadata_reexports_core_sidecar_and_hash():
+    # Sidecar transport and its hash pins are tested in tests/test_loader_*.py.
+    assert MetadataSidecar is core_metadata.MetadataSidecar
+    assert stable_int64_hash is core_metadata.stable_int64_hash
 
 
 def test_metadata_encoder_vocab_roundtrip():
@@ -62,16 +55,3 @@ def test_metadata_encoder_vocab_roundtrip():
     assert decoded["dataset_id"] == "unit"
     assert decoded["is_known_device"] is True
     assert decoded["example_id"] == stable_int64_hash("unit::train::clip-1")
-
-
-def test_sidecar_writes_strings_by_example_id(tmp_path):
-    assert MetadataSidecar is CoreMetadataSidecar
-    path = tmp_path / "metadata.jsonl"
-    sidecar = MetadataSidecar()
-    sidecar.add(7, {"clip_id": "clip-a", "nested": {"city": "Paris"}})
-    sidecar.write_jsonl(str(path))
-
-    loaded = MetadataSidecar.read_jsonl(str(path))
-
-    assert loaded.records[7]["clip_id"] == "clip-a"
-    assert loaded.records[7]["nested"]["city"] == "Paris"

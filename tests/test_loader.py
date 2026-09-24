@@ -5,88 +5,87 @@ import pytest
 import tensorflow as tf
 
 from justdata.core.loader import fetch_ds, load_ds
-from justdata.core.registry import get_pipeline_for_dataset
+from justdata.core.registry import get_pipeline
 from justdata.vision.minic import create_minic_datasets
+from loader_harness import identity, load_mocked
+
+
+def _stage_functions(dataset, task, *, is_training, **kwargs):
+    return get_pipeline(
+        dataset=dataset,
+        task=task,
+        apply_presets=False,
+        aug_kwargs={"image_size": 32},
+        **kwargs,
+    ).build(is_training=is_training)
 
 
 def test_load_ds_classification(synthetic_classification_ds):
-    preproc, aug, laug, postproc = get_pipeline_for_dataset(
+    preproc, aug, laug, postproc = _stage_functions(
         "cifar10",
-        task_type="classification",
-        apply_presets=False,
+        "classification",
         is_training=True,
-        aug_kwargs={"image_size": 32},
         postproc_kwargs={"image_size": 32, "num_classes": 10},
     )
 
-    with patch(
-        "justdata.core.loader.fetch_ds", return_value=synthetic_classification_ds
-    ):
-        ds, N = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="train",
-            dataset_type="train",
-            batch_size=4,
-            seed=42,
-            preprocess_fn=preproc,
-            augment_fn=aug,
-            late_augment_fn=laug,
-            postprocess_fn=postproc,
-            num_classes=10,
-            shuffle_buffer=10,
-            cache_dataset=False,
-            drop_remainder=False,
-        )
+    ds, N = load_mocked(
+        synthetic_classification_ds,
+        dataset_type="train",
+        batch_size=4,
+        seed=42,
+        preprocess_fn=preproc,
+        augment_fn=aug,
+        late_augment_fn=laug,
+        postprocess_fn=postproc,
+        num_classes=10,
+        shuffle_buffer=10,
+        cache_dataset=False,
+        drop_remainder=False,
+    )
 
-        assert N == 5
-        batch = next(iter(ds))
-        assert "image" in batch
-        assert "label" in batch
-        assert batch["image"].shape == (4, 3, 32, 32)
-        assert batch["image"].dtype == tf.float32
+    assert N == 5
+    batch = next(iter(ds))
+    assert "image" in batch
+    assert "label" in batch
+    assert batch["image"].shape == (4, 3, 32, 32)
+    assert batch["image"].dtype == tf.float32
 
 
 def test_load_ds_segmentation(synthetic_segmentation_ds):
-    preproc, aug, laug, postproc = get_pipeline_for_dataset(
+    preproc, aug, laug, postproc = _stage_functions(
         "kitti_road",
-        task_type="segmentation",
-        apply_presets=False,
+        "segmentation",
         is_training=True,
-        aug_kwargs={"image_size": 32},
         postproc_kwargs={"image_size": 32},
     )
 
-    with patch("justdata.core.loader.fetch_ds", return_value=synthetic_segmentation_ds):
-        ds, N = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="train",
-            dataset_type="train",
-            batch_size=4,
-            seed=42,
-            preprocess_fn=preproc,
-            augment_fn=aug,
-            late_augment_fn=laug,
-            postprocess_fn=postproc,
-            num_classes=None,
-            shuffle_buffer=10,
-            cache_dataset=False,
-            drop_remainder=False,
-        )
+    ds, N = load_mocked(
+        synthetic_segmentation_ds,
+        dataset_type="train",
+        batch_size=4,
+        seed=42,
+        preprocess_fn=preproc,
+        augment_fn=aug,
+        late_augment_fn=laug,
+        postprocess_fn=postproc,
+        num_classes=None,
+        shuffle_buffer=10,
+        cache_dataset=False,
+        drop_remainder=False,
+    )
 
-        assert N > 0
-        batch = next(iter(ds))
-        assert "image" in batch
-        assert "mask" in batch
-        assert batch["image"].dtype == tf.float32
+    assert N > 0
+    batch = next(iter(ds))
+    assert "image" in batch
+    assert "mask" in batch
+    assert batch["image"].dtype == tf.float32
 
 
 def test_create_minic_datasets(synthetic_classification_ds):
-    preproc, aug, laug, postproc = get_pipeline_for_dataset(
+    preproc, aug, laug, postproc = _stage_functions(
         "cifar10",
-        task_type="classification",
-        apply_presets=False,
+        "classification",
         is_training=False,
-        aug_kwargs={"image_size": 32},
         postproc_kwargs={"image_size": 32, "num_classes": 10},
     )
 
@@ -142,10 +141,6 @@ def test_create_minic_datasets(synthetic_classification_ds):
             assert batch["image"].dtype == tf.float32
 
 
-def _identity(sample, *args, **kwargs):
-    return sample
-
-
 def test_source_filter_runs_before_adapter_and_regular_filter(monkeypatch):
     counters = {"adapter": 0, "preprocess": 0}
     raw_ds = tf.data.Dataset.from_tensor_slices(
@@ -189,9 +184,9 @@ def test_source_filter_runs_before_adapter_and_regular_filter(monkeypatch):
         batch_size=2,
         seed=0,
         preprocess_fn=preprocess,
-        augment_fn=_identity,
-        late_augment_fn=_identity,
-        postprocess_fn=_identity,
+        augment_fn=identity,
+        late_augment_fn=identity,
+        postprocess_fn=identity,
         cache_dataset=True,
         return_raw_ds=True,
         source_filter_fn=lambda sample: sample["keep"],
@@ -209,7 +204,7 @@ def test_fetch_ds_source_filter_is_optional(monkeypatch):
         "justdata.core.loader.get_source_loader",
         lambda _name: lambda _dataset, _splits, _data_dir: [raw_ds],
     )
-    monkeypatch.setattr("justdata.core.loader.get_adapter", lambda _name: _identity)
+    monkeypatch.setattr("justdata.core.loader.get_adapter", lambda _name: identity)
 
     ds = fetch_ds(["mock"], ["validation"])
 
@@ -217,24 +212,12 @@ def test_fetch_ds_source_filter_is_optional(monkeypatch):
 
 
 def test_load_ds_applies_execution_controls():
-    with patch(
-        "justdata.core.loader.fetch_ds",
-        return_value=_range_dataset(4),
-    ):
-        ds, n_batches = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="validation",
-            dataset_type="validation",
-            batch_size=2,
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=_identity,
-            postprocess_fn=_identity,
-            map_parallel_calls=2,
-            private_threadpool_size=3,
-            max_intra_op_parallelism=1,
-        )
+    ds, n_batches = load_mocked(
+        _range_dataset(4),
+        map_parallel_calls=2,
+        private_threadpool_size=3,
+        max_intra_op_parallelism=1,
+    )
 
     options = ds.options()
 
@@ -257,18 +240,7 @@ def test_load_ds_applies_execution_controls():
 )
 def test_load_ds_rejects_nonpositive_execution_controls(keyword):
     with pytest.raises(ValueError, match=keyword):
-        load_ds(
-            dataset_names_arg="mock",
-            splits_arg="train",
-            dataset_type="train",
-            batch_size=2,
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=_identity,
-            postprocess_fn=_identity,
-            **{keyword: 0},
-        )
+        load_mocked(_range_dataset(2), dataset_type="train", **{keyword: 0})
 
 
 def _counting_postprocess(counter):
@@ -329,9 +301,9 @@ def _load_counted_raw_dataset(counter, **kwargs):
             batch_size=2,
             seed=0,
             preprocess_fn=_counting_preprocess(counter),
-            augment_fn=_identity,
-            late_augment_fn=_identity,
-            postprocess_fn=_identity,
+            augment_fn=identity,
+            late_augment_fn=identity,
+            postprocess_fn=identity,
             return_raw_ds=True,
             **kwargs,
         )
@@ -360,12 +332,7 @@ def test_finalize_epoch_reuses_preparation_and_rereads_uncached_source():
         def build(is_training):
             assert is_training
             counter["build"] += 1
-            return (
-                _counting_preprocess(counter),
-                _identity,
-                _identity,
-                _identity,
-            )
+            return _counting_preprocess(counter), identity, identity, identity
 
     with patch(
         "justdata.core.loader.fetch_ds",
@@ -411,25 +378,17 @@ def test_finalize_epoch_is_addressable_reiterable_and_supports_numpy():
             "late_augmentation": tf.fill(tf.shape(batch["x"]), value),
         }
 
-    with patch(
-        "justdata.core.loader.fetch_ds",
-        return_value=_range_dataset(24),
-    ):
-        raw_ds, tools = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="train",
-            dataset_type="train",
-            batch_size=4,
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=augment,
-            late_augment_fn=late_augment,
-            postprocess_fn=_identity,
-            shuffle_buffer=24,
-            cache_dataset=False,
-            deterministic=True,
-            return_raw_ds=True,
-        )
+    raw_ds, tools = load_mocked(
+        _range_dataset(24),
+        dataset_type="train",
+        batch_size=4,
+        augment_fn=augment,
+        late_augment_fn=late_augment,
+        shuffle_buffer=24,
+        cache_dataset=False,
+        deterministic=True,
+        return_raw_ds=True,
+    )
 
     partial_epoch, _n = tools["finalize_epoch"](raw_ds, seed=99)
     next(iter(partial_epoch))
@@ -480,23 +439,18 @@ def test_finalize_epoch_parallel_stateless_augmentation_preserves_exact_epochs(
             )
         }
 
-    with patch("justdata.core.loader.fetch_ds", return_value=_range_dataset(23)):
-        raw_ds, tools = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="train",
-            dataset_type="train",
-            batch_size=4,
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=augment,
-            late_augment_fn=late_augment,
-            postprocess_fn=_identity,
-            shuffle_buffer=23,
-            deterministic=True,
-            return_raw_ds=True,
-            map_parallel_calls=parallel_calls,
-            private_threadpool_size=4,
-        )
+    raw_ds, tools = load_mocked(
+        _range_dataset(23),
+        dataset_type="train",
+        batch_size=4,
+        augment_fn=augment,
+        late_augment_fn=late_augment,
+        shuffle_buffer=23,
+        deterministic=True,
+        return_raw_ds=True,
+        map_parallel_calls=parallel_calls,
+        private_threadpool_size=4,
+    )
 
     serial, _ = tools["finalize_epoch"](raw_ds, seed=19)
     parallel, n_batches = tools["finalize_epoch"](
@@ -543,22 +497,16 @@ def test_finalize_epoch_keeps_stateful_callbacks_serial_by_default():
     def augment(sample, seed=None):
         return sample | {"counter": counter.assign_add(1)}
 
-    with patch("justdata.core.loader.fetch_ds", return_value=_range_dataset(7)):
-        raw_ds, tools = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="train",
-            dataset_type="train",
-            batch_size=3,
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=augment,
-            late_augment_fn=_identity,
-            postprocess_fn=_identity,
-            shuffle_buffer=None,
-            deterministic=True,
-            return_raw_ds=True,
-            map_parallel_calls=4,
-        )
+    raw_ds, tools = load_mocked(
+        _range_dataset(7),
+        dataset_type="train",
+        batch_size=3,
+        augment_fn=augment,
+        shuffle_buffer=None,
+        deterministic=True,
+        return_raw_ds=True,
+        map_parallel_calls=4,
+    )
     epoch, _ = tools["finalize_epoch"](raw_ds, seed=3)
     batches = list(epoch)
     np.testing.assert_array_equal(
@@ -568,22 +516,7 @@ def test_finalize_epoch_keeps_stateful_callbacks_serial_by_default():
 
 
 def test_finalize_epoch_validation_order_does_not_depend_on_seed():
-    with patch(
-        "justdata.core.loader.fetch_ds",
-        return_value=_range_dataset(6),
-    ):
-        raw_ds, tools = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="validation",
-            dataset_type="validation",
-            batch_size=2,
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=_identity,
-            postprocess_fn=_identity,
-            return_raw_ds=True,
-        )
+    raw_ds, tools = load_mocked(_range_dataset(6), return_raw_ds=True)
 
     orders = []
     for epoch_seed in (1, 2):
@@ -650,24 +583,15 @@ def test_late_augmentation_sees_unpadded_final_batch():
             "late_batch_size": tf.fill([observed_size], observed_size),
         }
 
-    with patch(
-        "justdata.core.loader.fetch_ds",
-        return_value=_range_dataset(batch_size + 1),
-    ):
-        ds, _n = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="train",
-            dataset_type="train",
-            batch_size=batch_size,
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=record_batch_size,
-            postprocess_fn=_identity,
-            shuffle_buffer=1,
-            cache_dataset=False,
-            drop_remainder=False,
-        )
+    ds, _n = load_mocked(
+        _range_dataset(batch_size + 1),
+        dataset_type="train",
+        batch_size=batch_size,
+        late_augment_fn=record_batch_size,
+        shuffle_buffer=1,
+        cache_dataset=False,
+        drop_remainder=False,
+    )
 
     final_batch = list(ds)[-1]
 
@@ -697,21 +621,11 @@ def test_pipeline_augment_eval_runs_sample_and_batch_augmentation():
                 del num_classes, seed
                 return batch | {"x": batch["x"] * 10}
 
-            return _identity, augment, late_augment, _identity
+            return identity, augment, late_augment, identity
 
-    with patch(
-        "justdata.core.loader.fetch_ds",
-        return_value=_range_dataset(3),
-    ):
-        ds, n_batches = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="validation",
-            dataset_type="validation",
-            batch_size=2,
-            seed=0,
-            pipeline=EvalAugmentPipeline(),
-            deterministic=True,
-        )
+    ds, n_batches = load_mocked(
+        _range_dataset(3), pipeline=EvalAugmentPipeline(), deterministic=True
+    )
 
     batches = list(ds)
     assert n_batches == 2
@@ -728,43 +642,25 @@ def test_validation_skips_augmentation_without_opt_in():
         del num_classes, seed
         return batch | {"x": batch["x"] * 10}
 
-    with patch(
-        "justdata.core.loader.fetch_ds",
-        return_value=_range_dataset(2),
-    ):
-        ds, _n = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="validation",
-            dataset_type="validation",
-            batch_size=2,
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=augment,
-            late_augment_fn=late_augment,
-            postprocess_fn=_identity,
-            deterministic=True,
-        )
+    ds, _n = load_mocked(
+        _range_dataset(2),
+        augment_fn=augment,
+        late_augment_fn=late_augment,
+        deterministic=True,
+    )
 
     np.testing.assert_array_equal(next(iter(ds))["x"].numpy(), [0, 1])
 
 
 def test_validation_model_input_cache_reuses_postprocessed_samples(tmp_path):
     counter = {"calls": 0}
-    with patch("justdata.core.loader.fetch_ds", return_value=_range_dataset(4)):
-        ds, _n = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="validation",
-            dataset_type="validation",
-            batch_size=2,
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=_identity,
-            postprocess_fn=_counting_postprocess(counter),
-            cache_dataset=False,
-            cache_model_inputs=True,
-            model_input_cache_path=str(tmp_path / "model-inputs"),
-        )
+    ds, _n = load_mocked(
+        _range_dataset(4),
+        postprocess_fn=_counting_postprocess(counter),
+        cache_dataset=False,
+        cache_model_inputs=True,
+        model_input_cache_path=str(tmp_path / "model-inputs"),
+    )
 
     first = [batch["x"].numpy().tolist() for batch in ds]
     second = [batch["x"].numpy().tolist() for batch in ds]
@@ -775,23 +671,18 @@ def test_validation_model_input_cache_reuses_postprocessed_samples(tmp_path):
 
 def test_train_model_input_cache_reuses_postprocess_and_reshuffles(tmp_path):
     counter = {"calls": 0}
-    with patch("justdata.core.loader.fetch_ds", return_value=_range_dataset(20)):
-        ds, _n = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="train",
-            dataset_type="train",
-            batch_size=20,
-            seed=7,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=_identity,
-            postprocess_fn=_counting_postprocess(counter),
-            shuffle_buffer=20,
-            cache_dataset=False,
-            cache_model_inputs=True,
-            model_input_cache_path=str(tmp_path / "train-model-inputs"),
-            allow_train_model_input_cache=True,
-        )
+    ds, _n = load_mocked(
+        _range_dataset(20),
+        dataset_type="train",
+        batch_size=20,
+        seed=7,
+        postprocess_fn=_counting_postprocess(counter),
+        shuffle_buffer=20,
+        cache_dataset=False,
+        cache_model_inputs=True,
+        model_input_cache_path=str(tmp_path / "train-model-inputs"),
+        allow_train_model_input_cache=True,
+    )
 
     first = next(iter(ds))["x"].numpy()
     second = next(iter(ds))["x"].numpy()
@@ -804,16 +695,9 @@ def test_train_model_input_cache_reuses_postprocess_and_reshuffles(tmp_path):
 
 def test_train_model_input_cache_requires_explicit_opt_in(tmp_path):
     with pytest.raises(ValueError, match="allow_train_model_input_cache"):
-        load_ds(
-            dataset_names_arg="mock",
-            splits_arg="train",
+        load_mocked(
+            _range_dataset(2),
             dataset_type="train",
-            batch_size=2,
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=_identity,
-            postprocess_fn=_identity,
             cache_dataset=False,
             cache_model_inputs=True,
             model_input_cache_path=str(tmp_path / "train-model-inputs"),
@@ -821,23 +705,9 @@ def test_train_model_input_cache_requires_explicit_opt_in(tmp_path):
 
 
 def test_raw_dataset_finalizer_supports_model_input_cache():
-    with patch(
-        "justdata.core.loader.fetch_ds",
-        return_value=_range_dataset(3),
-    ):
-        raw_ds, tools = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="train",
-            dataset_type="validation",
-            batch_size=2,
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=_identity,
-            postprocess_fn=_identity,
-            cache_model_inputs=True,
-            return_raw_ds=True,
-        )
+    raw_ds, tools = load_mocked(
+        _range_dataset(3), cache_model_inputs=True, return_raw_ds=True
+    )
 
     ds, n_batches = tools["finalize_fn"](raw_ds)
 
@@ -849,24 +719,13 @@ def test_raw_dataset_finalizer_supports_model_input_cache():
 
 
 def test_finalize_epoch_rejects_augmented_model_input_cache():
-    with patch(
-        "justdata.core.loader.fetch_ds",
-        return_value=_range_dataset(3),
-    ):
-        raw_ds, tools = load_ds(
-            dataset_names_arg="mock",
-            splits_arg="train",
-            dataset_type="train",
-            batch_size=2,
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=_identity,
-            postprocess_fn=_identity,
-            cache_model_inputs=True,
-            allow_train_model_input_cache=True,
-            return_raw_ds=True,
-        )
+    raw_ds, tools = load_mocked(
+        _range_dataset(3),
+        dataset_type="train",
+        cache_model_inputs=True,
+        allow_train_model_input_cache=True,
+        return_raw_ds=True,
+    )
 
     with pytest.raises(ValueError, match="cache_model_inputs"):
         tools["finalize_epoch"](raw_ds, seed=1)
@@ -875,16 +734,8 @@ def test_finalize_epoch_rejects_augmented_model_input_cache():
 def test_model_input_cache_rejects_preprocess_cache_path_collision(tmp_path):
     cache_path = str(tmp_path / "same-cache")
     with pytest.raises(ValueError, match="must be different"):
-        load_ds(
-            dataset_names_arg="mock",
-            splits_arg="validation",
-            dataset_type="validation",
-            batch_size=2,
-            seed=0,
-            preprocess_fn=_identity,
-            augment_fn=_identity,
-            late_augment_fn=_identity,
-            postprocess_fn=_identity,
+        load_mocked(
+            _range_dataset(2),
             cache_dataset=True,
             cache_path=cache_path,
             cache_model_inputs=True,

@@ -15,10 +15,36 @@ import tensorflow as tf
 from justdata.core import MetadataSidecar, open_inventory
 
 
-EXAMPLE = runpy.run_path(
-    str(Path(__file__).resolve().parents[1] / "examples/vision/lars_local_inventory.py")
-)
-build_inventory = EXAMPLE["build_inventory"]
+EXAMPLES = Path(__file__).resolve().parents[1] / "examples" / "vision"
+INVENTORY_EXAMPLE = EXAMPLES / "lars_local_inventory.py"
+build_inventory = runpy.run_path(str(INVENTORY_EXAMPLE))["build_inventory"]
+
+
+def _plot_module():
+    """Load the plotting example lazily; it imports matplotlib."""
+    return runpy.run_path(str(EXAMPLES / "lars_segmentation_presets_plot.py"))
+
+
+def _run_example(images, annotations, output, *arguments):
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(INVENTORY_EXAMPLE),
+            "--images-archive",
+            str(images),
+            "--annotations-archive",
+            str(annotations),
+            "--split",
+            "val",
+            *arguments,
+            "--output-dir",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(result.stdout)
 
 
 def _archives(
@@ -237,12 +263,7 @@ def test_sample_seed_requires_a_positive_limit(tmp_path):
 def test_plot_shows_five_paired_views_for_each_preset(tmp_path):
     matplotlib = pytest.importorskip("matplotlib")
     matplotlib.use("Agg", force=True)
-    plot_example = runpy.run_path(
-        str(
-            Path(__file__).resolve().parents[1]
-            / "examples/vision/lars_segmentation_presets_plot.py"
-        )
-    )
+    plot_example = _plot_module()
     images, annotations = _archives(tmp_path / "archives", train_count=8)
     semantic_dir = tmp_path / "semantic"
     panoptic_dir = tmp_path / "panoptic"
@@ -268,12 +289,7 @@ def test_plot_shows_five_paired_views_for_each_preset(tmp_path):
 
 def test_panoptic_plot_distinguishes_same_class_instances_without_black_edges():
     pytest.importorskip("matplotlib")
-    plot_example = runpy.run_path(
-        str(
-            Path(__file__).resolve().parents[1]
-            / "examples/vision/lars_segmentation_presets_plot.py"
-        )
-    )
+    plot_example = _plot_module()
     mask = np.tile(np.asarray([11, 11, 22, 22, 0, 0]), (4, 1))
     segments = {
         "segment_ids": tf.constant([11, 22], tf.int64),
@@ -340,27 +356,7 @@ def test_example_rejects_test_targets_and_existing_output(tmp_path):
 def test_example_command_loads_a_realistic_validation_view(tmp_path):
     images, annotations = _archives(tmp_path)
     output = tmp_path / "command-output"
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(
-                Path(__file__).resolve().parents[1]
-                / "examples/vision/lars_local_inventory.py"
-            ),
-            "--images-archive",
-            str(images),
-            "--annotations-archive",
-            str(annotations),
-            "--split",
-            "val",
-            "--output-dir",
-            str(output),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    printed = json.loads(result.stdout)
+    printed = _run_example(images, annotations, output)
     assert printed["retained"] == 1
     assert printed["first_batch_ids"] == ["lars/v1.0.0/val/val_0001"]
     assert printed["target_shape"][1] == 3
@@ -372,29 +368,7 @@ def test_example_command_loads_a_realistic_validation_view(tmp_path):
 def test_example_panoptic_command_preserves_instances_and_crowd(tmp_path):
     images, annotations = _archives(tmp_path)
     output = tmp_path / "panoptic-output"
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(
-                Path(__file__).resolve().parents[1]
-                / "examples/vision/lars_local_inventory.py"
-            ),
-            "--images-archive",
-            str(images),
-            "--annotations-archive",
-            str(annotations),
-            "--split",
-            "val",
-            "--labels",
-            "panoptic",
-            "--output-dir",
-            str(output),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    printed = json.loads(result.stdout)
+    printed = _run_example(images, annotations, output, "--labels", "panoptic")
     assert printed["labels"] == "panoptic"
     assert printed["present_targets"] == [4]
     assert printed["category_ids"] == [1, 3, 5, 11]

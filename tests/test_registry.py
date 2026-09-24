@@ -206,16 +206,6 @@ class TestGetPipeline:
 
     # DataPipeline.build
 
-    def test_build_returns_4_callables(self):
-        p = get_pipeline(
-            "vision/classification",
-            aug_kwargs={"image_size": 32},
-            postproc_kwargs={"image_size": 32},
-        )
-        result = p.build(is_training=True)
-        assert len(result) == 4
-        assert all(callable(fn) for fn in result)
-
     @pytest.mark.parametrize("dataset", BUILTIN_VISION_DATASETS)
     def test_builtin_vision_dataset_resolves_to_buildable_pipeline(self, dataset):
         result = get_pipeline(
@@ -255,18 +245,6 @@ class TestGetPipeline:
         ).build(is_training=is_training)
         assert len(result) == 4
         assert all(callable(fn) for fn in result)
-
-    def test_build_injects_is_training(self):
-        """build(is_training=True) should set postproc_kwargs.is_training."""
-        p = get_pipeline(
-            "vision/classification",
-            aug_kwargs={"image_size": 32},
-            postproc_kwargs={"image_size": 32},
-        )
-        # After build, the original pipeline kwargs should be unchanged
-        # (deep copy protects them).
-        p.build(is_training=True)
-        assert "is_training" not in p.kwargs.get("postproc_kwargs", {})
 
     def test_build_does_not_mutate_kwargs(self):
         p = get_pipeline(
@@ -332,32 +310,10 @@ class TestGetPipeline:
 
 
 # Crop / Augment strategy registries
-class TestCropStrategyRegistry:
-    def test_random_resized_exists(self):
-        fn = get_crop_strategy("random_resized")
-        assert callable(fn)
-
-    def test_random_pad_exists(self):
-        fn = get_crop_strategy("random_pad")
-        assert callable(fn)
-
-    def test_none_exists(self):
-        fn = get_crop_strategy("none")
-        assert callable(fn)
-
+class TestStrategyRegistries:
     def test_unknown_crop_raises(self):
         with pytest.raises(ValueError, match="not found"):
             get_crop_strategy("unknown_crop_xyz")
-
-
-class TestAugmentStrategyRegistry:
-    def test_rand_augment_exists(self):
-        fn = get_augment_strategy("rand_augment")
-        assert callable(fn)
-
-    def test_trivial_augment_exists(self):
-        fn = get_augment_strategy("trivial_augment")
-        assert callable(fn)
 
     def test_unknown_augment_raises(self):
         with pytest.raises(ValueError, match="not found"):

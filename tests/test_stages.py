@@ -13,10 +13,10 @@ from justdata.vision.stages import (
 
 
 class TestNormalizeImageFormat:
-    def test_hwc_rgb_passthrough(self, classification_sample):
+    def test_hwc_rgb_passthrough_preserves_other_keys(self, classification_sample):
         result = normalize_image_format(classification_sample)
         assert result["image"].shape == (32, 32, 3)
-        assert result["label"] == classification_sample["label"]
+        assert result["label"].numpy() == classification_sample["label"].numpy()
 
     def test_grayscale_to_rgb(self):
         sample = {"image": tf.zeros([32, 32, 1], dtype=tf.uint8)}
@@ -45,14 +45,12 @@ class TestNormalizeImageFormat:
         result = normalize_image_format(sample, image_key="photo")
         assert result["photo"].shape == (32, 32, 3)
 
-    def test_preserves_other_keys(self, classification_sample):
-        result = normalize_image_format(classification_sample)
-        assert "label" in result
-        assert result["label"].numpy() == classification_sample["label"].numpy()
-
 
 class TestResizeAndNormalize:
-    def test_resize_and_normalize_basic(self, classification_sample):
+    @pytest.mark.parametrize(
+        ("permute", "expected_shape"), [(False, (16, 16, 3)), (True, (3, 16, 16))]
+    )
+    def test_resize_and_normalize(self, classification_sample, permute, expected_shape):
         result = resize_and_normalize(
             classification_sample,
             image_keys=["image"],
@@ -60,22 +58,10 @@ class TestResizeAndNormalize:
             resize_size=None,
             normalize_image=True,
             normalization_params=((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-            permute=False,
+            permute=permute,
         )
-        assert result["image"].shape == (16, 16, 3)
+        assert result["image"].shape == expected_shape
         assert result["image"].dtype == tf.float32
-
-    def test_resize_with_permute(self, classification_sample):
-        result = resize_and_normalize(
-            classification_sample,
-            image_keys=["image"],
-            image_size=16,
-            resize_size=None,
-            normalize_image=True,
-            normalization_params=((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-            permute=True,
-        )
-        assert result["image"].shape == (3, 16, 16)
 
     def test_val_resize_with_short_side(self):
         sample = {"image": tf.zeros([100, 200, 3], dtype=tf.uint8)}

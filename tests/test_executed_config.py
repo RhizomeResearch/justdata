@@ -250,59 +250,39 @@ def test_raw_and_epoch_snapshots_report_actual_finalization():
     assert final["preparation_deterministic"] is True
 
 
-def test_invalid_strict_configuration_fails_before_source_access():
-    invalid = get_pipeline(
-        dataset="cifar10",
-        overrides={"postproc_kwargs": {"image_sze": 224}},
-    )
+@pytest.mark.parametrize(
+    ("selection", "match"),
+    [
+        (
+            {
+                "dataset": "cifar10",
+                "overrides": {"postproc_kwargs": {"image_sze": 224}},
+            },
+            r"Unknown configuration key: postproc_kwargs.image_sze",
+        ),
+        (
+            {
+                "pipeline_name": "vision/segmentation",
+                "apply_presets": False,
+                "overrides": {},
+            },
+            r"Missing required configuration key: aug_kwargs.image_size",
+        ),
+        (
+            {
+                "dataset": "cifar10",
+                "overrides": {"postproc_kwargs": {"normalization_params": None}},
+            },
+            "normalization_params cannot be None",
+        ),
+    ],
+    ids=["unknown-key", "missing-key", "contradictory-normalization"],
+)
+def test_invalid_strict_configuration_fails_before_source_access(selection, match):
+    pipeline = get_pipeline(**selection)
     with patch("justdata.core.loader.fetch_ds") as fetch:
-        with pytest.raises(
-            ValueError, match=r"Unknown configuration key: postproc_kwargs.image_sze"
-        ):
-            load_ds(
-                "mock",
-                "validation",
-                "validation",
-                2,
-                0,
-                pipeline=invalid,
-            )
-    fetch.assert_not_called()
-
-    missing = get_pipeline(
-        pipeline_name="vision/segmentation",
-        apply_presets=False,
-        overrides={},
-    )
-    with patch("justdata.core.loader.fetch_ds") as fetch:
-        with pytest.raises(
-            ValueError,
-            match=r"Missing required configuration key: aug_kwargs.image_size",
-        ):
-            load_ds(
-                "mock",
-                "validation",
-                "validation",
-                2,
-                0,
-                pipeline=missing,
-            )
-    fetch.assert_not_called()
-
-    contradictory = get_pipeline(
-        dataset="cifar10",
-        overrides={"postproc_kwargs": {"normalization_params": None}},
-    )
-    with patch("justdata.core.loader.fetch_ds") as fetch:
-        with pytest.raises(ValueError, match="normalization_params cannot be None"):
-            load_ds(
-                "mock",
-                "validation",
-                "validation",
-                2,
-                0,
-                pipeline=contradictory,
-            )
+        with pytest.raises(ValueError, match=match):
+            load_ds("mock", "validation", "validation", 2, 0, pipeline=pipeline)
     fetch.assert_not_called()
 
 

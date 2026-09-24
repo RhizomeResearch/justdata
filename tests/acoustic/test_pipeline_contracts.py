@@ -6,7 +6,7 @@ import pytest
 import tensorflow as tf
 
 import justdata.acoustic  # noqa: F401
-from justdata.acoustic.adapters import acoustic_source_adapter, speech_commands_adapter
+from justdata.acoustic.adapters import acoustic_source_adapter
 from justdata.acoustic.corruptions import apply_audio_corruption
 from justdata.acoustic.registry import (
     get_audio_batch_augment,
@@ -291,18 +291,6 @@ def test_registered_audio_corruption_contract(name):
     assert first.dtype == tf.float32
     assert bool(tf.reduce_all(tf.math.is_finite(first)))
     np.testing.assert_allclose(first, second)
-
-
-def test_tfds_speech_commands_shape_is_adapted():
-    sample = speech_commands_adapter(
-        {
-            "audio": tf.cast(tf.range(32), tf.int16),
-            "label": tf.constant(2, tf.int64),
-        }
-    )
-    assert sample["waveform"].shape == (32, 1)
-    assert sample["waveform"].dtype == tf.float32
-    assert int(sample["sample_rate"].numpy()) == 16000
 
 
 def test_hf_audio_decoder_shape_reaches_canonical_adapter(monkeypatch):

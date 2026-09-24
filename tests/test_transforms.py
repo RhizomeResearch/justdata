@@ -1,19 +1,24 @@
 import numpy as np
 import tensorflow as tf
 
+import pytest
+
 from justdata.vision.transforms import (
     center_crop,
     nhwc_to_nchw,
     normalize,
+    pad_to_patch_multiple,
     resize_image,
     resize_short_side,
 )
 
 
 class TestNormalize:
-    def test_output_dtype_is_float32(self, rgb_image_uint8):
-        result = normalize(rgb_image_uint8, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    def test_scales_to_unit_range_then_divides_by_std(self):
+        image = tf.fill([2, 2, 3], tf.constant(255, dtype=tf.uint8))
+        result = normalize(image, (0.5, 0.5, 0.5), (0.25, 0.5, 1.0))
         assert result.dtype == tf.float32
+        np.testing.assert_allclose(result.numpy()[0, 0], [2.0, 1.0, 0.5])
 
     def test_zero_mean_unit_std_on_constant_image(self):
         # Image of all 128s => pixel/255 = ~0.502
@@ -22,14 +27,6 @@ class TestNormalize:
         std = (1.0,) * 3
         result = normalize(image, mean, std)
         np.testing.assert_allclose(result.numpy(), 0.0, atol=1e-5)
-
-    def test_imagenet_normalization_range(self, rgb_image_uint8):
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-        result = normalize(rgb_image_uint8, mean, std)
-        # Normalized values should roughly be in [-3, 3]
-        assert tf.reduce_min(result) > -5.0
-        assert tf.reduce_max(result) < 5.0
 
     def test_batch_normalization(self, rgb_batch_uint8):
         mean = (0.5, 0.5, 0.5)
@@ -84,6 +81,20 @@ class TestCenterCrop:
         result = center_crop(image, 4)
         # The pixel at (5,5) in original => (5-3, 5-3) = (2,2) in cropped
         assert result[2, 2, 0].numpy() == 1.0
+
+
+@pytest.mark.parametrize(
+    ("shape", "patch_size", "expected"),
+    [
+        ((224, 224, 3), 14, (224, 224, 3)),
+        ((225, 225, 3), 14, (238, 238, 3)),
+        ((200, 300, 3), 16, (208, 304, 3)),
+    ],
+    ids=["aligned", "pad-to-238", "patch16-rectangular"],
+)
+def test_pad_to_patch_multiple_rounds_up_to_the_patch_size(shape, patch_size, expected):
+    result = pad_to_patch_multiple(tf.zeros(shape), patch_size=patch_size)
+    assert result.shape == expected
 
 
 class TestResizeImage:

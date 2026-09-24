@@ -5,7 +5,6 @@ from justdata.acoustic.configs import AudioPreprocessConfig
 from justdata.acoustic.configs import SegmentStrategyConfig
 from justdata.acoustic.pipelines import classification_pipeline
 from justdata.acoustic.preprocessing import make_preprocessing
-from justdata.acoustic.resampling import resample_waveform
 
 
 def test_preprocessing_is_deterministic_same_input_same_output():
@@ -45,22 +44,6 @@ def test_preprocessing_does_not_random_crop():
 
     assert result["waveform"].shape == (8, 1)
     np.testing.assert_allclose(result["waveform"].numpy()[:, 0], np.arange(8))
-
-
-def test_resample_identity_preserves_values():
-    audio = tf.constant([[0.0], [0.5], [1.0]], dtype=tf.float32)
-
-    result = resample_waveform(audio, 16000, 16000, method="identity")
-
-    np.testing.assert_allclose(result.numpy(), audio.numpy())
-
-
-def test_resample_changes_length_expected_ratio():
-    audio = tf.zeros([160, 1], dtype=tf.float32)
-
-    result = resample_waveform(audio, 16000, 8000, method="tensorflow")
-
-    assert result.shape == (80, 1)
 
 
 def test_acoustic_pipeline_accepts_structured_preprocess_and_segment_configs():

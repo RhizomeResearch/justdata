@@ -1,3 +1,4 @@
+import pytest
 import tensorflow as tf
 
 from justdata.acoustic.configs import FrontendConfig, MelConfig, STFTConfig
@@ -26,29 +27,17 @@ def test_raw_waveform_layout_bt():
     assert result.shape == (8000,)
 
 
-def test_logmel_layout_btf():
-    features = logmel(tf.ones([16000, 1]), _logmel_config())
-    result = convert_audio_layout(features, "btf", output_kind="features")
+@pytest.mark.parametrize(
+    ("layout", "channels", "expected"),
+    [
+        ("btf", 1, (101, 32)),
+        ("bft", 1, (32, 101)),
+        ("bcft", 1, (1, 32, 101)),
+        ("btfc", 2, (101, 32, 2)),
+    ],
+)
+def test_logmel_feature_layouts(layout, channels, expected):
+    features = logmel(tf.ones([16000, channels]), _logmel_config())
+    result = convert_audio_layout(features, layout, output_kind="features")
 
-    assert result.shape == (101, 32)
-
-
-def test_logmel_layout_bft():
-    features = logmel(tf.ones([16000, 1]), _logmel_config())
-    result = convert_audio_layout(features, "bft", output_kind="features")
-
-    assert result.shape == (32, 101)
-
-
-def test_logmel_layout_bcft():
-    features = logmel(tf.ones([16000, 1]), _logmel_config())
-    result = convert_audio_layout(features, "bcft", output_kind="features")
-
-    assert result.shape == (1, 32, 101)
-
-
-def test_multichannel_layout_btfc():
-    features = logmel(tf.ones([16000, 2]), _logmel_config())
-    result = convert_audio_layout(features, "btfc", output_kind="features")
-
-    assert result.shape == (101, 32, 2)
+    assert result.shape == expected

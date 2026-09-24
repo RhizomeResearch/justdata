@@ -42,7 +42,7 @@ def _assert_datasets_equal(actual, expected):
                     assert np.asarray(a).tobytes() == np.asarray(b).tobytes()
 
 
-def _legacy_dataset(monkeypatch, module, build):
+def _generator_reference(monkeypatch, module, build):
     with monkeypatch.context() as patch:
         patch.setattr(
             module,
@@ -60,7 +60,7 @@ def test_local_records_match_generator(monkeypatch, labels):
     def build():
         return acoustic_sources._records_to_dataset(records)
 
-    expected = _legacy_dataset(monkeypatch, acoustic_sources, build)
+    expected = _generator_reference(monkeypatch, acoustic_sources, build)
     _assert_datasets_equal(build(), expected)
 
 
@@ -73,7 +73,7 @@ def test_dcase_records_match_generator(monkeypatch, split):
             "dcase2025_task1", [split], fixture
         )[0]
 
-    expected = _legacy_dataset(monkeypatch, dcase2025, build)
+    expected = _generator_reference(monkeypatch, dcase2025, build)
     _assert_datasets_equal(build(), expected)
 
 
@@ -107,7 +107,7 @@ def test_vision_records_match_generator(monkeypatch, tmp_path, empty):
     def build():
         return vision_sources._records_to_vision_dataset(records)
 
-    expected = _legacy_dataset(monkeypatch, vision_sources, build)
+    expected = _generator_reference(monkeypatch, vision_sources, build)
     _assert_datasets_equal(build(), expected)
 
 
@@ -129,7 +129,7 @@ def test_invalid_label_keeps_iteration_time_error(monkeypatch):
     def build():
         return acoustic_sources._records_to_dataset(records)
 
-    expected = _legacy_dataset(monkeypatch, acoustic_sources, build)
+    expected = _generator_reference(monkeypatch, acoustic_sources, build)
     actual = build()
     for dataset in (expected, actual):
         iterator = iter(dataset)

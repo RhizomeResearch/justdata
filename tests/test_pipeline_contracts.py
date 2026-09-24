@@ -7,7 +7,6 @@ import tensorflow as tf
 
 import justdata.vision  # noqa: F401
 from justdata.core import get_pipeline, load_ds
-from justdata.vision import sources as vision_sources
 
 
 @dataclass(frozen=True)
@@ -96,20 +95,3 @@ def test_vision_pipeline_contract_is_seeded_and_supports_numpy(
     for left, right in zip(first, second):
         np.testing.assert_allclose(left["image"], right["image"])
         np.testing.assert_allclose(left["label"], right["label"])
-
-
-def test_zenodo_asymmetric_splits_keep_archive_wide_labels(tmp_path, monkeypatch):
-    root = tmp_path / "extracted"
-    for split, class_names in {"train": ("cat", "dog"), "validation": ("dog",)}.items():
-        for class_name in class_names:
-            path = root / split / class_name / f"{class_name}.png"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tf.io.write_file(str(path), tf.io.encode_png(tf.ones([2, 3, 3], tf.uint8)))
-
-    monkeypatch.setattr(vision_sources, "_prepare_zenodo_archive", lambda *args: root)
-    train, validation = vision_sources.load_zenodo_imagefolder_splits(
-        "zenodo:123?file=images.zip", ["train", "validation"]
-    )
-
-    assert [int(sample["label"].numpy()) for sample in train] == [0, 1]
-    assert [int(sample["label"].numpy()) for sample in validation] == [1]

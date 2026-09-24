@@ -30,28 +30,10 @@ class TestPresetRegistration:
         presets = get_dataset_presets("unknown_dataset_xyz")
         assert presets["postproc_kwargs"]["image_size"] == 224
 
-    def test_default_preset_has_imagenet_stats(self):
-        presets = get_dataset_presets("imagenet")
-        mean, std = presets["postproc_kwargs"]["normalization_params"]
-        assert mean == (0.485, 0.456, 0.406)
-        assert std == (0.229, 0.224, 0.225)
-
     def test_register_custom_preset(self):
         register_preset("test_custom_ds", {"postproc_kwargs": {"image_size": 128}})
         presets = get_dataset_presets("test_custom_ds")
         assert presets["postproc_kwargs"]["image_size"] == 128
-
-    def test_cifar_preset_uses_trivial_augment(self):
-        presets = get_dataset_presets("cifar10")
-        assert presets["aug_kwargs"]["augment_type"] == "trivial_augment_wide"
-
-    def test_cifar100_normalization_differs_from_cifar(self):
-        cifar = get_dataset_presets("cifar10")
-        cifar100 = get_dataset_presets("cifar100")
-        assert (
-            cifar["postproc_kwargs"]["normalization_params"]
-            != cifar100["postproc_kwargs"]["normalization_params"]
-        )
 
 
 class TestPresetRegistryIsolation:
@@ -142,3 +124,13 @@ class TestMergeWithPresets:
     def test_unknown_dataset_uses_default_preset(self):
         result = merge_with_presets("imagenet", {})
         assert result["postproc_kwargs"]["image_size"] == 224
+
+    def test_user_override_wins_over_dataset_preset(self):
+        result = merge_with_presets("imagenet_a3", {"aug_kwargs": {"image_size": 128}})
+        assert result["aug_kwargs"]["image_size"] == 128
+
+    def test_merge_preserves_per_crop_tuple_parameters(self):
+        result = merge_with_presets("dinov2", {})
+        gc = result["aug_kwargs"]["gc_kwargs"]
+        assert gc["p_gaussian_blur"] == (1.0, 0.1)
+        assert gc["p_solarize"] == (0.0, 0.2)

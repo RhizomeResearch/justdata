@@ -7,15 +7,11 @@ from justdata.acoustic.compat.ast import (
     AST_MIX_LAMBDA,
     AST_MIX_WAVEFORM,
 )
-from justdata.core.registry import get_pipeline, has_pipeline
+from justdata.core.registry import get_pipeline
 
 
 def _waveform(num_samples=16000):
     return tf.linspace(-0.5, 0.5, num_samples)[:, tf.newaxis]
-
-
-def test_ast_pipeline_registered():
-    assert has_pipeline("acoustic/ast_classification")
 
 
 def test_ast_eval_pipeline_outputs_static_fbank_and_multihot_label():

@@ -23,6 +23,14 @@ def test_standardize_layout_c_t_to_t_c():
     np.testing.assert_allclose(result.numpy(), [[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]])
 
 
+def test_resample_identity_preserves_values():
+    audio = tf.constant([[0.0], [0.5], [1.0]], dtype=tf.float32)
+
+    result = resample_waveform(audio, 16000, 16000, method="identity")
+
+    np.testing.assert_allclose(result.numpy(), audio.numpy())
+
+
 def test_resample_waveform_changes_time_dimension():
     audio = tf.zeros([160, 1], dtype=tf.float32)
 

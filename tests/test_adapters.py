@@ -8,14 +8,11 @@ from justdata.core.adapters import (
 
 
 class TestDefaultAdapter:
-    def test_identity(self, classification_sample):
-        result = _default_adapter(classification_sample)
-        assert result is classification_sample
-
-    def test_all_keys_preserved(self):
+    def test_identity_preserves_every_key(self):
         sample = {"image": tf.zeros([2, 2, 3]), "label": 1, "extra": "value"}
         result = _default_adapter(sample)
-        assert set(result.keys()) == {"image", "label", "extra"}
+        assert result is sample
+        assert set(result) == {"image", "label", "extra"}
 
 
 class TestAdapterRegistry:

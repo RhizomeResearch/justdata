@@ -487,8 +487,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Configure TensorFlow before constructing any dataset. The caller may
-    # separately initialise JAX on the accelerator after this point.
+    # Configure TensorFlow before constructing any dataset. A process that also
+    # runs JAX on the GPU must initialize JAX before importing TensorFlow.
     tf.config.set_visible_devices([], "GPU")
     admitted = build_inventory(
         args.images_archive,

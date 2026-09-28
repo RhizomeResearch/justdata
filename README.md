@@ -1051,14 +1051,36 @@ Replay prefetches after skipping committed batches and defaults to one batch.
 When another framework uses the accelerator, configure TensorFlow before creating tensors or datasets:
 
 ```python
+import jax
+
+jax.devices()  # initialize JAX's GPU backend before TensorFlow is imported
+
 from justdata.core import configure_tensorflow_cpu
 
 device_report = configure_tensorflow_cpu(intra_op_threads=1, inter_op_threads=1)
 assert device_report["logical_gpus"] == []
 ```
 
-The report includes physical and logical device names and process thread settings. The helper raises if the runtime has
-initialized too early for the requested change. Core, vision, acoustic, and audio imports permit this setup.
+The report includes physical and logical device names and process thread settings. The helper raises if the TensorFlow
+runtime has initialized too early for the requested change. Core, vision, acoustic, and audio imports do not initialize
+it, so the helper can run after them.
+
+Those imports do import TensorFlow. On Linux, the CUDA-enabled `tensorflow` wheel then exposes stubs for its CUDA
+libraries (CUDA 12 as of TensorFlow 2.21) to the whole process. A framework built for another CUDA version that
+initializes its GPU backend afterwards can bind to those stubs: JAX with its CUDA 13 plugin reports an outdated cuBLAS
+and falls back to the CPU. Hiding TensorFlow's GPUs does not prevent this. Either initialize the other framework's
+backend before the first TensorFlow import, as above (`import jax` alone is not enough), or install `tensorflow-cpu`,
+which exports no CUDA symbols, in place of `tensorflow`. With uv, on Linux x86_64:
+
+```toml
+[project]
+dependencies = ["justdata", "tensorflow-cpu"]
+
+[tool.uv]
+exclude-dependencies = ["tensorflow"]
+```
+
+Set `JAX_PLATFORMS=cuda` to make a JAX fallback to the CPU an error rather than a warning.
 
 `CachePolicy` enables identity-checked file caches on the existing preprocessing and model-input cache stages. The cache
 path is a directory whose parent exists. The input identity must cover ordered content. `load_inventory` binds its

@@ -1,7 +1,6 @@
 """Measure finite CPU input profiles with native process RSS.
 
 uv run python benchmarks/benchmark_input_resources.py
-uv run python benchmarks/benchmark_input_resources.py --gpu-preflight
 """
 
 from __future__ import annotations
@@ -213,25 +212,8 @@ def main():
     parser.add_argument(
         "--case", nargs=4, metavar=("PROFILE", "RECORDS", "PREFETCH", "CACHE")
     )
-    parser.add_argument("--gpu-preflight", action="store_true")
     parser.add_argument("--quota-probe", action="store_true")
     args = parser.parse_args()
-    if args.gpu_preflight:
-        report = configure_tensorflow_cpu(intra_op_threads=1, inter_op_threads=1)
-        import jax
-        import jax.numpy as jnp
-
-        devices = jax.devices("gpu")
-        with jax.default_device(devices[0]):
-            result = (jnp.ones((2, 2)) + 1).block_until_ready()
-        if result.device != devices[0]:
-            raise RuntimeError("JAX computation was not placed on the selected GPU")
-        print(
-            json.dumps(
-                {"tensorflow": report, "jax_gpu_devices": [str(d) for d in devices]}
-            )
-        )
-        return
     if args.case:
         profile, records, prefetch, cache = args.case
         _run_case(profile, int(records), int(prefetch), cache=cache == "cache")

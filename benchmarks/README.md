@@ -3,9 +3,10 @@
 For bounded 512-pixel training and 1,024-pixel evaluation input profiles, run
 `uv run python benchmarks/benchmark_input_resources.py`. It emits one JSON line per fresh-process case with native peak
 RSS, device placement, throughput, effective controls, and cache completion. Each case enforces a 1 GiB additional RSS
-ceiling; the 32-record cache case has a separate 1 GiB file budget. Run
-`uv run python benchmarks/benchmark_input_resources.py --gpu-preflight` on a JAX GPU host to require a JAX GPU
-computation while TensorFlow exposes only CPUs. Missing JAX or GPU is an explicit failed qualification, not a CPU pass.
+ceiling; the 32-record cache case has a separate 1 GiB file budget. Run `uv run python benchmarks/gpu_preflight.py` on a
+JAX GPU host to require JAX GPU computations while TensorFlow exposes only CPUs. It initializes the JAX GPU backend
+before importing JustData, configures TensorFlow, and then compares a matrix product, a convolution, and an FFT on the
+GPU with CPU results. Missing JAX or GPU is an explicit failed qualification, not a CPU pass.
 
 ## Bounded dense-input check, 2026-09-24
 
@@ -46,6 +47,14 @@ PYTHONPATH=/path/to/baseline/src uv run python benchmarks/benchmark_performance.
 
 Compare output hashes before interpreting timing differences. Repeat comparisons on an otherwise idle machine; CPU
 scheduling and frequency changes affect small timing differences. These measurements do not establish GPU performance.
+
+## JAX GPU preflight, 2026-09-28
+
+`benchmarks/gpu_preflight.py` passed on an NVIDIA GeForce RTX 4080 (driver 595.99.02) with Python 3.12.14, JustData
+1.2.1, and JAX 0.11.0 with its CUDA 13 plugin, using either `tensorflow` or `tensorflow-cpu` 2.21.0. TensorFlow reported
+no logical GPUs. The matrix product, convolution, and FFT ran on `cuda:0`; their maximum absolute differences from CPU
+results were 4.2e-5, 1.5e-5, and 3.1e-4. With `tensorflow`, the previous preflight, which imported TensorFlow before
+initializing JAX, failed because JAX rejected TensorFlow's cuBLAS stub and fell back to the CPU.
 
 ## September 2026 audit
 

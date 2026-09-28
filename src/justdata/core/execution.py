@@ -14,6 +14,11 @@ def configure_tensorflow_cpu(
 
     Call before constructing tensors, datasets, or invoking other TensorFlow
     operations. A runtime that was initialized too early raises RuntimeError.
+
+    Hiding GPUs does not isolate TensorFlow's CUDA libraries. With the
+    CUDA-enabled ``tensorflow`` wheel, another framework must initialize its
+    GPU backend before TensorFlow is first imported; ``tensorflow-cpu`` has no
+    such ordering requirement.
     """
     for name, value in (
         ("intra_op_threads", intra_op_threads),

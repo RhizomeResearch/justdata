@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.3.0 — 2026-10-16
+
+This release replays dense training views without resampling the whole frame, makes their seeds independent of the
+integer dtype, and builds dense views directly from image and mask file lists.
+
+### Added
+
+- `justdata.vision.geometry.dense_views_from_files` builds one dense view per image file, in input order, with a
+  deterministic parallel `tf.data` map and no registered source. An `[N, 2]` int32 or int64 `seeds` array selects
+  per-example training views; without seeds, every element is the evaluation view. Masks must be 8-bit grayscale PNG
+  files: 16-bit, palette, RGB, and JPEG masks fail instead of decoding to rewritten class IDs. See
+  [numeric records and replay](docs/vision.md#numeric-records-and-replay).
+
+### Performance
+
+- New dense geometry records use version 2, whose replay resamples RGB and gathers masks and validity only for the part
+  of the crop inside the resized frame. Before, it resized the whole frame and then cropped. For a 512 × 512 training
+  view of a 1080 × 1920 frame on one CPU thread, replay takes 14.9 ms instead of 41.4 ms for RGB alone, and 29.4 ms
+  instead of 56.2 ms with a uint8 mask, where source label validation now accounts for most of the remaining time.
+
+### Fixed
+
+- Select the same dense view for equal int32 and int64 seed values. `sample_dense_geometry`, `sample_panoptic_geometry`,
+  and the recorded-geometry segmentation and panoptic augmentation stages now widen seeds to int64 before splitting
+  them. Before, Python-list seeds, which TensorFlow makes int32, and NumPy or `tf.data` seeds, which default to int64,
+  sampled unrelated views.
+
+### Compatibility
+
+- Seeds supplied by `load_ds`, `finalize_epoch`, and inventory epoch replay were already int64 and keep their sampled
+  geometry. Direct callers passing int32 seeds, including Python lists, get different views than with 1.2.
+- `sample_dense_geometry` and `sample_panoptic_geometry` emit version-2 records, and the executed configuration of the
+  recorded-geometry pipelines reports `record_version: 2`, which changes its digest. Version-2 masks and validity equal
+  version 1, as do evaluation views with the default antialiasing. Other RGB values differ by float32 rounding of kernel
+  positions, below 0.1 on the 0–255 scale. Version-1 records saved with 1.2 still replay exactly as before.
+
 ## 1.2.1 — 2026-09-24
 
 This patch release adds static type checking to the lint checks and fixes the defects it exposed.

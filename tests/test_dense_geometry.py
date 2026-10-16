@@ -10,6 +10,7 @@ import justdata.vision  # noqa: F401
 from justdata.core import ExecutedConfig, get_pipeline, load_ds
 from justdata.vision.geometry import (
     DenseGeometryConfig,
+    dense_views_from_files,
     replay_dense_geometry,
     restore_dense_predictions,
     restore_dense_scores,
@@ -355,6 +356,60 @@ def test_equal_seed_values_select_the_same_view_for_int32_and_int64():
         ]
         for left, right in zip(tf.nest.flatten(views[0]), tf.nest.flatten(views[1])):
             np.testing.assert_array_equal(left, right)
+
+
+@pytest.mark.parametrize("training", [False, True])
+def test_file_views_match_eager_replay_in_input_order(tmp_path, training):
+    rng = np.random.default_rng(11)
+    samples, image_paths, mask_paths = [], [], []
+    for index, shape in enumerate([(5, 9), (12, 7), (9, 9)]):
+        sample = _sample(*shape, dtype=np.uint8)
+        sample["image"] = tf.constant(rng.integers(0, 256, (*shape, 3), np.uint8))
+        image_paths.append(tmp_path / f"image-{index}.png")
+        image_paths[-1].write_bytes(tf.io.encode_png(sample["image"]).numpy())
+        mask_paths.append(tmp_path / f"mask-{index}.png")
+        mask_paths[-1].write_bytes(tf.io.encode_png(sample["mask"][..., None]).numpy())
+        samples.append(sample)
+    config = _config(train_crop_size=8, train_resize_range=(5, 12), patch_size=4)
+    seeds = np.array([[1, 2], [3, 4], [5, 6]]) if training else None
+    views = list(
+        dense_views_from_files(
+            image_paths,
+            config,
+            mask_paths=mask_paths,
+            seeds=seeds,
+            num_parallel_calls=3,
+        )
+    )
+    assert len(views) == len(samples)
+    for index, (sample, view) in enumerate(zip(samples, views)):
+        record = sample_dense_geometry(
+            sample["image"].shape[:2],
+            config,
+            is_training=training,
+            seed=None if seeds is None else seeds[index],
+        )
+        expected = replay_dense_geometry(sample, record)
+        assert view.keys() == expected.keys()
+        for left, right in zip(tf.nest.flatten(view), tf.nest.flatten(expected)):
+            np.testing.assert_array_equal(left, right)
+
+
+@pytest.mark.parametrize("encoding", ["uint16", "rgb", "jpeg"])
+def test_file_views_reject_masks_that_png_decoding_would_rewrite(tmp_path, encoding):
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(tf.io.encode_png(_sample()["image"]).numpy())
+    # Each decodes to declared class IDs, so label validation alone passes.
+    mask = {
+        "uint16": tf.io.encode_png(tf.fill([5, 9, 1], tf.constant(2, tf.uint16))),
+        "rgb": tf.io.encode_png(tf.ones([5, 9, 3], tf.uint8)),
+        "jpeg": tf.io.encode_jpeg(tf.zeros([5, 9, 1], tf.uint8)),
+    }[encoding]
+    mask_path = tmp_path / "mask.png"
+    mask_path.write_bytes(mask.numpy())
+    dataset = dense_views_from_files([image_path], _config(), mask_paths=[mask_path])
+    with pytest.raises(tf.errors.InvalidArgumentError, match="8-bit grayscale PNG"):
+        list(dataset)
 
 
 def test_restoration_rejects_crop_unknown_record_and_wrong_frame():

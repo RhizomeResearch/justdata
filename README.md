@@ -503,7 +503,9 @@ For semantic segmentation with replayable geometry, select `vision/segmentation`
 `geometry_kwargs`. It supports paired aspect-preserving training resize and crops, longer-side evaluation caps,
 independent RGB/ignore padding, per-pixel validity, and original-coordinate score restoration. See
 [the dense geometry contract](docs/vision.md#12-replayable-dense-segmentation) for configuration, record fields, replay,
-and batching requirements.
+and batching requirements. For ordered image/mask file lists without a registered source,
+`justdata.vision.geometry.dense_views_from_files` builds the same views with explicit per-example seeds in a parallel,
+order-preserving `tf.data` map.
 
 For instance-aware labels, select `vision/panoptic_segmentation` with a segment-ID map and category table. It preserves
 thing instances, merges stuff by category, and excludes crowd pixels from panoptic supervision. The

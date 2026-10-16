@@ -545,6 +545,31 @@ true. For resumed dense fitting, use the admitted-inventory epoch API in
 [`inventory.md`](inventory.md#deterministic-epoch-replay). Combine row validity with `pixel_valid_mask` before computing
 a loss or metric; an all-ignore real row contributes zero valid pixels, and padded rows contribute none.
 
+For an ordered list of files without a registered source, such as a fixed evaluation or training subset,
+`dense_views_from_files(image_paths, config, mask_paths=None, seeds=None, num_parallel_calls=tf.data.AUTOTUNE)` returns
+a `tf.data.Dataset` with one view per image, in input order, from a deterministic parallel map. Images decode to RGB
+`uint8` (JPEG, PNG, BMP, or the first GIF frame). Masks must be 8-bit grayscale PNG files; other encodings fail rather
+than let TensorFlow rescale 16-bit samples, map palettes through RGB, or decode lossy JPEG labels. With an `[N, 2]`
+int32 or int64 `seeds` array, element `i` is the training view for `seeds[i]`; without seeds, every element is the
+evaluation view. Each element equals `replay_dense_geometry` of the decoded sample and its sampled record, before
+normalization. Set `tf.data.Options().threading` on the returned dataset to bound its CPU use:
+
+```python
+import tensorflow as tf
+from justdata.vision.geometry import DenseGeometryConfig, dense_views_from_files
+
+options = tf.data.Options()
+options.threading.private_threadpool_size = 8
+options.threading.max_intra_op_parallelism = 1
+views = dense_views_from_files(
+    ["frames/0001.jpg", "frames/0002.jpg"],
+    DenseGeometryConfig(class_values=(0, 1, 2)),
+    mask_paths=["masks/0001.png", "masks/0002.png"],
+    seeds=[[17, 1], [17, 2]],
+    num_parallel_calls=8,
+).with_options(options)
+```
+
 ### Semantic class-mask targets
 
 Set `postproc_kwargs={"emit_semantic_targets": True}` alongside recorded `geometry_kwargs` to emit `sample["targets"]`.

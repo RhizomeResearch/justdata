@@ -8,6 +8,7 @@ used by new records, resamples only a crop that lies inside the resized frame.
 """
 
 import math
+import os
 from dataclasses import asdict, dataclass
 
 import tensorflow as tf
@@ -467,6 +468,69 @@ def _replay_spatial(sample, record):
     return result, categorical
 
 
+_PNG_SIGNATURE_AND_HEADER_CHUNK = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+
+
+def _read_mask_png(path):
+    contents = tf.io.read_file(path)
+    # decode_png rescales 16-bit samples, maps palettes through RGB, and also
+    # decodes JPEG data; each would silently rewrite class IDs.
+    tf.debugging.assert_equal(
+        (tf.strings.substr(contents, 0, 16) == _PNG_SIGNATURE_AND_HEADER_CHUNK)
+        & (tf.strings.substr(contents, 24, 2) == b"\x08\x00"),
+        True,
+        message="mask files must be 8-bit grayscale PNG",
+    )
+    return tf.io.decode_png(contents, channels=1)
+
+
+def dense_views_from_files(
+    image_paths,
+    config: DenseGeometryConfig,
+    *,
+    mask_paths=None,
+    seeds=None,
+    num_parallel_calls=tf.data.AUTOTUNE,
+):
+    """Replay one dense view per image file, in input order, in parallel.
+
+    Images decode to RGB uint8 and optional masks from 8-bit grayscale PNG.
+    Element ``i`` equals ``replay_dense_geometry`` of the decoded sample with
+    the training record for ``seeds[i]`` (``[N, 2]`` int32 or int64), or with
+    the evaluation record when ``seeds`` is None. Set threading options on the
+    returned dataset to bound its CPU use.
+    """
+    columns = {
+        "image": tf.constant([os.fspath(path) for path in image_paths], tf.string)
+    }
+    if mask_paths is not None:
+        columns["mask"] = tf.constant(
+            [os.fspath(path) for path in mask_paths], tf.string
+        )
+    if seeds is not None:
+        columns["seed"] = seeds
+
+    def view(column):
+        sample = {
+            "image": tf.io.decode_image(
+                tf.io.read_file(column["image"]), channels=3, expand_animations=False
+            )
+        }
+        if "mask" in column:
+            sample["mask"] = _read_mask_png(column["mask"])
+        record = sample_dense_geometry(
+            tf.shape(sample["image"])[:2],
+            config,
+            is_training=seeds is not None,
+            seed=column.get("seed"),
+        )
+        return replay_dense_geometry(sample, record)
+
+    return tf.data.Dataset.from_tensor_slices(columns).map(
+        view, num_parallel_calls=num_parallel_calls, deterministic=True
+    )
+
+
 def _visible_segments(mask, segments, max_segments):
     """Keep segments visible in a replayed view and recompute area and bbox."""
     flat = tf.reshape(mask, [-1])
@@ -624,6 +688,7 @@ __all__ = [
     "sample_panoptic_geometry",
     "validate_dense_sample",
     "replay_dense_geometry",
+    "dense_views_from_files",
     "replay_panoptic_geometry",
     "restore_dense_scores",
     "restore_dense_predictions",

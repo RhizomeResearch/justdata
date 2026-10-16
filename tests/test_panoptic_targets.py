@@ -102,7 +102,7 @@ def test_rgb_decode_and_distinct_same_class_instances():
     assert restored.shape == (4, 5, 2)
 
 
-def test_version_one_records_reject_the_wrong_label_contract():
+def test_geometry_records_reject_the_wrong_label_contract():
     sample = _sample()
     panoptic_record = sample_panoptic_geometry(
         [4, 5],
@@ -134,7 +134,7 @@ def test_version_one_records_reject_the_wrong_label_contract():
     ):
         replay_panoptic_geometry(
             sample,
-            panoptic_record | {"version": tf.constant(2, tf.int32)},
+            panoptic_record | {"version": tf.constant(3, tf.int32)},
             **CONFIG,
         )
 

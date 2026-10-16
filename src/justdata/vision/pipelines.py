@@ -105,7 +105,7 @@ def _validate_recorded_postprocess(post, flags):
 
 
 def _recorded_geometry_contract(geometry, is_training):
-    """Describe the version-1 geometry shared by semantic and panoptic views."""
+    """Describe the version-2 geometry shared by semantic and panoptic views."""
     if not is_training:
         resize_policy = "long_side_cap"
     elif geometry["train_scale_range"] is not None:
@@ -113,7 +113,7 @@ def _recorded_geometry_contract(geometry, is_training):
     else:
         resize_policy = "uniform_integer_short_side"
     return geometry | {
-        "record_version": 1,
+        "record_version": 2,
         "resize_policy": resize_policy,
         "image_interpolation": "bilinear",
         "mask_interpolation": "nearest",

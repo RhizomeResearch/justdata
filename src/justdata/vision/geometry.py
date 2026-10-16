@@ -1,8 +1,10 @@
 """Versioned, paired dense geometry in HWC coordinates.
 
 Records are dictionaries of numeric tensors, suitable for tf.data, NumPy storage,
-and replay without a random generator. Version 1 uses half-pixel resize centers,
+and replay without a random generator. Both versions use half-pixel resize centers,
 bilinear RGB sampling, nearest categorical sampling, and bottom/right padding.
+Version 1 resamples RGB over the whole resized frame before cropping; version 2,
+used by new records, resamples only a crop that lies inside the resized frame.
 """
 
 import math
@@ -153,7 +155,7 @@ def _canonical_seed(seed):
 def sample_dense_geometry(
     original_size, config: DenseGeometryConfig, *, is_training, seed=None
 ):
-    """Create a version-1 record; training requires an int32/int64 seed of shape [2].
+    """Create a version-2 record; training requires an int32/int64 seed of shape [2].
 
     Seeds are widened to int64 first, so equal values select the same view
     whatever their dtype.
@@ -209,7 +211,7 @@ def sample_dense_geometry(
     after = (config.patch_size - cropped % config.patch_size) % config.patch_size
     input_size = cropped + after
     return {
-        "version": tf.constant(1, tf.int32),
+        "version": tf.constant(2, tf.int32),
         "original_size": original,
         "resized_size": resized,
         "crop_box": tf.stack([top, left, cropped[0], cropped[1]]),
@@ -220,7 +222,7 @@ def sample_dense_geometry(
         "model_input_size": input_size,
         "patch_size": tf.constant(config.patch_size, tf.int32),
         "grid_size": input_size // config.patch_size,
-        # Numeric enum values are part of version 1, documented in docs/vision.md.
+        # Numeric enum values are shared by versions 1 and 2, see docs/vision.md.
         "image_interpolation": tf.constant(1, tf.int32),
         "mask_interpolation": tf.constant(0, tf.int32),
         "alignment": tf.constant(1, tf.int32),
@@ -237,7 +239,7 @@ def sample_dense_geometry(
 def sample_panoptic_geometry(
     original_size, config: PanopticGeometryConfig, *, void_value, is_training, seed=None
 ):
-    """Sample version-1 geometry with a panoptic label contract."""
+    """Sample version-2 geometry with a panoptic label contract."""
     record = sample_dense_geometry(
         original_size, _spatial_config(config), is_training=is_training, seed=seed
     )
@@ -251,8 +253,8 @@ def _check_record(record):
     record = tf.nest.map_structure(tf.convert_to_tensor, record)
     record["version"] = tf.ensure_shape(record["version"], [])
     tf.debugging.assert_equal(
-        record["version"],
-        1,
+        (record["version"] == 1) | (record["version"] == 2),
+        True,
         message="unsupported geometry version",
     )
     for key, value in (
@@ -320,12 +322,13 @@ def validate_dense_sample(sample, class_values, ignore_value):
     return result
 
 
-def _nearest(tensor, size):
+def _nearest(tensor, size, start, stop):
+    """Sample rows and columns ``[start, stop)`` of ``tensor`` resized to ``size``."""
     # Gather directly so categorical int64 IDs never pass through float32.
     indices = []
     for axis in (0, 1):
         length = tf.shape(tensor)[axis]
-        centers = tf.cast(tf.range(size[axis]), tf.float64) + 0.5
+        centers = tf.cast(tf.range(start[axis], stop[axis]), tf.float64) + 0.5
         scale = tf.cast(length, tf.float64) / tf.cast(size[axis], tf.float64)
         nearest = tf.cast(tf.floor(centers * scale), tf.int32)
         indices.append(tf.minimum(nearest, length - 1))
@@ -392,36 +395,71 @@ def replay_dense_geometry(sample, record):
     return result | {"pixel_valid_mask": valid}
 
 
+def _resample_rgb(image, record, start, stop):
+    """Bilinearly resample rows and columns ``[start, stop)`` of the resized frame."""
+    scale = tf.cast(record["resized_size"], tf.float32) / tf.cast(
+        tf.shape(image)[:2], tf.float32
+    )
+
+    def triangle(antialias):
+        # The op behind antialiased tf.image.resize. Translating by -start
+        # computes only the window; over the whole frame it matches that resize.
+        return lambda: tf.raw_ops.ScaleAndTranslate(
+            images=image[None],
+            size=stop - start,
+            scale=scale,
+            translation=-tf.cast(start, tf.float32),
+            kernel_type="triangle",
+            antialias=antialias,
+        )[0]
+
+    return tf.cond(
+        record["image_antialias"],
+        triangle(True),
+        lambda: tf.cond(
+            record["version"] == 1,
+            lambda: _bilinear_scores(image, record["resized_size"]),
+            triangle(False),
+        ),
+    )
+
+
 def _replay_spatial(sample, record):
     tf.debugging.assert_equal(
         tf.shape(sample["image"])[:2],
         record["original_size"],
         message="replay requires original sample dimensions",
     )
-    image = tf.cast(sample["image"], tf.float32)
-    image = tf.cond(
-        record["image_antialias"],
-        lambda: tf.image.resize(
-            image, record["resized_size"], method="bilinear", antialias=True
-        ),
-        lambda: tf.image.resize(
-            image, record["resized_size"], method="bilinear", antialias=False
-        ),
+    resized = record["resized_size"]
+    origin, size = record["crop_box"][:2], record["crop_box"][2:]
+    before = record["pre_padding"][::2]
+    # Version 2 resamples only a crop inside the resized frame. Axes whose crop
+    # reaches padding, and all version-1 axes, keep the frame to pad from it.
+    window = (
+        (record["version"] == 2)
+        & (origin >= before)
+        & (origin + size <= before + resized)
     )
+    start = tf.where(window, origin - before, 0)
+    stop = tf.where(window, start + size, resized)
+    pre_padding = tf.where(tf.repeat(window, 2), 0, record["pre_padding"])
+    offset = tf.where(window, 0, origin)
 
     def crop_flip(tensor):
-        top, left, height, width = tf.unstack(record["crop_box"])
+        top, left = tf.unstack(offset)
+        height, width = tf.unstack(size)
         tensor = tensor[top : top + height, left : left + width]
         return tf.cond(
             record["horizontal_flip"], lambda: tf.reverse(tensor, [1]), lambda: tensor
         )
 
-    image = _pad_rgb(image, record["pre_padding"], record)
+    image = _resample_rgb(tf.cast(sample["image"], tf.float32), record, start, stop)
+    image = _pad_rgb(image, pre_padding, record)
     image = _pad_rgb(crop_flip(image), record["post_padding"], record)
 
     def categorical(tensor, fill):
-        tensor = _nearest(tensor, record["resized_size"])
-        tensor = _constant_pad(tensor, record["pre_padding"], fill)
+        tensor = _nearest(tensor, resized, start, stop)
+        tensor = _constant_pad(tensor, pre_padding, fill)
         return _constant_pad(crop_flip(tensor), record["post_padding"], fill)
 
     support = categorical(tf.ones(record["original_size"], tf.bool), False)
@@ -477,7 +515,7 @@ def _visible_segments(mask, segments, max_segments):
 def replay_panoptic_geometry(
     sample, record, *, class_values, thing_class_values, void_value, max_segments
 ):
-    """Replay a version-1 record, including integer map and crowd validity."""
+    """Replay a record of either version, including integer map and crowd validity."""
     record = _check_record(record)
     tf.debugging.assert_equal(
         tf.size(record["class_values"]),

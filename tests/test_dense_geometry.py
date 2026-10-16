@@ -292,6 +292,47 @@ def test_default_training_geometry_produces_paired_512_crop_with_int64_seed():
     assert abs(resized[1] - resized[0] * 9 / 5) <= 0.5
 
 
+@pytest.mark.parametrize("antialias", [True, False])
+def test_version_two_resamples_the_crop_window_of_the_version_one_view(antialias):
+    rng = np.random.default_rng(5)
+    image = rng.integers(0, 256, (9, 53, 3)).astype(np.uint8)
+    sample = {
+        "image": tf.constant(image),
+        "mask": tf.constant(rng.choice([0, 1, 2, 255], (9, 53)).astype(np.int32)),
+    }
+    # Crops inside the resized frame, then crops whose height reaches padding.
+    for resize in ((20, 45), (9, 12)):
+        config = _config(
+            train_crop_size=16,
+            train_resize_range=resize,
+            patch_size=1,
+            image_pad_mode="REFLECT",
+            image_antialias=antialias,
+        )
+        records = [_geometry(sample, config, train=True, seed=(s, 3)) for s in range(4)]
+        for record in [*records, _geometry(sample, config)]:
+            assert int(record["version"]) == 2
+            legacy = record | {"version": tf.constant(1, tf.int32)}
+            current = replay_dense_geometry(sample, record)
+            previous = replay_dense_geometry(sample, legacy)
+            for key in ("mask", "source_valid_mask", "pixel_valid_mask"):
+                np.testing.assert_array_equal(current[key], previous[key])
+            if antialias and not record["is_training"]:
+                np.testing.assert_array_equal(current["image"], previous["image"])
+            np.testing.assert_allclose(current["image"], previous["image"], atol=0.1)
+            if resize == (9, 12):
+                continue
+            # Version 1 still resizes the whole frame before cropping.
+            full = tf.image.resize(
+                tf.cast(image, tf.float32), record["resized_size"], antialias=antialias
+            ).numpy()
+            top, left, height, width = record["crop_box"].numpy()
+            expected = full[top : top + height, left : left + width]
+            if record["horizontal_flip"]:
+                expected = expected[:, ::-1]
+            np.testing.assert_array_equal(previous["image"], expected)
+
+
 def test_equal_seed_values_select_the_same_view_for_int32_and_int64():
     for seed in ([3, 7], [2**31 - 1, -5]):
         records = [
@@ -330,7 +371,7 @@ def test_restoration_rejects_crop_unknown_record_and_wrong_frame():
     with pytest.raises(
         tf.errors.InvalidArgumentError, match="unsupported geometry version"
     ):
-        restore_dense_scores(logits, evaluation | {"version": tf.constant(2)})
+        restore_dense_scores(logits, evaluation | {"version": tf.constant(3)})
     with pytest.raises(tf.errors.InvalidArgumentError, match="Shape of tensor"):
         restore_dense_scores(logits, evaluation | {"version": tf.constant([1, 3])})
     with pytest.raises(tf.errors.InvalidArgumentError, match="padded model input"):

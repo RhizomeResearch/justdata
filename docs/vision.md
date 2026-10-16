@@ -478,8 +478,8 @@ repeats its sole pixel. Padding occurs before normalization: with no color jitte
 color jitter function after geometry and before normalization, affecting RGB pixels including padding. The new
 `photometric_kwargs` transform applies independently gated brightness, contrast, saturation, and hue to float32 source
 RGB before geometry; padding therefore retains its configured fill. These transforms never change masks or validity.
-Stored version-1 geometry records replay the spatial view; reproducing the full photometric view also requires the
-transform configuration and augmentation seed.
+Stored geometry records replay the spatial view; reproducing the full photometric view also requires the transform
+configuration and augmentation seed.
 
 Categorical masks accept HW or HW1 integer tensors and return HW with the same dtype (`uint8`, `uint16`, `int16`,
 `int32`, or `int64`). All source values must belong to the caller's unique `class_values` or distinct `ignore_value`;
@@ -512,11 +512,11 @@ does not add spatial batch padding.
 ### Numeric records and replay
 
 Each view carries `geometry` at the sample's top level, outside static metadata. It survives metadata filtering and
-becomes a nested numeric batch dictionary. Version 1 defines these fields:
+becomes a nested numeric batch dictionary. Versions 1 and 2 share these fields:
 
 | Field                                                            | Convention                                                                            |
 | :--------------------------------------------------------------- | :------------------------------------------------------------------------------------ |
-| `version`                                                        | Scalar int32, `1`.                                                                    |
+| `version`                                                        | Scalar int32: `2` for new records, `1` for records from JustData 1.2.                 |
 | `original_size`, `resized_size`, `model_input_size`, `grid_size` | int32 `[height, width]`; the grid uses the declared `patch_size`.                     |
 | `crop_box`                                                       | int32 `[top, left, height, width]` in the resized, pre-padded frame, before flipping. |
 | `pre_padding`, `post_padding`                                    | int32 `[top, bottom, left, right]`, before crop and after flip respectively.          |
@@ -525,6 +525,14 @@ becomes a nested numeric batch dictionary. Version 1 defines these fields:
 | `image_pad_mode`                                                 | int32 code: `0` = constant, `1` = reflect, `2` = symmetric.                           |
 | `image_pad_value`                                                | float32 RGB vector in the `[0, 255]` domain.                                          |
 | `mask_fill_value`, `class_values`, `patch_size`                  | int32 ignore scalar, class vector, and positive patch scalar.                         |
+
+Version 2 resamples RGB only for the part of the crop inside the resized frame: it runs the triangle-kernel
+`ScaleAndTranslate` operation behind antialiased `tf.image.resize`, translated to the crop origin. An axis whose crop
+reaches the padding keeps the whole resized axis, so mirrored padding is unchanged. Version 1 resamples the whole frame
+before cropping. Masks and validity are identical between versions, as are evaluation views with the default
+antialiasing. Other RGB values differ only by float32 rounding of kernel positions, below 0.1 on the 0–255 scale.
+Without antialiasing, version 2 uses the same kernel instead of `ResizeBilinear`. Replay follows each record's version,
+so version-1 records saved with JustData 1.2 reproduce their views exactly.
 
 `sample_dense_geometry(original_size, DenseGeometryConfig(...), is_training=..., seed=...)` constructs records
 independently of the pipeline. `replay_dense_geometry(original_sample, record)` validates the record and source
@@ -589,13 +597,13 @@ table rows exactly. The declared `max_segments` is a fixed per-sample table and 
 error rather than dropping instances.
 
 The pipeline uses the same sampled resize, crop, flip, and patch padding as the semantic geometry above. Both modes use
-geometry record version 1. The panoptic record carries an int64 `mask_fill_value` equal to `void_value` (default 0) and
+geometry record version 2. The panoptic record carries an int64 `mask_fill_value` equal to `void_value` (default 0) and
 an empty `class_values` field; semantic records carry their declared class values. RGB uses bilinear resizing and
 segment IDs use exact nearest-neighbor integer gathers. A crop keeps original segment IDs for surviving pixels, drops
 invisible segments, and recomputes per-segment `area` and `bbox=[left, top, width, height]` in the view.
 `source_valid_mask` marks image support; `pixel_valid_mask` additionally excludes void, crowds, and unavailable
-annotation. Evaluation is deterministic. `restore_dense_scores` accepts version-1 records from either mode to restore
-floating scores to original image coordinates. Outside the pipeline,
+annotation. Evaluation is deterministic. `restore_dense_scores` accepts version-1 and version-2 records from either mode
+to restore floating scores to original image coordinates. Outside the pipeline,
 `sample_panoptic_geometry(original_size, PanopticGeometryConfig(...), void_value=..., is_training=..., seed=...)` and
 `replay_panoptic_geometry(original_sample, record, class_values=..., thing_class_values=..., void_value=..., max_segments=...)`
 live beside their semantic counterparts in `justdata.vision.geometry`.

@@ -292,6 +292,30 @@ def test_default_training_geometry_produces_paired_512_crop_with_int64_seed():
     assert abs(resized[1] - resized[0] * 9 / 5) <= 0.5
 
 
+def test_equal_seed_values_select_the_same_view_for_int32_and_int64():
+    for seed in ([3, 7], [2**31 - 1, -5]):
+        records = [
+            sample_dense_geometry([1080, 1920], _config(), is_training=True, seed=value)
+            for value in (seed, np.asarray(seed), tf.constant(seed, tf.int64))
+        ]
+        for record in records[1:]:
+            for left, right in zip(
+                tf.nest.flatten(records[0]), tf.nest.flatten(record)
+            ):
+                np.testing.assert_array_equal(left, right)
+    pre, augment, _, _ = _pipeline(
+        color_jitter_kwargs={"brightness": 0.8, "p": 1.0, "p_grayscale": 0.0}
+    ).build(True)
+    sample = pre(_sample())
+    for seed in range(4):
+        views = [
+            augment(sample, tf.constant([seed, 11], dtype))
+            for dtype in (tf.int32, tf.int64)
+        ]
+        for left, right in zip(tf.nest.flatten(views[0]), tf.nest.flatten(views[1])):
+            np.testing.assert_array_equal(left, right)
+
+
 def test_restoration_rejects_crop_unknown_record_and_wrong_frame():
     sample = _sample()
     train = _geometry(

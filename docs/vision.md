@@ -458,8 +458,10 @@ is added if the crop size is not divisible by `patch_size`. The defaults produce
 by `min(train_crop_size / source_height, train_crop_size / source_width)`, then applies the same resize, crop, and flip.
 Exactly one training range is required. The `segmentation_a*` presets use this fit-scale policy. Use
 `pipeline.build(is_training=True)` with `augment(sample, seed)` or let `load_ds(..., dataset_type="train")` supply its
-seed. Both int32 and int64 two-element seeds are supported. The pipeline splits geometry and color seeds; geometry
-splits again in resize, crop-top, crop-left, and flip order.
+seed. Both int32 and int64 two-element seeds are supported. Seeds are widened to int64 first, so equal values select the
+same view whatever their dtype; NumPy integer arrays and `from_tensor_slices` columns default to int64, while Python
+lists become int32. The pipeline splits geometry and color seeds; geometry splits again in resize, crop-top, crop-left,
+and flip order.
 
 Evaluation preserves the entire rectangular frame. The longer side is capped at `eval_long_side` (default 1024); smaller
 images stay at their original size unless `eval_upscale=True`. Each scaled dimension rounds half up, with a minimum of

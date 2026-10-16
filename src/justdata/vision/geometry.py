@@ -138,19 +138,32 @@ def _bottom_right(amount):
     return tf.stack([0, amount[0], 0, amount[1]])
 
 
+def _canonical_seed(seed):
+    """Widen an int32 or int64 stateless seed of shape [2] to int64.
+
+    ``stateless_split`` draws in the seed dtype, so equal int32 and int64 seed
+    values would otherwise produce different views.
+    """
+    seed = tf.ensure_shape(tf.convert_to_tensor(seed), [2])
+    if seed.dtype not in (tf.int32, tf.int64):
+        raise TypeError("seed must have int32 or int64 dtype")
+    return tf.cast(seed, tf.int64)
+
+
 def sample_dense_geometry(
     original_size, config: DenseGeometryConfig, *, is_training, seed=None
 ):
-    """Create a version-1 record; training requires an int32/int64 seed of shape [2]."""
+    """Create a version-1 record; training requires an int32/int64 seed of shape [2].
+
+    Seeds are widened to int64 first, so equal values select the same view
+    whatever their dtype.
+    """
     original = tf.ensure_shape(tf.convert_to_tensor(original_size, tf.int32), [2])
     tf.debugging.assert_positive(original, message="original_size must be positive")
     if is_training:
         if seed is None:
             raise ValueError("training geometry requires a stateless seed")
-        seed = tf.ensure_shape(tf.convert_to_tensor(seed), [2])
-        if seed.dtype not in (tf.int32, tf.int64):
-            raise TypeError("seed must have int32 or int64 dtype")
-        seeds = tf.random.experimental.stateless_split(seed, 4)
+        seeds = tf.random.experimental.stateless_split(_canonical_seed(seed), 4)
         if config.train_resize_range is not None:
             low, high = config.train_resize_range
             target = tf.random.stateless_uniform(

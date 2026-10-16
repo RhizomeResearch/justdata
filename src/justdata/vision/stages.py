@@ -5,7 +5,7 @@ import tensorflow as tf
 
 from justdata.vision.augmentations.color import color_jitter, photometric_distortion
 from justdata.vision.augmentations.registry import get_crop_strategy
-from justdata.vision.geometry import _train_input_size
+from justdata.vision.geometry import _canonical_seed, _train_input_size
 from justdata.vision.transforms import nhwc_to_nchw, normalize, resize_image
 
 
@@ -270,7 +270,7 @@ def recorded_view_augmentations(
 
     def augmentations(sample, seed):
         geometry_seed, color_seed = tf.unstack(
-            tf.random.experimental.stateless_split(seed, 2)
+            tf.random.experimental.stateless_split(_canonical_seed(seed), 2)
         )
         if photometric_kwargs is not None:
             sample = sample | {

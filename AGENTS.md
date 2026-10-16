@@ -89,6 +89,10 @@ batch-level and training-only.
 - Keep the base dependency set modality-neutral. Put vision-only dependencies in the `vision` extra, audio source
   dependencies in `acoustic`, WILDS support in `wilds`, and external-reference dependencies in `golden`.
 - Change dependencies in `pyproject.toml`, then regenerate `uv.lock` with `uv lock`; do not hand-edit the lockfile.
+- Lock with the uv version pinned in `.gitlab-ci.yml` (0.11.16 at the 1.3.0 release). A newer devenv uv rewrites
+  unrelated markers whenever it relocks, and entering `devenv shell` runs `uv sync`, which relocks after any
+  `pyproject.toml` change (including a version bump) before your command runs. Ran, in this order:
+  `UVX=$(devenv shell -- sh -c 'command -v uvx' | tail -1)`, `jj restore uv.lock`, then `"$UVX" uv@0.11.16 lock`.
 - Maintain vision/acoustic parity for metadata propagation, evaluation views, seeded transforms, corruption datasets,
   numeric JAX metadata, `padding_mask`, and `as_numpy`.
 - Do not claim checkpoint or logits compatibility from frontend golden tests; follow the certification levels in
@@ -99,6 +103,8 @@ batch-level and training-only.
 ## Change And Verification Rules
 
 - Bug fixes must include a regression test that fails without the fix.
+- Compare resize or replay outputs bit-exactly only within one execution mode: with static image shapes, a `tf.function`
+  resize can differ from eager by about 1e-4 (confirmed for dense geometry replay in 1.2.1 and 1.3.0).
 - New or changed public behavior requires tests and updates to the relevant README, modality document, or runnable
   example.
 - Prefer focused tests while iterating. Before handoff, run the smallest set that fully covers the changed contract and

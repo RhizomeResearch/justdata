@@ -546,13 +546,15 @@ true. For resumed dense fitting, use the admitted-inventory epoch API in
 a loss or metric; an all-ignore real row contributes zero valid pixels, and padded rows contribute none.
 
 For an ordered list of files without a registered source, such as a fixed evaluation or training subset,
-`dense_views_from_files(image_paths, config, mask_paths=None, seeds=None, num_parallel_calls=tf.data.AUTOTUNE)` returns
-a `tf.data.Dataset` with one view per image, in input order, from a deterministic parallel map. Images decode to RGB
-`uint8` (JPEG, PNG, BMP, or the first GIF frame). Masks must be 8-bit grayscale PNG files; other encodings fail rather
-than let TensorFlow rescale 16-bit samples, map palettes through RGB, or decode lossy JPEG labels. With an `[N, 2]`
-int32 or int64 `seeds` array, element `i` is the training view for `seeds[i]`; without seeds, every element is the
-evaluation view. Each element equals `replay_dense_geometry` of the decoded sample and its sampled record, before
-normalization. Set `tf.data.Options().threading` on the returned dataset to bound its CPU use:
+`dense_views_from_files(image_paths, config, mask_paths=None, mask_dtype=tf.uint8, seeds=None, num_parallel_calls=tf.data.AUTOTUNE)`
+returns a `tf.data.Dataset` with one view per image, in input order, from a deterministic parallel map. Images decode to
+RGB `uint8` (JPEG, PNG, BMP, or the first GIF frame). Masks must be 8-bit grayscale PNG files, or 16-bit ones with
+`mask_dtype=tf.uint16`. Other encodings fail rather than let TensorFlow scale samples between bit depths, map palettes
+through RGB, or decode lossy JPEG labels. `decode_mask_png(contents, dtype=tf.uint8)` applies the same rule to encoded
+bytes from any reader and returns the stored IDs as an HW1 tensor. With an `[N, 2]` int32 or int64 `seeds` array,
+element `i` is the training view for `seeds[i]`; without seeds, every element is the evaluation view. Each element
+equals `replay_dense_geometry` of the decoded sample and its sampled record, before normalization. Set
+`tf.data.Options().threading` on the returned dataset to bound its CPU use:
 
 ```python
 import tensorflow as tf

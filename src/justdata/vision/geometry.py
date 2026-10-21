@@ -469,19 +469,28 @@ def _replay_spatial(sample, record):
 
 
 _PNG_SIGNATURE_AND_HEADER_CHUNK = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+# IHDR bit depth and grayscale colour type, at bytes 24 and 25 of the file.
+_GRAYSCALE_PNG_HEADER = {tf.uint8: b"\x08\x00", tf.uint16: b"\x10\x00"}
 
 
-def _read_mask_png(path):
-    contents = tf.io.read_file(path)
-    # decode_png rescales 16-bit samples, maps palettes through RGB, and also
-    # decodes JPEG data; each would silently rewrite class IDs.
+def decode_mask_png(contents, *, dtype=tf.uint8):
+    """Decode grayscale PNG label IDs as an HW1 ``dtype`` tensor, unchanged.
+
+    ``dtype`` is uint8 for 8-bit files or uint16 for 16-bit files. Any other
+    file fails: decode_png scales samples between bit depths, maps palettes
+    through RGB, and also decodes JPEG data, each rewriting IDs.
+    """
+    dtype = tf.as_dtype(dtype)
+    if dtype not in _GRAYSCALE_PNG_HEADER:
+        raise ValueError("dtype must be uint8 or uint16")
+    contents = tf.convert_to_tensor(contents, tf.string)
     tf.debugging.assert_equal(
         (tf.strings.substr(contents, 0, 16) == _PNG_SIGNATURE_AND_HEADER_CHUNK)
-        & (tf.strings.substr(contents, 24, 2) == b"\x08\x00"),
+        & (tf.strings.substr(contents, 24, 2) == _GRAYSCALE_PNG_HEADER[dtype]),
         True,
-        message="mask files must be 8-bit grayscale PNG",
+        message=f"masks must be {dtype.size * 8}-bit grayscale PNG",
     )
-    return tf.io.decode_png(contents, channels=1)
+    return tf.io.decode_png(contents, channels=1, dtype=dtype)
 
 
 def dense_views_from_files(
@@ -489,12 +498,14 @@ def dense_views_from_files(
     config: DenseGeometryConfig,
     *,
     mask_paths=None,
+    mask_dtype=tf.uint8,
     seeds=None,
     num_parallel_calls=tf.data.AUTOTUNE,
 ):
     """Replay one dense view per image file, in input order, in parallel.
 
-    Images decode to RGB uint8 and optional masks from 8-bit grayscale PNG.
+    Images decode to RGB uint8 and optional masks with ``decode_mask_png``:
+    8-bit grayscale PNG by default, or 16-bit with ``mask_dtype=tf.uint16``.
     Element ``i`` equals ``replay_dense_geometry`` of the decoded sample with
     the training record for ``seeds[i]`` (``[N, 2]`` int32 or int64), or with
     the evaluation record when ``seeds`` is None. Set threading options on the
@@ -517,7 +528,9 @@ def dense_views_from_files(
             )
         }
         if "mask" in column:
-            sample["mask"] = _read_mask_png(column["mask"])
+            sample["mask"] = decode_mask_png(
+                tf.io.read_file(column["mask"]), dtype=mask_dtype
+            )
         record = sample_dense_geometry(
             tf.shape(sample["image"])[:2],
             config,
@@ -688,6 +701,7 @@ __all__ = [
     "sample_panoptic_geometry",
     "validate_dense_sample",
     "replay_dense_geometry",
+    "decode_mask_png",
     "dense_views_from_files",
     "replay_panoptic_geometry",
     "restore_dense_scores",

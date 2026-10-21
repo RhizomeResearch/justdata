@@ -10,6 +10,7 @@ import justdata.vision  # noqa: F401
 from justdata.core import ExecutedConfig, get_pipeline, load_ds
 from justdata.vision.geometry import (
     DenseGeometryConfig,
+    decode_mask_png,
     dense_views_from_files,
     replay_dense_geometry,
     restore_dense_predictions,
@@ -358,12 +359,13 @@ def test_equal_seed_values_select_the_same_view_for_int32_and_int64():
             np.testing.assert_array_equal(left, right)
 
 
+@pytest.mark.parametrize("mask_dtype", [tf.uint8, tf.uint16])
 @pytest.mark.parametrize("training", [False, True])
-def test_file_views_match_eager_replay_in_input_order(tmp_path, training):
+def test_file_views_match_eager_replay_in_input_order(tmp_path, training, mask_dtype):
     rng = np.random.default_rng(11)
     samples, image_paths, mask_paths = [], [], []
     for index, shape in enumerate([(5, 9), (12, 7), (9, 9)]):
-        sample = _sample(*shape, dtype=np.uint8)
+        sample = _sample(*shape, dtype=mask_dtype.as_numpy_dtype)
         sample["image"] = tf.constant(rng.integers(0, 256, (*shape, 3), np.uint8))
         image_paths.append(tmp_path / f"image-{index}.png")
         image_paths[-1].write_bytes(tf.io.encode_png(sample["image"]).numpy())
@@ -377,6 +379,7 @@ def test_file_views_match_eager_replay_in_input_order(tmp_path, training):
             image_paths,
             config,
             mask_paths=mask_paths,
+            mask_dtype=mask_dtype,
             seeds=seeds,
             num_parallel_calls=3,
         )
@@ -410,6 +413,25 @@ def test_file_views_reject_masks_that_png_decoding_would_rewrite(tmp_path, encod
     dataset = dense_views_from_files([image_path], _config(), mask_paths=[mask_path])
     with pytest.raises(tf.errors.InvalidArgumentError, match="8-bit grayscale PNG"):
         list(dataset)
+
+
+@pytest.mark.parametrize(
+    "dtype,ids", [(tf.uint8, [0, 1, 200, 255]), (tf.uint16, [0, 1, 300, 65535])]
+)
+def test_mask_png_decoding_keeps_ids_and_refuses_other_bit_depths(dtype, ids):
+    stored = tf.constant([ids], dtype)[..., None]
+    contents = tf.io.encode_png(stored)
+    decoded = decode_mask_png(contents, dtype=dtype)
+    assert decoded.dtype == dtype
+    np.testing.assert_array_equal(decoded, stored)
+    # decode_png alone would scale these samples to the requested bit depth.
+    other = tf.uint16 if dtype == tf.uint8 else tf.uint8
+    with pytest.raises(
+        tf.errors.InvalidArgumentError, match=f"{other.size * 8}-bit grayscale PNG"
+    ):
+        decode_mask_png(contents, dtype=other)
+    with pytest.raises(ValueError, match="uint8 or uint16"):
+        decode_mask_png(contents, dtype=tf.int32)
 
 
 def test_restoration_rejects_crop_unknown_record_and_wrong_frame():

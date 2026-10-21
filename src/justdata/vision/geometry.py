@@ -298,6 +298,39 @@ def _check_record(record):
     return record
 
 
+def center_dense_crop(record, center, *, offset=(0, 0)):
+    """Return a training record of either mode with its crop centered on ``center``.
+
+    ``center`` is a ``[row, column]`` position in continuous original-frame
+    coordinates, where pixel ``(r, c)`` covers ``[r, r + 1) x [c, c + 1)``. It
+    is scaled to the resized frame, then the crop corner rounds half up, moves
+    by the integer ``offset`` in resized pixels, and is clipped to the corners
+    sampling can draw. Every other field is kept, including the sampled resize,
+    padding, and flip, so the record replays like a sampled one.
+    """
+    record = _check_record(record)
+    tf.debugging.assert_equal(
+        record["is_training"], True, message="only training crops can be centered"
+    )
+    center = tf.cast(tf.convert_to_tensor(center, dtype_hint=tf.float64), tf.float64)
+    offset = tf.convert_to_tensor(offset, dtype_hint=tf.int32)
+    if not offset.dtype.is_integer:
+        raise TypeError("offset must be in integer resized pixels")
+    size = record["crop_box"][2:]
+    scale = tf.cast(record["resized_size"], tf.float64) / tf.cast(
+        record["original_size"], tf.float64
+    )
+    before = tf.cast(record["pre_padding"][::2], tf.float64)
+    point = tf.ensure_shape(center, [2]) * scale + before
+    corner = tf.cast(tf.floor(point - tf.cast(size, tf.float64) / 2 + 0.5), tf.int32)
+    corner += tf.cast(tf.ensure_shape(offset, [2]), tf.int32)
+    padded = record["resized_size"] + tf.reduce_sum(
+        tf.reshape(record["pre_padding"], [2, 2]), axis=1
+    )
+    corner = tf.clip_by_value(corner, 0, padded - size)
+    return record | {"crop_box": tf.concat([corner, size], 0)}
+
+
 def validate_dense_sample(sample, class_values, ignore_value):
     """Check HWC RGB and integer HW/HW1 masks before any resampling or crop."""
     image = tf.ensure_shape(sample["image"], [None, None, 3])
@@ -699,6 +732,7 @@ __all__ = [
     "PanopticGeometryConfig",
     "sample_dense_geometry",
     "sample_panoptic_geometry",
+    "center_dense_crop",
     "validate_dense_sample",
     "replay_dense_geometry",
     "decode_mask_png",

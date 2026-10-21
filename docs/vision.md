@@ -545,6 +545,15 @@ true. For resumed dense fitting, use the admitted-inventory epoch API in
 [`inventory.md`](inventory.md#deterministic-epoch-replay). Combine row validity with `pixel_valid_mask` before computing
 a loss or metric; an all-ignore real row contributes zero valid pixels, and padded rows contribute none.
 
+For object-centric crops, `center_dense_crop(record, center, offset=(0, 0))` moves the crop of a sampled training record
+of either mode. `center` is a `[row, column]` position in continuous original-frame coordinates, where pixel `(r, c)`
+covers `[r, r + 1) × [c, c + 1)`; a box with exclusive ends `[top, left, bottom, right]` is centered at
+`((top + bottom) / 2, (left + right) / 2)`. The point is scaled to the resized frame, the crop corner rounds half up and
+moves by the integer `offset` in resized pixels, such as a jitter drawn from the caller's own seed, and the corner is
+clipped to the positions sampling can draw. Every other field, including the sampled resize, padding, and flip, is kept,
+so the record stores and replays like a sampled one, and draws that are not moved keep their views. Evaluation records
+are rejected. Choosing the points and how often to use them remains the caller's sampling policy.
+
 For an ordered list of files without a registered source, such as a fixed evaluation or training subset,
 `dense_views_from_files(image_paths, config, mask_paths=None, mask_dtype=tf.uint8, seeds=None, num_parallel_calls=tf.data.AUTOTUNE)`
 returns a `tf.data.Dataset` with one view per image, in input order, from a deterministic parallel map. Images decode to

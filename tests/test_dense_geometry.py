@@ -10,6 +10,7 @@ import justdata.vision  # noqa: F401
 from justdata.core import ExecutedConfig, get_pipeline, load_ds
 from justdata.vision.geometry import (
     DenseGeometryConfig,
+    center_dense_crop,
     decode_mask_png,
     dense_views_from_files,
     replay_dense_geometry,
@@ -168,6 +169,60 @@ def test_training_crop_flip_and_validity_replay_after_numeric_storage(tmp_path):
         for s in range(5)
     ]
     assert len({tuple(box) for box in different}) > 1
+
+
+def test_centered_crop_scales_rounds_offsets_and_clips_the_corner():
+    sample = _sample(10, 20)
+    # A 10 x 20 frame resizes to 20 x 40; 8 x 8 crop corners range over 12 x 32.
+    config = _config(
+        train_crop_size=8,
+        train_resize_range=(20, 20),
+        patch_size=4,
+        horizontal_flip_probability=0,
+    )
+    record = _geometry(sample, config, train=True)
+    for center, offset, corner in [
+        ((5, 10), (0, 0), [6, 16]),
+        ((5, 10), (1, -1), [7, 15]),
+        ((2.25, 2.25), (0, 0), [1, 1]),
+        ((0, 0), (0, 0), [0, 0]),
+        ((10, 20), (0, 0), [12, 32]),
+        ((5, 10), (100, -100), [12, 0]),
+    ]:
+        centered = center_dense_crop(record, center, offset=offset)
+        np.testing.assert_array_equal(centered["crop_box"], [*corner, 8, 8])
+        for key in record.keys() - {"crop_box"}:
+            np.testing.assert_array_equal(centered[key], record[key])
+        resized = np.repeat(np.repeat(sample["mask"].numpy(), 2, 0), 2, 1)
+        top, left = corner
+        np.testing.assert_array_equal(
+            replay_dense_geometry(sample, centered)["mask"],
+            resized[top : top + 8, left : left + 8],
+        )
+    # A crop larger than the resized frame keeps its only corner.
+    padded = _geometry(
+        _sample(3, 4), _config(train_crop_size=8, train_resize_range=(3, 3)), train=True
+    )
+    np.testing.assert_array_equal(
+        center_dense_crop(padded, (3, 4))["crop_box"], [0, 0, 8, 8]
+    )
+    with pytest.raises(tf.errors.InvalidArgumentError, match="only training crops"):
+        center_dense_crop(_geometry(sample), (5, 10))
+    with pytest.raises(TypeError, match="integer resized pixels"):
+        center_dense_crop(record, (5, 10), offset=(0.5, 0))
+
+
+@pytest.mark.parametrize("shape", [(1080, 1920), (400, 300), (1278, 958)])
+def test_centering_a_sampled_crop_on_its_own_center_keeps_the_record(shape):
+    for seed in range(8):
+        record = sample_dense_geometry(
+            shape, _config(), is_training=True, seed=[seed, 29]
+        )
+        box = record["crop_box"].numpy()
+        scale = np.asarray(shape) / record["resized_size"].numpy()
+        centered = center_dense_crop(record, (box[:2] + box[2:] / 2) * scale)
+        for key in record:
+            np.testing.assert_array_equal(centered[key], record[key])
 
 
 def test_all_ignore_and_unlabelled_views_have_no_pixel_supervision():

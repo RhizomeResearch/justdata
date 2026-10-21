@@ -750,6 +750,7 @@ def _panoptic_options(class_values, thing_class_values, max_segments, void_value
 
 
 def _resolve_panoptic_config(config, is_training):
+    from justdata.vision.encodings.panoptic_targets import _OVERFLOW_POLICIES
     from justdata.vision.geometry import PanopticGeometryConfig, _train_input_size
     from justdata.vision.tasks.panoptic import make_panoptic_postprocessing
 
@@ -793,6 +794,15 @@ def _resolve_panoptic_config(config, is_training):
     normalization = _validate_recorded_postprocess(
         post, ("normalize_image", "permute_image", "emit_panoptic_targets")
     )
+    capacity = post["max_targets"]
+    if capacity is None:
+        capacity = panoptic["max_segments"]
+    elif type(capacity) is not int or capacity <= 0:
+        raise ValueError("postproc_kwargs.max_targets must be a positive integer")
+    if post["overflow_policy"] not in _OVERFLOW_POLICIES:
+        raise ValueError(
+            f"postproc_kwargs.overflow_policy must be one of {_OVERFLOW_POLICIES}"
+        )
     keep_original = config.get("keep_original_annotations", False)
     if type(keep_original) is not bool:
         raise ValueError("keep_original_annotations must be boolean")
@@ -838,13 +848,14 @@ def _resolve_panoptic_config(config, is_training):
                 "config": post,
                 "geometry": None if is_training else geometry_contract,
                 "target_set": {
-                    "version": 1,
-                    "capacity": panoptic["max_segments"],
+                    "version": 2,
+                    "capacity": capacity,
                     "class_values": panoptic["class_values"],
                     "thing_class_values": panoptic["thing_class_values"],
                     "void_value": panoptic["void_value"],
                     "crowd_policy": "exclude_supervision",
                     "stuff_policy": "merge_by_category",
+                    "overflow_policy": post["overflow_policy"],
                 }
                 if post["emit_panoptic_targets"]
                 else None,

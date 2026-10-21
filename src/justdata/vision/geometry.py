@@ -16,6 +16,7 @@ import tensorflow as tf
 from justdata.vision.encodings.panoptic_targets import (
     _lookup,
     _pad_segment_table,
+    _valid_sorted_segments,
     validate_panoptic_sample,
 )
 from justdata.vision.encodings.semantic_targets import (
@@ -722,7 +723,7 @@ def replay_panoptic_geometry(
         annotation = categorical(sample["annotation_valid_mask"], False)
         result["annotation_valid_mask"] = annotation
         valid &= annotation
-    _, crowd = _lookup(mask, segments)
+    _, crowd = _lookup(mask, *_valid_sorted_segments(segments))
     valid &= ~crowd
     return result | {
         "panoptic_mask": mask,

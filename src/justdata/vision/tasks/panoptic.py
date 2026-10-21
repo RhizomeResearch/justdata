@@ -73,7 +73,11 @@ def make_panoptic_postprocessing(
     normalization_params=((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     permute_image=True,
     emit_panoptic_targets=False,
+    max_targets=None,
+    overflow_policy="error",
 ):
+    targets = config if max_targets is None else config | {"max_segments": max_targets}
+
     def postprocessing(sample, **kwargs):
         if not is_training:
             record = sample_panoptic_geometry(
@@ -93,7 +97,9 @@ def make_panoptic_postprocessing(
             permute_image=permute_image,
         )
         if emit_panoptic_targets:
-            sample = with_panoptic_targets(sample, **config)
+            sample = with_panoptic_targets(
+                sample, **targets, overflow_policy=overflow_policy
+            )
         return sample
 
     return postprocessing

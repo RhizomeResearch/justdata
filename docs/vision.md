@@ -668,8 +668,8 @@ and `panoptic_kwargs` with `class_values`, `thing_class_values`, and `max_segmen
 (int64), `category_ids` (int32), `is_crowd` (bool), and `valid_mask` (bool). Optional `annotation_valid_mask` is HW
 bool. `decode_panoptic_rgb` converts an RGB ID image with `R + 256 G + 65536 B`; it never rounds IDs through float32.
 Validation checks each segment ID and category, rejects duplicates, and requires the nonvoid map IDs to match the valid
-table rows exactly. The declared `max_segments` is a fixed per-sample table and target capacity; overflow raises an
-error rather than dropping instances.
+table rows exactly. The declared `max_segments` is a fixed per-sample table capacity; a larger table raises an error
+rather than dropping segments. It is also the default target capacity.
 
 The pipeline uses the same sampled resize, crop, flip, and patch padding as the semantic geometry above. Both modes use
 geometry record version 2. The panoptic record carries an int64 `mask_fill_value` equal to `void_value` (default 0) and
@@ -684,12 +684,34 @@ to restore floating scores to original image coordinates. Outside the pipeline,
 live beside their semantic counterparts in `justdata.vision.geometry`.
 
 Set `postproc_kwargs={"emit_panoptic_targets": True}` to create fixed-capacity `targets`: `masks` is bool
-`[max_segments, H, W]`, with matching `class_ids`, `class_indices`, `segment_ids`, `is_thing`, `target_valid_mask`,
-`num_targets`, `pixel_valid_mask`, and `supervision_valid`. Each visible thing segment gets its own mask even when
+`[max_targets, H, W]`, with matching `class_ids`, `class_indices`, `segment_ids`, `is_thing`, `target_valid_mask`,
+`num_targets`, `num_overflow_things`, `pixel_valid_mask`, and `supervision_valid`. Stuff targets come first in
+`class_values` order, then things by category and segment ID. Each visible thing segment gets its own mask even when
 several share a category. Visible stuff segments of one category merge into one mask. Crowd pixels never enter panoptic
 targets or panoptic pixel supervision. Void and padded pixels are ignored. An all-void or all-crowd view has no targets
 and `supervision_valid=False`. `padding_mask` from the shared loader marks real batch rows. Disable target emission to
-use the compact panoptic map and table directly, especially when `max_segments × H × W` masks would be large.
+use the compact panoptic map and table directly, especially when `max_targets × H × W` masks would be large.
+
+`postproc_kwargs.max_targets` (default `None`, meaning `max_segments`) sets the target capacity on its own, so a table
+can list every instance of a crowded frame while the targets match a model's query budget. Crowd rows and further stuff
+segments of a category take no target. `overflow_policy` decides what happens when a view's visible things do not fit
+beside its stuff targets:
+
+| `overflow_policy`     | Targets and supervision                                                                                 |
+| :-------------------- | :------------------------------------------------------------------------------------------------------ |
+| `error` (default)     | The view fails with "panoptic target capacity exceeded".                                                |
+| `exclude_supervision` | The things with the most valid pixels that fit keep their targets; the others leave `pixel_valid_mask`. |
+| `merge_by_category`   | The largest things keep their targets; each category's others share one target after the things.        |
+
+The two other policies rank things by valid pixel count; ties keep target order, so the lower segment ID wins within a
+category. Merging keeps as many of the largest things as fit while each category with things left over still has its
+shared target, so every valid pixel keeps a target of its class. A shared target has `is_thing=False` and the void
+segment ID; a category left with a single thing keeps it as an instance instead, since it takes one target either way.
+`num_overflow_things` counts the visible things without their own target, so pipelines can log how often a policy acts.
+The executed configuration's `target_set` (version 2) records the capacity and `overflow_policy`. A view still fails
+when its stuff targets exceed the capacity or, when merging, its stuff targets plus one per visible thing category do.
+Called directly, `panoptic_map_to_targets(..., max_segments=..., overflow_policy="error")` and `with_panoptic_targets`
+take the target capacity as `max_segments`; the segment table passed to them may hold more rows.
 
 `panoptic_map_to_semantic` projects segment categories into caller-specified semantic IDs. It retains crowd categories
 by default; pass `include_crowd=False` to ignore them. The semantic and panoptic supervision policies are distinct. Keep
@@ -725,7 +747,7 @@ author's `image_list.txt` to identify records, reconciles all image, semantic-ma
 checks the decoded pairs, and then calls `admit_inventory`. Panoptic mode checks that the segment table references match
 the panoptic PNG and that its semantic projection matches the supplied semantic PNG. It stages only the selected
 records. An omitted `--limit` can create a large decoded TFRecord snapshot; panoptic target masks can also be large for
-scenes with many instances.
+scenes with many instances unless `max_targets` bounds them.
 
 | `--labels` | Source label                                                                                                 | Batched supervision                                                        |
 | :--------- | :----------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------- |

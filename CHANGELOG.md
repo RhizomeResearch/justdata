@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.4.0 — 2026-10-21
+
+This release adds composable object-centric dense views, exact 16-bit mask decoding, and independent panoptic target
+budgets with explicit overflow policies.
+
+### Added
+
+- `justdata.vision.geometry.decode_mask_png(contents, dtype=tf.uint8)` decodes 8-bit or 16-bit grayscale PNG label IDs
+  without rescaling. The requested dtype must match the stored bit depth; palette, color, and JPEG masks remain
+  rejected. `dense_views_from_files` accepts `mask_dtype=tf.uint16` for 16-bit masks and retains its 8-bit default.
+- `center_dense_crop(record, center, offset=(0, 0))` centers a sampled semantic or panoptic training crop on an
+  original-coordinate point, with optional integer offsets in resized pixels. It preserves the sampled resize, flip,
+  padding, and record version, and clips the corner to valid crop origins. Evaluation records are rejected.
+- `replay_dense_geometry` and `replay_panoptic_geometry` accept `categorical_fields={name: fill}` for further paired
+  integer or boolean HW/HW1 maps. They preserve IDs and dtypes, validate source dimensions and fills, and return HW maps
+  without changing pixel supervision. See the composed example in
+  [numeric records and replay](docs/vision.md#numeric-records-and-replay).
+- Panoptic `postproc_kwargs.max_targets` sets a target budget independently of the source table's `max_segments`.
+  `overflow_policy="error"` retains strict failure by default; `"exclude_supervision"` keeps the largest things that fit
+  and excludes overflow pixels from supervision; `"merge_by_category"` retains the largest things that fit alongside
+  per-category overflow targets, preserving class-mask coverage. Ties follow configured category order, then segment ID.
+  See [panoptic segmentation](docs/vision.md#13-panoptic-segmentation).
+
+### Fixed
+
+- Direct `panoptic_map_to_targets` and `with_panoptic_targets` calls no longer apply their target capacity to the
+  segment table. Crowd rows and multiple stuff segments of one category can now exceed the target budget when the
+  resulting targets fit; map/table consistency and category validation remain strict.
+
+### Compatibility
+
+- Geometry records and sampling streams are unchanged. Extra categorical fields still pass through untransformed unless
+  explicitly selected, and file-list mask decoding remains 8-bit by default.
+- Panoptic targets always include the scalar int32 `num_overflow_things`, counting visible things without their own
+  target. This adds a key to the dataset element structure, including when the default `"error"` policy is used.
+- The executed panoptic configuration gains `max_targets` and `overflow_policy`; its `target_set` is version 2 and
+  records the resolved target capacity and policy. Executed-configuration digests change for existing panoptic
+  pipelines, so configurations and caches keyed by those digests must be regenerated.
+- Merged overflow targets have `is_thing=False` and the void segment ID. They preserve semantic coverage but not
+  individual instance supervision. Use `"error"` or `"exclude_supervision"` when each emitted thing-class target must
+  remain an individual instance.
+
 ## 1.3.0 — 2026-10-16
 
 This release replays dense training views without resampling the whole frame, makes their seeds independent of the

@@ -162,6 +162,45 @@ def test_crop_removes_instance_and_preserves_remaining_ids():
     np.testing.assert_array_equal(view["segments"]["bbox"][3], [3, 0, 1, 2])
 
 
+def test_panoptic_replay_carries_categorical_fields_and_commutes_with_projection():
+    sample = validate_panoptic_sample(_sample(), **CONFIG)
+    projection = dict(semantic_values=(0, 1, 2, 0), **CONFIG)
+    semantic = panoptic_map_to_semantic(
+        sample["panoptic_mask"], sample["segments"], **projection
+    )
+    spatial = dict(train_crop_size=4, train_resize_range=(6, 6), patch_size=1)
+    for seed in range(4):
+        panoptic_record = sample_panoptic_geometry(
+            [4, 5],
+            PanopticGeometryConfig(**spatial),
+            void_value=0,
+            is_training=True,
+            seed=[seed, 1],
+        )
+        view = replay_panoptic_geometry(
+            sample | {"semantic": semantic},
+            panoptic_record,
+            categorical_fields={"semantic": 255},
+            **CONFIG,
+        )
+        dense = replay_dense_geometry(
+            {"image": sample["image"], "mask": semantic},
+            sample_dense_geometry(
+                [4, 5],
+                DenseGeometryConfig(class_values=(0, 1, 2), **spatial),
+                is_training=True,
+                seed=[seed, 1],
+            ),
+        )
+        np.testing.assert_array_equal(view["semantic"], dense["mask"])
+        np.testing.assert_array_equal(
+            panoptic_map_to_semantic(
+                view["panoptic_mask"], view["segments"], **projection
+            ),
+            dense["mask"],
+        )
+
+
 def test_crowd_excluded_from_panoptic_supervision_but_semantic_projection_keeps_it():
     sample = validate_panoptic_sample(_sample(crowd=True), **CONFIG)
     geometry = PanopticGeometryConfig(eval_long_side=5, patch_size=1)

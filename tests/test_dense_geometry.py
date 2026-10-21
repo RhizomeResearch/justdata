@@ -171,6 +171,66 @@ def test_training_crop_flip_and_validity_replay_after_numeric_storage(tmp_path):
     assert len({tuple(box) for box in different}) > 1
 
 
+def test_categorical_fields_replay_like_the_mask_with_their_own_fill():
+    sample = _sample(11, 19)
+    ids = np.arange(11 * 19, dtype=np.uint16).reshape(11, 19) + 300
+    region = ids % 3 == 0
+    config = _config(
+        train_crop_size=7,
+        train_resize_range=(11, 11),
+        patch_size=4,
+        horizontal_flip_probability=1,
+    )
+    record = _geometry(sample, config, train=True)
+    view = replay_dense_geometry(
+        sample | {"ids": tf.constant(ids)[..., None], "region": tf.constant(region)},
+        record,
+        categorical_fields={"ids": 0, "region": False},
+    )
+    ids_as_mask = replay_dense_geometry(
+        {"image": sample["image"], "mask": tf.constant(ids)},
+        record
+        | {
+            "class_values": tf.constant(ids.ravel(), tf.int32),
+            "mask_fill_value": tf.constant(0, tf.int32),
+        },
+    )
+    assert view["ids"].dtype == tf.uint16
+    assert view["ids"].shape == (8, 8)
+    np.testing.assert_array_equal(view["ids"], ids_as_mask["mask"])
+    assert np.all(view["ids"].numpy()[7] == 0)
+    top, left, height, width = record["crop_box"].numpy()
+    expected_region = np.zeros((8, 8), bool)
+    expected_region[:7, :7] = region[top : top + height, left : left + width][:, ::-1]
+    np.testing.assert_array_equal(view["region"], expected_region)
+    plain = replay_dense_geometry(sample, record)
+    for key in ("image", "mask", "source_valid_mask", "pixel_valid_mask"):
+        np.testing.assert_array_equal(view[key], plain[key])
+
+
+@pytest.mark.parametrize(
+    "fields,error,match",
+    [
+        ({"absent": 0}, ValueError, "no categorical field"),
+        ({"mask": 0}, ValueError, "own contract"),
+        ({"ids": -1}, ValueError, "fits its dtype"),
+        ({"ids": True}, ValueError, "fits its dtype"),
+        ({"region": 0}, TypeError, "must be boolean"),
+        ({"depth": 0}, TypeError, "dtype"),
+        ({"small": 0}, tf.errors.InvalidArgumentError, "size mismatch"),
+    ],
+)
+def test_categorical_fields_reject_invalid_maps_and_fills(fields, error, match):
+    sample = _sample() | {
+        "ids": tf.zeros([5, 9], tf.uint16),
+        "region": tf.zeros([5, 9], tf.bool),
+        "depth": tf.zeros([5, 9], tf.float32),
+        "small": tf.zeros([4, 9], tf.int32),
+    }
+    with pytest.raises(error, match=match):
+        replay_dense_geometry(sample, _geometry(sample), categorical_fields=fields)
+
+
 def test_centered_crop_scales_rounds_offsets_and_clips_the_corner():
     sample = _sample(10, 20)
     # A 10 x 20 frame resizes to 20 x 40; 8 x 8 crop corners range over 12 x 32.

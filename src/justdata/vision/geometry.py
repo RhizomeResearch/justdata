@@ -19,9 +19,24 @@ from justdata.vision.encodings.panoptic_targets import (
     validate_panoptic_sample,
 )
 from justdata.vision.encodings.semantic_targets import (
+    _CATEGORICAL_DTYPES,
     _assert_declared_labels,
     _categorical_mask,
     _class_contract,
+)
+
+# Sample fields that replay validates, derives, or transforms itself.
+_REPLAYED_FIELDS = frozenset(
+    {
+        "image",
+        "mask",
+        "panoptic_mask",
+        "segments",
+        "annotation_valid_mask",
+        "geometry",
+        "source_valid_mask",
+        "pixel_valid_mask",
+    }
 )
 
 
@@ -356,6 +371,37 @@ def validate_dense_sample(sample, class_values, ignore_value):
     return result
 
 
+def _categorical_fields(sample, fields):
+    """Check extra integer or boolean HW/HW1 maps and their constant fills."""
+    checked = {}
+    for name, fill in (fields or {}).items():
+        if name in _REPLAYED_FIELDS:
+            raise ValueError(f"{name} is replayed by its own contract")
+        if name not in sample:
+            raise ValueError(f"sample has no categorical field {name}")
+        field = tf.convert_to_tensor(sample[name])
+        if field.dtype == tf.bool:
+            if type(fill) is not bool:
+                raise TypeError(f"{name} fill must be boolean")
+        elif field.dtype in _CATEGORICAL_DTYPES:
+            if type(fill) is not int or not field.dtype.min <= fill <= field.dtype.max:
+                raise ValueError(f"{name} fill must be an integer that fits its dtype")
+        else:
+            raise TypeError(
+                f"{name} must have bool/uint8/uint16/int16/int32/int64 dtype"
+            )
+        if field.shape.rank == 3:
+            field = tf.squeeze(field, axis=-1)
+        field = tf.ensure_shape(field, [None, None])
+        tf.debugging.assert_equal(
+            tf.shape(field),
+            tf.shape(sample["image"])[:2],
+            message=f"image/{name} size mismatch",
+        )
+        checked[name] = field, fill
+    return checked
+
+
 def _nearest(tensor, size, start, stop):
     """Sample rows and columns ``[start, stop)`` of ``tensor`` resized to ``size``."""
     # Gather directly so categorical int64 IDs never pass through float32.
@@ -397,14 +443,18 @@ def _pad_rgb(image, widths, record):
     return tf.cond(record["image_pad_mode"] == 0, constant, mirrored)
 
 
-def replay_dense_geometry(sample, record):
+def replay_dense_geometry(sample, record, *, categorical_fields=None):
     """Apply a stored record to the original HWC sample, without sampling.
 
-    Unknown sample fields pass through. ``source_valid_mask`` marks image
-    support including ignored annotations; ``pixel_valid_mask`` additionally
-    excludes ignore IDs and unavailable annotations (all false without a mask).
-    Replay covers geometry; callers may apply photometric transforms before or
-    after replay, depending on the pipeline.
+    ``categorical_fields`` maps further sample fields to their fill values.
+    Each is an integer or boolean HW/HW1 map of the source size, replayed like
+    the mask with its own fill; it returns HW in its dtype, is not checked
+    against class values, and does not change validity. Other unknown sample
+    fields pass through unchanged. ``source_valid_mask`` marks image support
+    including ignored annotations; ``pixel_valid_mask`` additionally excludes
+    ignore IDs and unavailable annotations (all false without a mask). Replay
+    covers geometry; callers may apply photometric transforms before or after
+    replay, depending on the pipeline.
     """
     record = _check_record(record)
     tf.debugging.assert_positive(
@@ -414,7 +464,10 @@ def replay_dense_geometry(sample, record):
     sample = validate_dense_sample(
         sample, record["class_values"], record["mask_fill_value"]
     )
+    fields = _categorical_fields(sample, categorical_fields)
     result, categorical = _replay_spatial(sample, record)
+    for name, (field, fill) in fields.items():
+        result[name] = categorical(field, fill)
     support = result["source_valid_mask"]
     if "mask" in sample:
         mask = categorical(sample["mask"], record["mask_fill_value"])
@@ -623,9 +676,20 @@ def _visible_segments(mask, segments, max_segments):
 
 
 def replay_panoptic_geometry(
-    sample, record, *, class_values, thing_class_values, void_value, max_segments
+    sample,
+    record,
+    *,
+    class_values,
+    thing_class_values,
+    void_value,
+    max_segments,
+    categorical_fields=None,
 ):
-    """Replay a record of either version, including integer map and crowd validity."""
+    """Replay a record of either version, including integer map and crowd validity.
+
+    ``categorical_fields`` replays further maps as ``replay_dense_geometry``
+    does.
+    """
     record = _check_record(record)
     tf.debugging.assert_equal(
         tf.size(record["class_values"]),
@@ -646,7 +710,10 @@ def replay_panoptic_geometry(
         void_value=void_value,
         max_segments=max_segments,
     )
+    fields = _categorical_fields(sample, categorical_fields)
     result, categorical = _replay_spatial(sample, record)
+    for name, (field, fill) in fields.items():
+        result[name] = categorical(field, fill)
     mask = categorical(sample["panoptic_mask"], void_value)
     segments = _visible_segments(mask, sample["segments"], max_segments)
     support = result["source_valid_mask"]

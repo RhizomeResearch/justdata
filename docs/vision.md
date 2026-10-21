@@ -554,6 +554,14 @@ clipped to the positions sampling can draw. Every other field, including the sam
 so the record stores and replays like a sampled one, and draws that are not moved keep their views. Evaluation records
 are rejected. Choosing the points and how often to use them remains the caller's sampling policy.
 
+`replay_dense_geometry(original_sample, record, categorical_fields={"instances": 0})` also replays further integer or
+boolean HW or HW1 maps of the source size, such as instance IDs or region masks. The mapping gives each field's fill
+value, which must fit its dtype. Each field uses the mask's nearest sampling, crop, and flip, pads with its own fill,
+and returns HW in its own dtype. These fields are not checked against `class_values` and do not change pixel validity.
+Without the argument, such fields pass through at their original size. `replay_panoptic_geometry` accepts the same
+argument. Panoptic annotations do not need it to obtain a semantic view: the projection is per pixel, so
+`panoptic_map_to_semantic` of a replayed panoptic view equals the replayed projection.
+
 For an ordered list of files without a registered source, such as a fixed evaluation or training subset,
 `dense_views_from_files(image_paths, config, mask_paths=None, mask_dtype=tf.uint8, seeds=None, num_parallel_calls=tf.data.AUTOTUNE)`
 returns a `tf.data.Dataset` with one view per image, in input order, from a deterministic parallel map. Images decode to
@@ -579,6 +587,37 @@ views = dense_views_from_files(
     seeds=[[17, 1], [17, 2]],
     num_parallel_calls=8,
 ).with_options(options)
+```
+
+For other views, compose the same steps in a function and map it over `tf.data.Dataset.from_tensor_slices` columns with
+`deterministic=True`. For example, a training crop centered on an object, with its 16-bit instance map:
+
+```python
+import tensorflow as tf
+from justdata.vision.geometry import (
+    DenseGeometryConfig,
+    center_dense_crop,
+    decode_mask_png,
+    replay_dense_geometry,
+    sample_dense_geometry,
+)
+
+config = DenseGeometryConfig(class_values=(0, 1, 2))
+
+
+def object_view(image_path, mask_path, instances_path, seed, center, offset):
+    sample = {
+        "image": tf.io.decode_image(
+            tf.io.read_file(image_path), channels=3, expand_animations=False
+        ),
+        "mask": decode_mask_png(tf.io.read_file(mask_path)),
+        "instances": decode_mask_png(tf.io.read_file(instances_path), dtype=tf.uint16),
+    }
+    record = sample_dense_geometry(
+        tf.shape(sample["image"])[:2], config, is_training=True, seed=seed
+    )
+    record = center_dense_crop(record, center, offset=offset)
+    return replay_dense_geometry(sample, record, categorical_fields={"instances": 0})
 ```
 
 ### Semantic class-mask targets

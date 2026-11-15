@@ -11,7 +11,9 @@ test:
     NIX_CONFIG: "accept-flake-config = true\nexperimental-features = nix-command flakes"
   before_script:
     - git config --global --add safe.directory $CI_PROJECT_DIR
-    - nix profile install --accept-flake-config github:cachix/devenv/099ac65fcef79e88127bdc06adbd1ea94255274a
+    # devenv 2.4.0. Keep the CLI in step with the devenv input in devenv.lock: an older CLI
+    # holds the Nix store while the locked tasks wait to migrate it, and the job hangs.
+    - nix profile install --accept-flake-config github:cachix/devenv/b904dcb51fe48c30db250038241507f60752f222
   script:
     - devenv shell uv lock --check
     - devenv test
@@ -49,7 +51,9 @@ golden:
     NIX_CONFIG: "accept-flake-config = true\nexperimental-features = nix-command flakes"
   before_script:
     - git config --global --add safe.directory $CI_PROJECT_DIR
-    - nix profile install --accept-flake-config github:cachix/devenv/099ac65fcef79e88127bdc06adbd1ea94255274a
+    # devenv 2.4.0. Keep the CLI in step with the devenv input in devenv.lock: an older CLI
+    # holds the Nix store while the locked tasks wait to migrate it, and the job hangs.
+    - nix profile install --accept-flake-config github:cachix/devenv/b904dcb51fe48c30db250038241507f60752f222
   script:
     - devenv shell uv sync --extra golden
     - devenv shell uv run pytest -o addopts= -m golden --junitxml=golden.xml

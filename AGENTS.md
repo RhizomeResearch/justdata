@@ -93,6 +93,10 @@ batch-level and training-only.
   unrelated markers whenever it relocks, and entering `devenv shell` runs `uv sync`, which relocks after any
   `pyproject.toml` change (including a version bump) before your command runs. Ran, in this order:
   `UVX=$(devenv shell -- sh -c 'command -v uvx' | tail -1)`, `jj restore uv.lock`, then `"$UVX" uv@0.11.16 lock`.
+- When updating `devenv.lock`, also move the devenv CLI pinned by `nix profile install` in `.gitlab-ci.yml` to the
+  matching release. With CLI 2.1.3 and modules newer than 2.4.0, the `devenv:python:uv` shell task waits forever for
+  "exclusive access to the Nix store" and the `test` and `golden` jobs hit the 1-hour timeout. Confirmed in 1.5.0 by
+  running the CI image `nixos/nix@sha256:1a711b6…` under podman with the repository mounted at `/builds/justdata`.
 - Maintain vision/acoustic parity for metadata propagation, evaluation views, seeded transforms, corruption datasets,
   numeric JAX metadata, `padding_mask`, and `as_numpy`.
 - Do not claim checkpoint or logits compatibility from frontend golden tests; follow the certification levels in

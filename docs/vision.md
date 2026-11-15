@@ -955,3 +955,68 @@ values in the code block above illustrate the generic API and are not a complete
 resize anchor for small objects, explicitly replace both range fields, for example
 `"geometry_kwargs": {"train_scale_range": None, "train_resize_range": (512, 1024)}`. Keep the task's class or panoptic
 overrides alongside those values.
+
+## 16. Compositing annotated instances
+
+`justdata.vision.compositing.composite_instances` pastes annotated object crops into a frame and updates its dense
+labels. It runs eagerly, outside `tf.function`, and is meant for offline rendering.
+
+```python
+import numpy as np
+import tensorflow as tf
+
+from justdata.vision.compositing import (
+    BlendingRule,
+    Instance,
+    PlacementRule,
+    composite_instances,
+)
+from justdata.vision.horizon import Horizon
+
+boat = Instance(
+    image=crop_rgb_uint8,  # [h, w, 3]; its bottom row is the waterline
+    alpha=crop_mask,  # [h, w] bool or float in [0, 1]
+    class_id=3,  # None makes a null paste
+    source_id="frame_0412/instance_7",
+    anchor_row_fraction=0.71,  # waterline row / source image height
+    source_horizon_offset_px=88.0,  # source horizon to waterline; for horizon scaling
+)
+result = composite_instances(
+    frame_uint8,
+    class_map,
+    [boat],
+    allowed=water_map,  # where anchors may fall, chosen by the caller
+    placement=PlacementRule(scale="horizon", min_visible_pixels=64, border_margin_px=8),
+    blending=BlendingRule(mode="feather", harmonization_strength=0.5),
+    seed=tf.constant([frame_index, 3], tf.int32),
+    horizon=Horizon(612.0, 640.0),
+    instance_map=instance_ids,  # optional
+    valid=None,  # optional bool map of overwritable pixels
+)
+```
+
+- **Placement.** The anchor is the bottom centre of the crop. `keep_row` pastes at scale 1 with the anchor on row
+  `int(anchor_row_fraction * height)`. `horizon` draws the anchor among all `allowed` pixels and scales by the anchor's
+  distance below the target horizon divided by `source_horizon_offset_px`. An attempt fails with the reason
+  `no_allowed_anchor`, `above_horizon`, `outside_margin`, `outside_allowed` (more than `max_outside_allowed_share` of
+  the label footprint on non-allowed pixels), `overlap` (unless `allow_overlap`), `too_small` (fewer than
+  `min_visible_pixels`), or `no_null_source`. After `max_attempts`, or at once when no anchor exists, the instance is
+  rejected. Its record keeps the count per reason; nothing is substituted.
+- **Blending.** `hard` uses the alpha thresholded at 0.5. `feather` blurs it with a Gaussian of `feather_sigma_px`.
+  `poisson` follows OpenCV's `seamlessClone(NORMAL_CLONE)` through `justdata.vision.poisson.seamless_clone`, which
+  changes the footprint's bounding box plus one pixel and truncates like OpenCV. Harmonization moves the instance's
+  CIELAB mean and standard deviation toward a background ring of `harmonization_ring_px` by `harmonization_strength`.
+  Pixel sizes refer to a 1024-pixel-wide image and scale with the width.
+- **Labels.** The class (and a new instance ID, counting up from the map's maximum plus one) is written where the final
+  alpha is at least 0.5 and `valid` holds; `pasted` marks exactly those pixels, and no other label changes. Pixels
+  outside `valid` are never written.
+- **Null pastes.** An instance with `class_id=None` takes background from another allowed location of the same original
+  frame whose box does not intersect the destination box. It goes through the same placement and blending, writes no
+  label, and marks `null_pasted`. A null paste over an earlier paste restores the original labels there.
+- **Records.** `result.records` has one `PasteRecord` per requested instance, in order. Each has its status, its
+  reasons, and the attempt count. A placed instance also has its box, anchor, null source anchor, scale, visible pixels
+  in the final maps, instance ID, and resolved blending. `result.identity` digests the `CompositeDescriptor` of both
+  rules and the fixed conventions.
+
+Draws use `stateless_fold_in(stateless_fold_in(seed, instance_index), attempt)` with Philox, so the same inputs and seed
+give the same result.

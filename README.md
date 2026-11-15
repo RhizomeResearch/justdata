@@ -955,6 +955,10 @@ See [continuous strength](docs/vision.md#continuous-strength-episodes-and-scene-
 [scene condition corruptions](docs/vision.md#scene-condition-corruptions) for the contract, the tables, and their
 sources, and `examples/vision/maritime_conditions.py` for a drift over an episode.
 
+To add rare objects, `composite_instances` pastes annotated crops onto caller-chosen anchor pixels, updates the class
+and instance maps, and records every request as placed or rejected; see
+[compositing annotated instances](docs/vision.md#16-compositing-annotated-instances).
+
 ______________________________________________________________________
 
 ## Audio Corruption Benchmark

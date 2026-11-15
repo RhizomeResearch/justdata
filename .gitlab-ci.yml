@@ -53,7 +53,7 @@ golden:
   script:
     - devenv shell uv sync --extra golden
     - devenv shell uv run pytest -o addopts= -m golden --junitxml=golden.xml
-    - devenv shell python tests/acoustic/golden/check_report.py golden.xml --expected 23
+    - devenv shell python tests/acoustic/golden/check_report.py golden.xml --expected 26
 
 build:distribution:
   stage: build

@@ -3,7 +3,7 @@
 ## Unreleased
 
 This release renders controlled scene conditions, such as haze, low light, glitter, and lens droplets, at continuous
-strengths with episode-persistent structure, and stacks them.
+strengths with episode-persistent structure, and stacks them. It also composites annotated instances into dense labels.
 
 ### Added
 
@@ -17,6 +17,12 @@ strengths with episode-persistent structure, and stacks them.
 - `apply_corruption_stack(image, *, steps, seed, episode_seed=None, ...)` applies ordered steps in float, rounds once,
   and records a stack identity over the ordered step identities and strengths.
 - `justdata.vision.horizon.Horizon` describes a horizon line and, optionally, the camera height and focal length.
+- `justdata.vision.compositing.composite_instances` pastes annotated instances, or background null pastes, into a frame.
+  It updates the class and instance maps, enforces placement constraints, blends with hard, feathered, or Poisson edges
+  and optional CIELAB harmonization, and records each request as placed or rejected with counted reasons. See
+  [compositing](docs/vision.md#16-compositing-annotated-instances).
+- `justdata.vision.poisson.seamless_clone` reproduces OpenCV `seamlessClone(NORMAL_CLONE)` with an FFT-based sine
+  transform solver; a golden test compares them.
 - Ten version-1.0.0 photometric conditions: `haze`, `low_light`, `sun_glitter`, `lens_droplets`, `rain`, `motion_blur`,
   `overexposure`, `white_balance_warm`, `white_balance_cool`, and `shot_noise`. See
   [scene condition corruptions](docs/vision.md#scene-condition-corruptions).
@@ -25,6 +31,7 @@ strengths with episode-persistent structure, and stacks them.
 
 - The nine existing descriptors keep their identities and outputs; the continuous-strength fields are serialized only
   when declared. Mini-C datasets accept the new names at integer severities.
+- The `golden` extra adds `opencv-python-headless==5.0.0.93`, and the golden suite now has 26 tests.
 - Byte identity holds within one execution mode. Inside a caller's `tf.function`, constant folding can change at most
   one level on rare pixels compared with eager calls.
 

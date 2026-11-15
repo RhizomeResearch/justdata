@@ -104,7 +104,12 @@ batch-level and training-only.
 
 - Bug fixes must include a regression test that fails without the fix.
 - Compare resize or replay outputs bit-exactly only within one execution mode: with static image shapes, a `tf.function`
-  resize can differ from eager by about 1e-4 (confirmed for dense geometry replay in 1.2.1 and 1.3.0).
+  resize can differ from eager by about 1e-4 (confirmed for dense geometry replay in 1.2.1 and 1.3.0). The same holds
+  for continuous-strength corruptions: inlined into a caller's `tf.function`, Grappler constant folding flips about
+  0.01% of uint8 pixels by one level against eager calls (confirmed for `haze` and `lens_droplets`; disabling
+  `constant_folding` removes it).
+- OpenCV 5's Python `cv2.seamlessClone` writes its eroded mask back into the mask array it is given; pass a copy when
+  comparing against it.
 - New or changed public behavior requires tests and updates to the relevant README, modality document, or runnable
   example.
 - Prefer focused tests while iterating. Before handoff, run the smallest set that fully covers the changed contract and

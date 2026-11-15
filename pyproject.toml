@@ -33,6 +33,7 @@ acoustic = [
     "torchcodec==0.10.0",
 ]
 golden = [
+    "opencv-python-headless==5.0.0.93",
     "torchaudio==2.10.0",
     "torchlibrosa==0.1.0",
 ]

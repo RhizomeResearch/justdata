@@ -62,11 +62,16 @@ Install and run the optional reference suite with:
 ```bash
 uv sync --extra golden
 uv run pytest -o addopts= -m golden --junitxml=golden.xml
-python tests/acoustic/golden/check_report.py golden.xml --expected 23
+python tests/acoustic/golden/check_report.py golden.xml --expected 26
 ```
 
-The report guard requires exactly 23 tests and zero skips. The GitLab golden job is manual because of dependency cost,
+The report guard requires exactly 26 tests and zero skips. The GitLab golden job is manual because of dependency cost,
 but it is not allowed to fail.
 
 Vision has non-external preset contract tests in `tests/test_vision_preset_contracts.py`; no vision preset currently
 claims a golden certification level.
+
+`tests/test_golden_poisson.py` compares `justdata.vision.poisson.seamless_clone` with the pinned
+`opencv-python-headless` `seamlessClone(NORMAL_CLONE)` on deterministic synthetic images, computing the oracle when the
+test runs. OpenCV solves in float32 and justdata in float64, and both truncate, so the test allows one level of
+difference on fewer than 0.1% of pixels.

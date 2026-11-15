@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.0 — 2026-11-15
 
 This release renders controlled scene conditions, such as haze, low light, glitter, and lens droplets, at continuous
 strengths with episode-persistent structure, and stacks them. It also composites annotated instances into dense labels.

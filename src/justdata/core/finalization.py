@@ -305,13 +305,15 @@ def finalize_dataset(
                 deterministic=deterministic,
             )
         elif rng is not None:
+            # Parallel calls draw from the shared generator in scheduling order,
+            # so batches would trade seeds between otherwise identical runs.
             ds = ds.map(
                 lambda batch: late_augment_fn(
                     batch,
                     num_classes=num_classes,
                     seed=rng.make_seeds(1)[:, 0],
                 ),
-                num_parallel_calls=parallel_calls,
+                num_parallel_calls=1 if deterministic else parallel_calls,
                 deterministic=deterministic,
             )
 

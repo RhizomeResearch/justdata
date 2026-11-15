@@ -35,6 +35,13 @@ strengths with episode-persistent structure, and stacks them. It also composites
 - Byte identity holds within one execution mode. Inside a caller's `tf.function`, constant folding can change at most
   one level on rare pixels compared with eager calls.
 
+### Fixed
+
+- Seeded training loads with both per-sample and late augmentation are reproducible. Both stages drew from one random
+  generator while running concurrently, so batches traded late-augmentation seeds between identical runs. Late
+  augmentation now has its own generator and runs serially when `deterministic=True`. Per-sample augmentation keeps its
+  seeds; late-augmentation outputs for a given seed differ from earlier releases and stay fixed.
+
 ## 1.4.0 — 2026-10-21
 
 This release adds composable object-centric dense views, exact 16-bit mask decoding, and independent panoptic target

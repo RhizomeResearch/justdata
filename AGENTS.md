@@ -81,6 +81,10 @@ batch-level and training-only.
 - Preserve the canonical acoustic schema: `waveform`, `sample_rate`, and optional `label`, `features`, `duration`, and
   `metadata`.
 - Preserve deterministic evaluation views and stateless seeded stochastic transforms.
+- Give each `tf.data` stage that draws from a stateful `tf.random.Generator` its own generator, and map it with
+  `num_parallel_calls=1` when `deterministic=True`. Stages run concurrently, so a shared generator hands out seeds in
+  scheduling order; in 1.5.0 this made about half of 200 late-augmentation batches differ between identically seeded
+  loads.
 
 ### Presets, Dependencies, And Compatibility
 

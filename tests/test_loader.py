@@ -425,6 +425,38 @@ def test_finalize_epoch_is_addressable_reiterable_and_supports_numpy():
     assert list(numpy_iterator) == []
 
 
+def test_seeded_training_load_is_reproducible_with_both_augmentation_stages():
+    def augment(sample, seed=None):
+        return sample | {"augmentation": tf.random.stateless_uniform([], seed=seed)}
+
+    def late_augment(batch, num_classes=None, seed=None):
+        del num_classes
+        return batch | {
+            "late_augmentation": tf.random.stateless_uniform(
+                tf.shape(batch["x"]), seed=seed
+            )
+        }
+
+    def epoch():
+        ds, _n = load_mocked(
+            _range_dataset(400),
+            dataset_type="train",
+            batch_size=2,
+            seed=23,
+            augment_fn=augment,
+            late_augment_fn=late_augment,
+            shuffle_buffer=1,
+            cache_dataset=False,
+            deterministic=True,
+        )
+        return _snapshot_epoch(ds)
+
+    # Both stages run concurrently; many batches give their draws room to interleave.
+    first, second = epoch(), epoch()
+    for key in first:
+        np.testing.assert_array_equal(first[key], second[key])
+
+
 @pytest.mark.parametrize("parallel_calls", [None, 1, 4])
 def test_finalize_epoch_parallel_stateless_augmentation_preserves_exact_epochs(
     parallel_calls,

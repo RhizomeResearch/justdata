@@ -478,6 +478,10 @@ def _prepare_ds(
 ):
     """Shared pipeline, resolving its source only after validating options."""
     rng = tf.random.Generator.from_seed(seed)
+    # Late augmentation draws in a later tf.data stage that runs concurrently with
+    # the per-sample augment map; sharing one generator would interleave the two
+    # stages' draws differently on every run.
+    late_augment_rng = tf.random.Generator.from_seed(seed).split(1)[0]
     if metadata_mode is None:
         metadata_mode = (
             pipeline.kwargs.get("metadata_mode", "full")
@@ -685,7 +689,7 @@ def _prepare_ds(
         "is_training": is_training,
         "apply_late_augment": apply_augmentation,
         "late_augment_fn": late_augment_fn,
-        "rng": rng,
+        "rng": late_augment_rng,
         "deterministic": deterministic,
         "shuffle_buffer": shuffle_buffer if is_training else None,
         "shuffle_seed": seed,

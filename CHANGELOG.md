@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+This release renders controlled scene conditions, such as haze, low light, glitter, and lens droplets, at continuous
+strengths with episode-persistent structure, and stacks them.
+
+### Added
+
+- Corruption descriptors can declare a continuous-strength contract: an identity row, a per-parameter `linear`, `log`,
+  or `nearest` interpolation rule, a `relative_to_width` spatial scale, episode and frame draws, auxiliary inputs with
+  ordered modes, and a `label_effect`. See
+  [continuous strength](docs/vision.md#continuous-strength-episodes-and-scene-inputs).
+- `apply_corruption_at(image, *, name, version, strength, seed, episode_seed=None, depth_m=None, horizon=None, region=None)`
+  returns the image and a `CorruptionRecord` with the resolved parameters, the mode that ran, and the inputs given.
+  `resolve_parameters(name, version, strength)` returns those parameters without rendering.
+- `apply_corruption_stack(image, *, steps, seed, episode_seed=None, ...)` applies ordered steps in float, rounds once,
+  and records a stack identity over the ordered step identities and strengths.
+- `justdata.vision.horizon.Horizon` describes a horizon line and, optionally, the camera height and focal length.
+- Ten version-1.0.0 photometric conditions: `haze`, `low_light`, `sun_glitter`, `lens_droplets`, `rain`, `motion_blur`,
+  `overexposure`, `white_balance_warm`, `white_balance_cool`, and `shot_noise`. See
+  [scene condition corruptions](docs/vision.md#scene-condition-corruptions).
+
+### Compatibility
+
+- The nine existing descriptors keep their identities and outputs; the continuous-strength fields are serialized only
+  when declared. Mini-C datasets accept the new names at integer severities.
+- Byte identity holds within one execution mode. Inside a caller's `tf.function`, constant folding can change at most
+  one level on rare pixels compared with eager calls.
+
 ## 1.4.0 — 2026-10-21
 
 This release adds composable object-centric dense views, exact 16-bit mask decoding, and independent panoptic target

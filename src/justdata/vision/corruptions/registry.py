@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import threading
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, cast
 
 import tensorflow as tf
 
@@ -17,7 +19,29 @@ SeverityParameters = tuple[
     tuple[int, tuple[tuple[str, PlainValue], ...]],
     ...,
 ]
-CorruptionFn = Callable[[tf.Tensor, int | tf.Tensor, tf.Tensor], tf.Tensor]
+# Severity-only implementations are called as ``fn(image, severity, seed)``.
+# Implementations of descriptors with a continuous-strength contract are called
+# as ``fn(image01, parameters, *, frame_seed, episode_seed, mode, **auxiliary)``
+# on float32 RGB in [0, 1], with one float32 tensor per declared parameter and
+# one keyword (possibly None) per declared auxiliary input.
+CorruptionFn = Callable[..., tf.Tensor]
+
+INTERPOLATION_RULES = ("linear", "log", "nearest")
+SPATIAL_SCALE_POLICIES = ("absolute_pixels", "relative_to_width")
+AUXILIARY_INPUTS = ("depth_m", "horizon", "region")
+EPISODE_SEED_SALT = 0x45504953
+_STRENGTH_ROUNDING_POLICY = "clip_then_round_half_to_even"
+_STRENGTH_FIELD_DEFAULTS: dict[str, Any] = {
+    "interpolation": (),
+    "spatial_scale_policy": "absolute_pixels",
+    "reference_width": None,
+    "spatial_parameters": (),
+    "episode_draws": (),
+    "frame_draws": (),
+    "auxiliary_inputs": (),
+    "modes": (),
+    "label_effect": None,
+}
 
 _SEMANTIC_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 _CORRUPTION_REGISTRY: Dict[tuple[str, str | None], CorruptionFn] = {}
@@ -42,7 +66,18 @@ def _validate_plain_value(value: PlainValue, *, field: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class CorruptionDescriptor:
-    """Immutable, serializable semantics for one corruption implementation."""
+    """Immutable, serializable semantics for one corruption implementation.
+
+    A descriptor that declares ``identity_parameters`` also accepts continuous
+    strengths in ``[0, max severity]``: strength 0 is the identity row, integer
+    strengths are the severity rows, and each parameter is interpolated between
+    adjacent rows by its ``interpolation`` rule. The remaining continuous-strength
+    fields declare how pixel parameters follow the image width, which random
+    draws come from the episode and frame seeds, which auxiliary inputs are
+    accepted, which mode they select (first match wins), and the effect on
+    labels. These fields are serialized only when declared, so descriptors
+    without them keep their original identity.
+    """
 
     name: str
     version: str
@@ -59,6 +94,151 @@ class CorruptionDescriptor:
     rounding_policy: str
     implementation: str
     implementation_parameters: tuple[tuple[str, PlainValue], ...] = ()
+    identity_parameters: tuple[tuple[str, int | float], ...] = ()
+    interpolation: tuple[tuple[str, str], ...] = ()
+    spatial_scale_policy: str = "absolute_pixels"
+    reference_width: int | None = None
+    spatial_parameters: tuple[str, ...] = ()
+    episode_draws: tuple[str, ...] = ()
+    frame_draws: tuple[str, ...] = ()
+    auxiliary_inputs: tuple[str, ...] = ()
+    modes: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    label_effect: str | None = None
+
+    @property
+    def supports_strength(self) -> bool:
+        return bool(self.identity_parameters)
+
+    @property
+    def max_strength(self) -> int:
+        return max(self.severity_values)
+
+    def strength_rows(self) -> tuple[dict[str, float], ...]:
+        """The identity row followed by severity rows 1..N, as floats."""
+        rows = (self.identity_parameters,) + tuple(
+            parameters for _level, parameters in self.severity_parameters
+        )
+        return tuple(
+            {name: float(cast(float, value)) for name, value in row} for row in rows
+        )
+
+    def _validate_strength_contract(self) -> None:
+        key = f"{self.name}@{self.version}"
+        if not self.supports_strength:
+            declared = [
+                field
+                for field, default in _STRENGTH_FIELD_DEFAULTS.items()
+                if getattr(self, field) != default
+            ]
+            if declared:
+                raise ValueError(
+                    f"Corruption '{key}' declares {declared} without "
+                    "identity_parameters."
+                )
+            return
+
+        if self.severity_values != tuple(range(1, len(self.severity_values) + 1)):
+            raise ValueError(
+                f"Corruption '{key}' severity values must be 1..N for continuous "
+                "strength."
+            )
+        if self.rounding_policy != _STRENGTH_ROUNDING_POLICY:
+            raise ValueError(
+                f"Corruption '{key}' continuous strength requires rounding policy "
+                f"'{_STRENGTH_ROUNDING_POLICY}'."
+            )
+        if not self.label_effect:
+            raise ValueError(f"Corruption '{key}' must declare its label_effect.")
+
+        names = tuple(name for name, _value in self.identity_parameters)
+        if tuple(name for name, _rule in self.interpolation) != names:
+            raise ValueError(
+                f"Corruption '{key}' interpolation must list every identity "
+                "parameter in the same order."
+            )
+        rows = (self.identity_parameters,) + tuple(
+            parameters for _level, parameters in self.severity_parameters
+        )
+        for row in rows:
+            if tuple(name for name, _value in row) != names:
+                raise ValueError(
+                    f"Corruption '{key}' severity rows must list the identity "
+                    "parameters in the same order."
+                )
+            for name, value in row:
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(value)
+                ):
+                    raise ValueError(
+                        f"Corruption '{key}' parameter '{name}' must be a finite "
+                        "number in every row."
+                    )
+        for name, rule in self.interpolation:
+            if rule not in INTERPOLATION_RULES:
+                raise ValueError(
+                    f"Corruption '{key}' parameter '{name}' interpolation must be "
+                    f"one of {INTERPOLATION_RULES}."
+                )
+            if rule == "log" and any(row[name] <= 0 for row in self.strength_rows()):
+                raise ValueError(
+                    f"Corruption '{key}' parameter '{name}' uses log interpolation "
+                    "and must be positive in every row."
+                )
+
+        if self.spatial_scale_policy not in SPATIAL_SCALE_POLICIES:
+            raise ValueError(
+                f"Corruption '{key}' spatial_scale_policy must be one of "
+                f"{SPATIAL_SCALE_POLICIES}."
+            )
+        if self.spatial_scale_policy == "absolute_pixels":
+            if self.reference_width is not None or self.spatial_parameters:
+                raise ValueError(
+                    f"Corruption '{key}' absolute_pixels takes no reference_width "
+                    "or spatial_parameters."
+                )
+        elif (
+            isinstance(self.reference_width, bool)
+            or not isinstance(self.reference_width, int)
+            or self.reference_width <= 0
+        ):
+            raise ValueError(
+                f"Corruption '{key}' relative_to_width needs a positive integer "
+                "reference_width."
+            )
+        unknown_spatial = set(self.spatial_parameters) - set(names)
+        if unknown_spatial:
+            raise ValueError(
+                f"Corruption '{key}' spatial parameters {sorted(unknown_spatial)} "
+                "are not declared parameters."
+            )
+
+        if len(set(self.auxiliary_inputs)) != len(self.auxiliary_inputs) or (
+            set(self.auxiliary_inputs) - set(AUXILIARY_INPUTS)
+        ):
+            raise ValueError(
+                f"Corruption '{key}' auxiliary inputs must be unique names from "
+                f"{AUXILIARY_INPUTS}."
+            )
+        if bool(self.auxiliary_inputs) != bool(self.modes):
+            raise ValueError(
+                f"Corruption '{key}' declares modes exactly when it accepts "
+                "auxiliary inputs."
+            )
+        mode_names = [mode for mode, _requires in self.modes]
+        if len(set(mode_names)) != len(mode_names):
+            raise ValueError(f"Corruption '{key}' mode names must be unique.")
+        for mode, requires in self.modes:
+            if set(requires) - set(self.auxiliary_inputs):
+                raise ValueError(
+                    f"Corruption '{key}' mode '{mode}' requires undeclared inputs."
+                )
+        if self.modes and self.modes[-1][1]:
+            raise ValueError(
+                f"Corruption '{key}' last mode must be the fallback that requires "
+                "no auxiliary input."
+            )
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -121,9 +301,10 @@ class CorruptionDescriptor:
         ):
             if not getattr(self, field_name):
                 raise ValueError(f"Corruption descriptor {field_name} is required.")
+        self._validate_strength_contract()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "name": self.name,
             "version": self.version,
             "input_domain": self.input_domain,
@@ -151,6 +332,23 @@ class CorruptionDescriptor:
                 for name, value in self.implementation_parameters
             },
         }
+        if self.supports_strength:
+            result |= {
+                "identity_parameters": dict(self.identity_parameters),
+                "interpolation": dict(self.interpolation),
+                "spatial_scale_policy": self.spatial_scale_policy,
+                "reference_width": self.reference_width,
+                "spatial_parameters": list(self.spatial_parameters),
+                "episode_draws": list(self.episode_draws),
+                "frame_draws": list(self.frame_draws),
+                "auxiliary_inputs": list(self.auxiliary_inputs),
+                "modes": [
+                    {"mode": mode, "requires": list(requires)}
+                    for mode, requires in self.modes
+                ],
+                "label_effect": self.label_effect,
+            }
+        return result
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
@@ -159,6 +357,21 @@ class CorruptionDescriptor:
     def identity(self) -> str:
         digest = hashlib.sha256(self.to_json().encode("utf-8")).hexdigest()
         return f"{self.name}@{self.version}:sha256:{digest}"
+
+
+def severity_table(columns: Mapping[str, Sequence[PlainValue]]) -> SeverityParameters:
+    """Build severity rows 1..N from one sequence of values per parameter."""
+    lengths = {len(values) for values in columns.values()}
+    if len(lengths) != 1:
+        raise ValueError("Every severity column must have the same length.")
+    (count,) = lengths
+    return tuple(
+        (
+            level,
+            tuple((name, values[level - 1]) for name, values in columns.items()),
+        )
+        for level in range(1, count + 1)
+    )
 
 
 def register_corruption(
@@ -230,23 +443,55 @@ def apply_corruption(
     severity: int | tf.Tensor,
     seed: tf.Tensor,
 ) -> tf.Tensor:
-    """Apply an exact versioned corruption using a complete stateless seed."""
+    """Apply an exact versioned corruption using a complete stateless seed.
+
+    Descriptors with a continuous-strength contract run their severity row with
+    the episode seed derived from ``seed`` and no auxiliary input; use
+    ``apply_corruption_at`` for fractional strengths, episode seeds, or maps.
+    """
     descriptor = get_corruption_descriptor(name, version)
     image = _validate_image(image, descriptor)
     severity_tensor = _validate_descriptor_severity(severity, descriptor)
     seed_tensor = _validate_seed(seed, descriptor)
-    with _CORRUPTION_LOCK:
-        fn = _CORRUPTION_REGISTRY[(name, version)]
-    corrupted = fn(image, severity_tensor, seed_tensor)
-    corrupted = _finalize_corruption(corrupted, descriptor)
+    fn = _registered_corruption(name, version)
+    if descriptor.supports_strength:
+        rendered = render_unit_image(
+            fn,
+            descriptor,
+            unit_image(image),
+            severity_row_parameters(descriptor, severity_tensor),
+            frame_seed=seed_tensor,
+            episode_seed=None,
+            mode=select_mode(descriptor, frozenset()),
+            auxiliary={},
+        )
+        corrupted = _finalize_corruption(rendered * 255.0, descriptor)
+    else:
+        corrupted = _finalize_corruption(
+            fn(image, severity_tensor, seed_tensor),
+            descriptor,
+        )
+    return _with_input_shape(corrupted, image, descriptor)
 
+
+def _registered_corruption(name: str, version: str) -> CorruptionFn:
+    with _CORRUPTION_LOCK:
+        return _CORRUPTION_REGISTRY[(name, version)]
+
+
+def _with_input_shape(
+    corrupted: tf.Tensor,
+    image: tf.Tensor,
+    descriptor: CorruptionDescriptor,
+) -> tf.Tensor:
     with tf.control_dependencies(
         [
             tf.debugging.assert_equal(
                 tf.shape(corrupted),
                 tf.shape(image),
                 message=(
-                    f"Corruption '{name}@{version}' must preserve the input shape."
+                    f"Corruption '{descriptor.name}@{descriptor.version}' must "
+                    "preserve the input shape."
                 ),
             )
         ]
@@ -254,6 +499,80 @@ def apply_corruption(
         corrupted = tf.identity(corrupted)
     corrupted.set_shape(image.shape)
     return corrupted
+
+
+def draw_seed(seed: tf.Tensor, index: int) -> tf.Tensor:
+    """Seed of the ``index``-th random draw taken from ``seed``."""
+    return tf.random.experimental.stateless_fold_in(seed, index, alg="philox")
+
+
+def unit_image(image: tf.Tensor) -> tf.Tensor:
+    """Map a validated ``[0, 255]`` image to float32 RGB in ``[0, 1]``."""
+    return tf.clip_by_value(tf.cast(image, tf.float32) / 255.0, 0.0, 1.0)
+
+
+def severity_row_parameters(
+    descriptor: CorruptionDescriptor,
+    severity: tf.Tensor,
+) -> dict[str, tf.Tensor]:
+    """Gather one float32 tensor per parameter from a validated severity."""
+    rows = descriptor.strength_rows()[1:]
+    index = tf.cast(severity, tf.int32) - 1
+    return {
+        name: tf.gather(
+            tf.constant([row[name] for row in rows], dtype=tf.float32),
+            index,
+        )
+        for name, _value in descriptor.identity_parameters
+    }
+
+
+def select_mode(
+    descriptor: CorruptionDescriptor,
+    provided: frozenset[str],
+) -> str | None:
+    """Return the first declared mode whose required inputs were all provided."""
+    for mode, requires in descriptor.modes:
+        if set(requires) <= provided:
+            return mode
+    return None
+
+
+def render_unit_image(
+    fn: CorruptionFn,
+    descriptor: CorruptionDescriptor,
+    image01: tf.Tensor,
+    parameters: Mapping[str, tf.Tensor],
+    *,
+    frame_seed: tf.Tensor,
+    episode_seed: tf.Tensor | None,
+    mode: str | None,
+    auxiliary: Mapping[str, Any],
+) -> tf.Tensor:
+    """Run a continuous-strength implementation and clip its output to [0, 1].
+
+    Spatial parameters are scaled by ``width / reference_width`` here, so each
+    implementation receives values in pixels of the image it renders.
+    """
+    if episode_seed is None:
+        episode_seed = draw_seed(frame_seed, EPISODE_SEED_SALT)
+    scaled = dict(parameters)
+    if descriptor.spatial_scale_policy == "relative_to_width":
+        assert descriptor.reference_width is not None
+        width = tf.cast(tf.shape(image01)[1], tf.float32)
+        scale = width / float(descriptor.reference_width)
+        for name in descriptor.spatial_parameters:
+            scaled[name] = scaled[name] * scale
+    arguments = {name: auxiliary.get(name) for name in descriptor.auxiliary_inputs}
+    rendered = fn(
+        image01,
+        scaled,
+        frame_seed=frame_seed,
+        episode_seed=episode_seed,
+        mode=mode,
+        **arguments,
+    )
+    return tf.clip_by_value(rendered, 0.0, 1.0)
 
 
 _MINIC_VERSIONS = {

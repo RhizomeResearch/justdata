@@ -1,4 +1,26 @@
-from justdata.vision.corruptions import blur, digital, noise, standard, weather
+from justdata.vision.corruptions import (
+    atmosphere,
+    blur,
+    digital,
+    exposure,
+    lens,
+    motion,
+    noise,
+    precipitation,
+    standard,
+    water,
+    weather,
+)
+from justdata.vision.corruptions.continuous import (
+    CorruptionRecord,
+    CorruptionResult,
+    CorruptionStackRecord,
+    CorruptionStackResult,
+    apply_corruption_at,
+    apply_corruption_stack,
+    corruption_stack_identity,
+    resolve_parameters,
+)
 from justdata.vision.corruptions.registry import (
     CorruptionDescriptor,
     apply_corruption,
@@ -9,19 +31,35 @@ from justdata.vision.corruptions.registry import (
     list_corruptions,
     register_corruption,
 )
+from justdata.vision.horizon import Horizon
 
 __all__ = [
     "CorruptionDescriptor",
+    "CorruptionRecord",
+    "CorruptionResult",
+    "CorruptionStackRecord",
+    "CorruptionStackResult",
+    "Horizon",
     "apply_corruption",
+    "apply_corruption_at",
+    "apply_corruption_stack",
     "apply_minic_corruption",
+    "atmosphere",
     "blur",
+    "corruption_stack_identity",
     "digital",
+    "exposure",
     "get_corruption_descriptor",
     "list_corruption_descriptors",
     "list_corruption_versions",
+    "lens",
     "list_corruptions",
+    "motion",
     "noise",
+    "precipitation",
     "register_corruption",
+    "resolve_parameters",
     "standard",
+    "water",
     "weather",
 ]

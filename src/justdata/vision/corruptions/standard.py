@@ -6,6 +6,11 @@ from justdata.vision.corruptions.registry import (
     CorruptionDescriptor,
     register_corruption,
 )
+from justdata.vision.filters import (
+    depthwise_hwc,
+    gaussian_kernel_1d,
+    reflect_pad_hwc,
+)
 
 GAUSSIAN_BLUR_SIGMA = (0.5, 1.0, 2.0, 3.0, 4.0)
 GAUSSIAN_NOISE_STD_UNIT = (0.01, 0.02, 0.04, 0.08, 0.16)
@@ -164,29 +169,6 @@ def _severity_index(severity: tf.Tensor) -> tf.Tensor:
     return tf.cast(severity, tf.int32) - 1
 
 
-def _reflect_indices(length: tf.Tensor, radius: tf.Tensor) -> tf.Tensor:
-    length = tf.cast(length, tf.int32)
-    radius = tf.cast(radius, tf.int32)
-
-    def repeat_single_pixel() -> tf.Tensor:
-        return tf.zeros([length + 2 * radius], dtype=tf.int32)
-
-    def reflect_101() -> tf.Tensor:
-        positions = tf.range(-radius, length + radius)
-        period = 2 * (length - 1)
-        reflected = tf.math.floormod(positions, period)
-        return tf.where(reflected < length, reflected, period - reflected)
-
-    return tf.cond(length > 1, reflect_101, repeat_single_pixel)
-
-
-def _reflect_pad_hwc(image: tf.Tensor, radius: tf.Tensor) -> tf.Tensor:
-    y_indices = _reflect_indices(tf.shape(image)[0], radius)
-    x_indices = _reflect_indices(tf.shape(image)[1], radius)
-    image = tf.gather(image, y_indices, axis=0)
-    return tf.gather(image, x_indices, axis=1)
-
-
 @register_corruption("gaussian_blur", descriptor=GAUSSIAN_BLUR_DESCRIPTOR)
 @tf.function
 def gaussian_blur(
@@ -199,22 +181,10 @@ def gaussian_blur(
         tf.constant(GAUSSIAN_BLUR_SIGMA, dtype=tf.float32),
         _severity_index(severity),
     )
-    radius = tf.cast(tf.math.ceil(3.0 * sigma), tf.int32)
-    positions = tf.cast(tf.range(-radius, radius + 1), tf.float32)
-    kernel_1d = tf.exp(-tf.square(positions) / (2.0 * tf.square(sigma)))
-    kernel_1d /= tf.reduce_sum(kernel_1d)
+    kernel_1d, radius = gaussian_kernel_1d(sigma)
     kernel_2d = kernel_1d[:, tf.newaxis] * kernel_1d[tf.newaxis, :]
-    kernel = kernel_2d[:, :, tf.newaxis, tf.newaxis]
-    kernel = tf.tile(kernel, [1, 1, 3, 1])
-
-    image_f = tf.cast(image, tf.float32)
-    padded = _reflect_pad_hwc(image_f, radius)
-    return tf.nn.depthwise_conv2d(
-        padded[tf.newaxis, ...],
-        kernel,
-        strides=[1, 1, 1, 1],
-        padding="VALID",
-    )[0]
+    padded = reflect_pad_hwc(tf.cast(image, tf.float32), radius, radius)
+    return depthwise_hwc(padded, kernel_2d)
 
 
 @register_corruption("gaussian_noise", descriptor=GAUSSIAN_NOISE_DESCRIPTOR)

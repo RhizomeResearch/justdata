@@ -376,6 +376,90 @@ the legacy enumeration-position salt. A consumer with an independent scientific 
 Changing parameters, rounding, RNG, codec/filter behavior, or backend requires a new semantic version and downstream
 fingerprint regeneration.
 
+### Continuous strength, episodes, and scene inputs
+
+A descriptor that declares `identity_parameters` also accepts a continuous strength in `[0, max severity]`. Strength 0
+is the identity row, each integer strength is its severity row, and each parameter moves between adjacent rows by its
+declared `interpolation` rule: `linear`, `log` (geometric), or `nearest`. `resolve_parameters(name, version, strength)`
+returns the float32-rounded values that the strength renders with. These continuous-strength fields are serialized only
+when declared, so the nine severity-only descriptors above keep their identities.
+
+```python
+import tensorflow as tf
+
+from justdata.vision.corruptions import Horizon, apply_corruption_at
+
+result = apply_corruption_at(
+    frame_uint8,
+    name="haze",
+    version="1.0.0",
+    strength=2.4,
+    seed=tf.constant([frame_index, 7], tf.int32),
+    episode_seed=tf.constant([episode_index, 7], tf.int32),
+    horizon=Horizon(612.0, 640.0, camera_height_m=2.0, focal_length_px=1365.4),
+)
+result.image  # uint8, same shape
+result.record.to_dict()  # resolved parameters, mode, inputs, and episode-seed source
+```
+
+- `strength` must be a Python number, so the recorded parameters are exactly the rendered ones. Strength 0 returns the
+  input after the rounding policy and skips the implementation.
+- `seed` drives per-frame draws such as noise and drop positions. `episode_seed` drives the draws that persist across an
+  episode: droplet layout, rain slant, motion angle, glitter column, and haze texture. Without `episode_seed`, it is
+  `stateless_fold_in(seed, 0x45504953)`, which makes every frame independent. Draw `i` uses
+  `stateless_fold_in(source_seed, i)` with Philox. Each descriptor lists its `episode_draws` and `frame_draws`.
+- `depth_m` (float32 HW, non-negative metres; `inf` means infinitely far), `horizon` (a `Horizon`), and `region` (bool
+  HW) are accepted only by descriptors that declare them. The first declared mode whose inputs are all given runs, and
+  the record names it.
+- `Horizon(left_row, right_row)` gives the horizon's rows at the left (`x = 0`) and right (`x = width`) edges of this
+  image. Haze also needs `camera_height_m` and `focal_length_px` for flat-water distances.
+- Under `spatial_scale_policy="relative_to_width"`, the declared `spatial_parameters` are multiplied by
+  `width / reference_width` before rendering, so they cover the same image fraction at any resolution. The recorded
+  parameters stay in reference pixels. The tests render at width W and at 2W, then area-downsample the 2W render. For
+  `haze`, `lens_droplets`, `motion_blur`, `overexposure`, and the white-balance conditions, the mean absolute difference
+  stays under 2 levels. `sun_glitter`, `rain`, `shot_noise`, and `low_light` draw new noise for every pixel, so they
+  agree only statistically: the image mean and standard deviation stay within 1 level.
+
+`apply_corruption(..., severity=k)` runs these descriptors at row `k` with no auxiliary input and a derived episode
+seed, so they also work in `create_minic_datasets`.
+
+`apply_corruption_stack(image, steps=[(name, version, strength), ...], seed=..., episode_seed=None, ...)` applies the
+steps in order in float, clips each step to `[0, 1]`, and rounds once at the end. Step `i` uses
+`stateless_fold_in(seed, salt_i)` and, when given, `stateless_fold_in(episode_seed, salt_i)`, where `salt_i` is
+`stable_int64_hash(f"{i}:{descriptor identity}") mod 2**31`. Each auxiliary input goes to the steps that declare it and
+must be declared by at least one. The stack identity, `corruption_stack_identity`, is a digest of the ordered
+`(identity, strength)` pairs. Only continuous-strength descriptors can be stacked.
+
+Results are byte-identical for the same inputs within one execution mode. When an implementation is inlined into a
+caller's `tf.function`, Grappler's constant folding can move a float32 value across a rounding boundary. Expect at most
+one level of difference on about 0.1% of pixels or fewer, compared with eager calls.
+
+### Scene condition corruptions
+
+All ten conditions below are version `1.0.0` and photometric (`label_effect: "none"`). They accept `uint8` or `float32`
+RGB in `[0, 255]` and return `uint8`, rounding half to even. Spatial parameters use reference width 1024 unless noted.
+
+| Name                 | Model                                                                                                                                                                               | Severity 1-5                                                                              | Source of the values                                   |
+| :------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------- | :----------------------------------------------------- |
+| `haze`               | `I = J t + A (1 - t)` in display space. `t = exp(-beta d)` from `depth_m`, flat-water `horizon` geometry, or a homogeneous `t`. Airlight `A` from the dark channel. Patchiness 0.3. | `beta` 0.003, 0.005, 0.01, 0.02, 0.04 1/m; homogeneous `t` 0.85 to 0.25                   | Sakaridis et al. (Foggy Cityscapes); ImageNet-C plasma |
+| `low_light`          | Linear-light exposure gain, Gaussian noise of variance `signal * shot + read`, camera gain `clip(0.6 mean(L) / mean(noisy), 1, cap)`                                                | gain 0.5 to 0.03; shot 1/2000 to 1/120; read `exp(2.18 ln shot + 1.20)`; cap 1.5 to 6     | Request; Brooks et al. noise model                     |
+| `sun_glitter`        | Thresholded anisotropic noise under a column band fixed per episode, bloom, screen blend, veiling. Region from `region`, else below `horizon`, else the lower half                  | band sigma 0.08 to 0.25 of width; lit share 0.02 to 0.22; bloom 0.1 to 0.5; veil 1 to 0.8 | Request                                                |
+| `lens_droplets`      | Feathered ellipses showing a mirrored, minified (x3), blurred view, darker rim; layout per episode; droplet `k` fades in between counts `k` and `k + 1`                             | count 4, 8, 16, 28, 45; max radius 14 to 38 px; opacity 0.7 to 0.9                        | Request; Halimeh and Roser model                       |
+| `rain`               | Albumentations `RandomRain`: grey 200 streaks of length H/8, slant within ±10 px per episode, 7 px box blur, saturating add, brightness 0.7                                         | drops per row 1/4, 1/3, 1, 2, 4 (drizzle, default, heavy, torrential, double)             | Albumentations defaults                                |
+| `motion_blur`        | ImageMagick one-sided Gaussian along a ray; angle within ±45° per episode, ±2° per frame; reference width 224                                                                       | (radius, sigma) (10, 3), (15, 5), (15, 8), (15, 12), (20, 15)                             | ImageNet-C                                             |
+| `overexposure`       | Linear-light gain with clipping                                                                                                                                                     | gain 1.3, 1.6, 2.0, 2.6, 3.4                                                              | Request                                                |
+| `white_balance_warm` | Red and blue gains from the blackbody table, relative to 6500 K, display space                                                                                                      | 5500, 4500, 4000, 3500, 3000 K                                                            | Albumentations / Kornia Planckian table                |
+| `white_balance_cool` | Same as `white_balance_warm`                                                                                                                                                        | 7500, 9000, 10500, 12500, 15000 K                                                         | Albumentations / Kornia Planckian table                |
+| `shot_noise`         | `Poisson(x / q) q` in display space, `q = 1 / c`                                                                                                                                    | `c` 60, 25, 12, 5, 3                                                                      | ImageNet-C                                             |
+
+Each descriptor's `implementation_parameters` record the fixed constants. Notes:
+
+- Haze `horizon` mode uses the distance `h sqrt(f^2 + below^2 + along^2) / below` to flat water, capped at 2000 m, and
+  2000 m at and above the line. Objects standing on the water get the distance of the water behind them.
+- The haze texture is fixed per episode; it does not drift between frames.
+- The motion-blur table is ImageNet-C's at 224 pixels, so it scales by about 9.9 at 2208 pixels.
+- A dusk look is a stack, for example `low_light` then `white_balance_cool`.
+
 ## 11. Vision/acoustic parity guarantees
 
 The parity harness in `tests/test_cross_modal_parity.py` checks that the final release surface does not drift between

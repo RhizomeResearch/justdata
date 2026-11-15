@@ -81,6 +81,8 @@ enabled.
 | `justdata.core.load_inventory(admitted, ...)`                         | Apply the shared pipeline to an admitted inventory, including raw epoch finalization.                                |
 | `justdata.core.ExecutedConfig`                                        | Immutable, canonical snapshot returned by loaders when `return_config=True`.                                         |
 | `justdata.vision.minic.create_minic_datasets(...)`                    | Constructs Mini-C corruption benchmark datasets from a shared preprocessed base dataset.                             |
+| `justdata.vision.corruptions.apply_corruption_at(...)`                | Renders a scene condition at a continuous strength and returns its record.                                           |
+| `justdata.vision.corruptions.apply_corruption_stack(...)`             | Applies ordered conditions in float, rounds once, and returns the stack record.                                      |
 | `justdata.acoustic.corruptions.create_audio_corruption_datasets(...)` | Constructs acoustic corruption benchmark datasets from a shared preprocessed base dataset.                           |
 | `justdata.acoustic.dcase2025.make_source_dataset(...)`                | Builds DCASE Task 1 source-domain datasets with split-safety checks.                                                 |
 
@@ -919,6 +921,39 @@ With `metadata_mode="full"`, finalized samples include `corruption`, `corruption
 severity; `none` removes metadata according to the shared core contract. The dataset helper preserves legacy
 enumeration-position seed salting. Consumers with their own sample-level PRNG lineage should call `apply_corruption`
 directly.
+
+### Scene conditions at continuous strength
+
+Ten photometric conditions declare a continuous-strength contract: `haze`, `low_light`, `sun_glitter`, `lens_droplets`,
+`rain`, `motion_blur`, `overexposure`, `white_balance_warm`, `white_balance_cool`, and `shot_noise`.
+`apply_corruption_at` renders one of them at any strength between 0 (identity) and 5 (the last severity row). It takes
+an optional episode seed for structure that persists across frames, and optional `depth_m`, `horizon`, or `region`
+inputs. It returns the image and a record of the resolved parameters and mode. `apply_corruption_stack` applies ordered
+steps in float and rounds once.
+
+```python
+import tensorflow as tf
+
+from justdata.vision.corruptions import apply_corruption_at, apply_corruption_stack
+
+frame = apply_corruption_at(
+    decoded_rgb_uint8,
+    name="lens_droplets",
+    version="1.0.0",
+    strength=1.7,
+    seed=tf.constant([frame_index, 0], tf.int32),
+    episode_seed=tf.constant([episode_index, 0], tf.int32),
+)
+dusk = apply_corruption_stack(
+    decoded_rgb_uint8,
+    steps=[("low_light", "1.0.0", 2.0), ("white_balance_cool", "1.0.0", 1.5)],
+    seed=tf.constant([frame_index, 1], tf.int32),
+)
+```
+
+See [continuous strength](docs/vision.md#continuous-strength-episodes-and-scene-inputs) and
+[scene condition corruptions](docs/vision.md#scene-condition-corruptions) for the contract, the tables, and their
+sources, and `examples/vision/maritime_conditions.py` for a drift over an episode.
 
 ______________________________________________________________________
 

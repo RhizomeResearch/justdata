@@ -10,6 +10,12 @@ from justdata.vision.corruptions import blur as legacy_blur
 from justdata.vision.corruptions import digital as legacy_digital
 from justdata.vision.corruptions import noise as legacy_noise
 from justdata.vision.corruptions import weather as legacy_weather
+from justdata.vision.corruptions.continuous import (
+    apply_corruption_at,
+    apply_corruption_stack,
+    corruption_stack_identity,
+    resolve_parameters,
+)
 from justdata.vision.corruptions.registry import (
     CorruptionDescriptor,
     _CORRUPTION_DESCRIPTOR_REGISTRY,
@@ -22,7 +28,9 @@ from justdata.vision.corruptions.registry import (
     list_corruption_versions,
     list_corruptions,
     register_corruption,
+    severity_table,
 )
+from justdata.vision.horizon import Horizon
 
 NEW_CORRUPTIONS = (
     "brightness_reduction",
@@ -402,3 +410,316 @@ def test_unknown_minic_corruption():
 def test_minic_rejects_invalid_severity():
     with pytest.raises(ValueError, match="severity"):
         apply_minic_corruption(_image(), "noise", severity=0, seed=SEED)
+
+
+@pytest.mark.parametrize(
+    ("name", "digest"),
+    [
+        ("blur", "f3e017a21821daeabc9dc31f4fb3e1d785353ece9391ed5244616317b46b8c34"),
+        (
+            "brightness_reduction",
+            "73f32f855970178d53eb036aee4a63c362cb79f4f8dc4045396fc42f7d99f2e7",
+        ),
+        (
+            "contrast_reduction",
+            "c8d27a81c2e8c7581da5bd17b92fde42228e75fca1ae7cf3b0d666bd2e328557",
+        ),
+        ("digital", "dd49088c4d173ccfc5d6b2670f86a55bc585ad3b339663767c27a2719c01def3"),
+        (
+            "gaussian_blur",
+            "b2102a42e8eb72c28d0020f679d07a34e59747dd8371a72625cd09fac8adacc5",
+        ),
+        (
+            "gaussian_noise",
+            "bc2d1d4e35f4b32131b0b758b09f423965bde9f2a58282b237a0a523953df5bf",
+        ),
+        (
+            "jpeg_compression",
+            "a4563fb1d19783a792a7a8bad00750a3fc353a1ed78fd534cb2e0ff2da97b7b7",
+        ),
+        ("noise", "a15c8c949b66b5861c1febb15add0c395fed40c204e3be7c6e8c9a4d62b7fa68"),
+        ("weather", "4646493008593649aa9884a5956074acfaba412bd35e0959afbffe6a7dd77922"),
+    ],
+)
+def test_severity_only_descriptor_identities_are_unchanged(name, digest):
+    descriptor = get_corruption_descriptor(name, "1.0.0")
+    assert descriptor.identity == f"{name}@1.0.0:sha256:{digest}"
+    assert not descriptor.supports_strength
+    assert "identity_parameters" not in descriptor.to_dict()
+
+
+def _strength_descriptor(**overrides):
+    fields = dict(
+        name="_test_strength",
+        version="1.0.0",
+        input_domain="test",
+        input_dtypes=("uint8",),
+        output_domain="test",
+        output_shape="same_as_input_hwc",
+        output_dtype="uint8",
+        severity_values=(1, 2),
+        severity_parameters=severity_table({"gain": (2.0, 8.0), "level": (1, 3)}),
+        uses_randomness=False,
+        seed_contract="ignored",
+        clipping_policy="clip",
+        rounding_policy="clip_then_round_half_to_even",
+        implementation="test_only",
+        identity_parameters=(("gain", 1.0), ("level", 0)),
+        interpolation=(("gain", "log"), ("level", "nearest")),
+        label_effect="none",
+    )
+    return CorruptionDescriptor(**(fields | overrides))
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"identity_parameters": (), "interpolation": ()}, "label_effect"),
+        ({"identity_parameters": (("gain", 0.0), ("level", 0))}, "log"),
+        ({"interpolation": (("gain", "cubic"), ("level", "nearest"))}, "interpolation"),
+        ({"interpolation": (("level", "nearest"), ("gain", "log"))}, "same order"),
+        (
+            {
+                "severity_values": (2, 3),
+                "severity_parameters": (
+                    (2, (("gain", 2.0), ("level", 1))),
+                    (3, (("gain", 8.0), ("level", 3))),
+                ),
+            },
+            "1..N",
+        ),
+        ({"rounding_policy": "clip_then_truncate_toward_zero"}, "rounding"),
+        ({"spatial_parameters": ("gain",)}, "absolute_pixels"),
+        (
+            {"spatial_scale_policy": "relative_to_width", "reference_width": 0},
+            "reference_width",
+        ),
+        ({"auxiliary_inputs": ("depth_m",)}, "modes"),
+        (
+            {"auxiliary_inputs": ("depth_m",), "modes": (("depth", ("depth_m",)),)},
+            "fallback",
+        ),
+        ({"auxiliary_inputs": ("normals",), "modes": (("x", ()),)}, "auxiliary"),
+    ],
+)
+def test_strength_contract_validation(overrides, match):
+    with pytest.raises(ValueError, match=match):
+        _strength_descriptor(**overrides)
+
+
+def test_strength_contract_is_serialized_into_the_identity():
+    descriptor = _strength_descriptor()
+    data = descriptor.to_dict()
+    assert data["identity_parameters"] == {"gain": 1.0, "level": 0}
+    assert data["interpolation"] == {"gain": "log", "level": "nearest"}
+    assert data["label_effect"] == "none"
+    other = _strength_descriptor(identity_parameters=(("gain", 1.5), ("level", 0)))
+    assert other.identity != descriptor.identity
+
+
+def test_resolve_parameters_follows_declared_rules():
+    descriptor = _strength_descriptor()
+    register_corruption(descriptor.name, descriptor=descriptor)(lambda *a, **k: a[0])
+    try:
+        assert resolve_parameters(descriptor.name, "1.0.0", 0) == {
+            "gain": 1.0,
+            "level": 0.0,
+        }
+        assert resolve_parameters(descriptor.name, "1.0.0", 2) == {
+            "gain": 8.0,
+            "level": 3.0,
+        }
+        half = resolve_parameters(descriptor.name, "1.0.0", 1.5)
+        assert half["gain"] == pytest.approx(4.0, rel=1e-6)
+        assert half["level"] == 3.0
+        below_half = resolve_parameters(descriptor.name, "1.0.0", 0.25)
+        assert below_half["gain"] == pytest.approx(2.0**0.25, rel=1e-6)
+        assert below_half["level"] == 0.0
+    finally:
+        with _CORRUPTION_LOCK:
+            _CORRUPTION_REGISTRY.pop((descriptor.name, "1.0.0"), None)
+            _CORRUPTION_DESCRIPTOR_REGISTRY.pop((descriptor.name, "1.0.0"), None)
+
+
+def test_resolved_parameters_are_float32_table_values():
+    resolved = resolve_parameters("low_light", "1.0.0", 3)
+    row = dict(
+        get_corruption_descriptor("low_light", "1.0.0").severity_parameters[2][1]
+    )
+    for name, value in resolved.items():
+        assert value == float(np.float32(row[name]))
+
+
+@pytest.mark.parametrize(
+    ("strength", "error_type"),
+    [
+        (-0.1, ValueError),
+        (5.01, ValueError),
+        (float("nan"), ValueError),
+        (True, TypeError),
+        (tf.constant(1.0), TypeError),
+    ],
+)
+def test_apply_corruption_at_rejects_invalid_strengths(strength, error_type):
+    with pytest.raises(error_type, match="strength"):
+        apply_corruption_at(
+            _image(), name="haze", version="1.0.0", strength=strength, seed=SEED
+        )
+
+
+def test_continuous_entry_points_reject_severity_only_descriptors():
+    with pytest.raises(ValueError, match="integer severities"):
+        apply_corruption_at(
+            _image(), name="gaussian_noise", version="1.0.0", strength=1, seed=SEED
+        )
+    with pytest.raises(ValueError, match="integer severities"):
+        apply_corruption_stack(
+            _image(), steps=[("jpeg_compression", "1.0.0", 1)], seed=SEED
+        )
+
+
+def test_apply_corruption_at_validates_auxiliary_inputs():
+    region = tf.ones([17, 19], tf.bool)
+    with pytest.raises(ValueError, match="not used"):
+        apply_corruption_at(
+            _image(),
+            name="low_light",
+            version="1.0.0",
+            strength=1,
+            seed=SEED,
+            region=region,
+        )
+    with pytest.raises(TypeError, match="bool"):
+        apply_corruption_at(
+            _image(),
+            name="sun_glitter",
+            version="1.0.0",
+            strength=1,
+            seed=SEED,
+            region=tf.ones([17, 19], tf.float32),
+        )
+    with pytest.raises(tf.errors.InvalidArgumentError, match="height and width"):
+        apply_corruption_at(
+            _image(),
+            name="sun_glitter",
+            version="1.0.0",
+            strength=1,
+            seed=SEED,
+            region=tf.ones([17, 18], tf.bool),
+        )
+    with pytest.raises(tf.errors.InvalidArgumentError, match="non-negative"):
+        apply_corruption_at(
+            _image(),
+            name="haze",
+            version="1.0.0",
+            strength=1,
+            seed=SEED,
+            depth_m=tf.fill([17, 19], float("nan")),
+        )
+    with pytest.raises(TypeError, match="Horizon"):
+        apply_corruption_at(
+            _image(),
+            name="haze",
+            version="1.0.0",
+            strength=1,
+            seed=SEED,
+            horizon=(3.0, 4.0),
+        )
+
+
+@pytest.mark.parametrize("dtype", [tf.uint8, tf.float32])
+def test_zero_strength_returns_the_rounded_input(dtype):
+    image = tf.constant(
+        [[[0.4, 1.5, 2.5], [254.6, 255.0, 300.0]]]
+        if dtype == tf.float32
+        else [[[0, 1, 2], [253, 254, 255]]],
+        dtype=dtype,
+    )
+    expected = tf.cast(
+        tf.math.rint(tf.clip_by_value(tf.cast(image, tf.float32), 0, 255)), tf.uint8
+    )
+    result = apply_corruption_at(
+        image, name="low_light", version="1.0.0", strength=0, seed=SEED
+    )
+    np.testing.assert_array_equal(result.image.numpy(), expected.numpy())
+    assert result.record.parameters == (
+        ("exposure_gain", 1.0),
+        ("shot_noise", 0.0),
+        ("read_noise_variance", 0.0),
+        ("compensation_cap", 1.0),
+    )
+
+
+def test_corruption_record_describes_the_call():
+    record = apply_corruption_at(
+        _image(),
+        name="sun_glitter",
+        version="1.0.0",
+        strength=2.5,
+        seed=SEED,
+        episode_seed=tf.constant([5, 6], tf.int32),
+        horizon=Horizon(4.0, 6.0),
+    ).record
+    data = record.to_dict()
+    assert json.loads(json.dumps(data)) == data
+    assert record.identity == get_corruption_descriptor("sun_glitter", "1.0.0").identity
+    assert record.strength == 2.5
+    assert record.mode == "horizon"
+    assert record.auxiliary_inputs == ("horizon",)
+    assert record.episode_seed == "provided"
+    assert record.image_width == 19
+    assert record.reference_width == 1024
+    assert dict(record.parameters) == resolve_parameters("sun_glitter", "1.0.0", 2.5)
+
+
+def test_stack_rounds_once_and_matches_float_composition():
+    image = _image(32, 40)
+    steps = [("overexposure", "1.0.0", 1.5), ("white_balance_warm", "1.0.0", 2.0)]
+    stacked = apply_corruption_stack(image, steps=steps, seed=SEED)
+    sequential = image
+    for name, version, strength in steps:
+        sequential = apply_corruption_at(
+            sequential, name=name, version=version, strength=strength, seed=SEED
+        ).image
+    difference = np.abs(
+        stacked.image.numpy().astype(int) - sequential.numpy().astype(int)
+    )
+    assert difference.max() <= 1
+    assert [step.name for step in stacked.record.steps] == [
+        "overexposure",
+        "white_balance_warm",
+    ]
+
+
+def test_stack_identity_depends_on_order_and_strength():
+    image = _image()
+    steps = [("haze", "1.0.0", 1.0), ("low_light", "1.0.0", 2.0)]
+    forward = apply_corruption_stack(image, steps=steps, seed=SEED).record
+    reverse = apply_corruption_stack(image, steps=steps[::-1], seed=SEED).record
+    stronger = apply_corruption_stack(
+        image, steps=[steps[0], ("low_light", "1.0.0", 2.5)], seed=SEED
+    ).record
+    assert len({forward.identity, reverse.identity, stronger.identity}) == 3
+    assert forward.identity == corruption_stack_identity(
+        [
+            (get_corruption_descriptor(name, version).identity, strength)
+            for name, version, strength in steps
+        ]
+    )
+
+
+def test_stack_routes_auxiliary_inputs_to_declaring_steps():
+    image = _image()
+    region = tf.ones([17, 19], tf.bool)
+    result = apply_corruption_stack(
+        image,
+        steps=[("low_light", "1.0.0", 1.0), ("sun_glitter", "1.0.0", 1.0)],
+        seed=SEED,
+        region=region,
+    )
+    assert result.record.steps[0].auxiliary_inputs == ()
+    assert result.record.steps[1].mode == "region"
+    with pytest.raises(ValueError, match="not used"):
+        apply_corruption_stack(
+            image, steps=[("low_light", "1.0.0", 1.0)], seed=SEED, region=region
+        )

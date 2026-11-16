@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+This release makes composited labels match the rendered pixels in every blending mode.
+
+### Changed
+
+- Compositing is version 2.0.0, and its blending API changes. `BlendingRule(mode=..., feather_sigma_px=...)` becomes
+  `BlendingRule(mix=..., edge_sigma_px=..., harmonization_strength=...)`, and each paste draws its mode from the
+  weighted `mix` of `hard`, `soft_edge`, and `harmonized`. Every mode composites with an explicit alpha, and labels mark
+  the object's pixels rendered at least half from the object. See
+  [compositing](docs/vision.md#16-compositing-annotated-instances).
+- `harmonized` replaces the `poisson` mode and the CIELAB harmonization option. It adapts the object to the
+  destination's light and exposure with per-channel linear-light gains, the ratio of the two frames' Grey-Edge
+  illuminants. Poisson cloning and CIELAB matching took the colour and brightness of the water around the object, which
+  tinted objects blue and pushed white ones toward black, and Poisson cloning's mask erosion erased parts thinner than
+  about 7 pixels while leaving their labels.
+- `feather` becomes `soft_edge`, centred on the edge with a default sigma of 1 px at width 1024 instead of 2. The wider
+  blur drew a halo of the source frame's background around objects.
+
+### Added
+
+- `Instance.has_context` declares that a crop's pixels outside its alpha are the source frame's surroundings. Without
+  it, those pixels are replaced by the nearest object colours before use.
+- `Instance.source_illuminant` and `justdata.vision.colorspace.estimate_illuminant`, a Grey-Edge estimate of a frame's
+  illuminant colour and level, adapt objects between frames.
+- `PlacementRule(min_scale=0.0, max_scale=2.0)`: horizon scaling draws anchors only where the crop's scale is in range,
+  and an instance with no such anchor is rejected with `scale_out_of_range`.
+
+### Compatibility
+
+- Code that builds `BlendingRule` with `mode`, `feather_sigma_px`, `harmonization_ring_px`, or `poisson` must move to
+  `mix` and the new modes. Composite identities change to `composite@2.0.0`, and the `above_horizon` rejection reason is
+  gone: anchors above the horizon are never drawn. `seamless_clone` and its golden test are unchanged.
+
 ## 1.5.0 — 2026-11-15
 
 This release renders controlled scene conditions, such as haze, low light, glitter, and lens droplets, at continuous

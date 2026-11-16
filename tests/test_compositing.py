@@ -1,11 +1,17 @@
 import json
+from dataclasses import replace
 
 import numpy as np
 import pytest
 import tensorflow as tf
 
-from justdata.vision.colorspace import rgb_to_lab
+from justdata.vision.colorspace import (
+    estimate_illuminant,
+    linear_to_srgb,
+    srgb_to_linear,
+)
 from justdata.vision.compositing import (
+    BLENDING_MODES,
     BlendingRule,
     CompositeDescriptor,
     Instance,
@@ -167,15 +173,19 @@ def test_null_paste_over_an_earlier_paste_restores_its_labels():
     assert result.records[0].visible_pixels == pasted.sum()
 
 
+def _single(mode, **kwargs):
+    return BlendingRule(mix=((mode, 1.0),), **kwargs)
+
+
 def test_invalid_pixels_are_never_written():
     image, mask, _allowed = _scene()
     valid = np.ones([HEIGHT, WIDTH], bool)
     valid[:, WIDTH // 2 :] = False
-    for mode in ("hard", "feather", "poisson"):
+    for mode in BLENDING_MODES:
         result = _composite(
             [_boat(source_id=str(i)) for i in range(4)],
             valid=valid,
-            blending=BlendingRule(mode=mode),
+            blending=_single(mode, edge_sigma_px=16.0),
         )
         np.testing.assert_array_equal(result.image.numpy()[~valid], image[~valid])
         np.testing.assert_array_equal(result.mask.numpy()[~valid], mask[~valid])
@@ -191,67 +201,197 @@ def test_compositing_is_deterministic_for_a_seed():
     assert [r.anchor for r in first.records] != [r.anchor for r in other.records]
 
 
-def test_feather_softens_edges_but_keeps_the_label_footprint():
-    hard = _composite([_boat()])
-    feather = _composite(
-        [_boat()], blending=BlendingRule(mode="feather", feather_sigma_px=8.0)
+def _flat_scene(value=0):
+    image = np.full([HEIGHT, WIDTH, 3], value, np.uint8)
+    return image, np.zeros([HEIGHT, WIDTH], np.uint8), np.ones([HEIGHT, WIDTH], bool)
+
+
+def _mast_boat(object_rgb, context_rgb, **kwargs):
+    """A hull with a one-pixel mast: the mast is thinner than any soft edge."""
+    alpha = np.zeros([20, 24], bool)
+    alpha[10:, 4:20] = True
+    alpha[:10, 11] = True
+    crop = np.where(alpha[..., None], object_rgb, context_rgb).astype(np.uint8)
+    return Instance(crop, alpha, BOAT, "mast_boat", 0.75, **kwargs)
+
+
+@pytest.mark.parametrize("mode", BLENDING_MODES)
+def test_labels_mark_exactly_the_pixels_rendered_at_least_half_object(mode):
+    # White on black makes each output value the rendered object weight times 255.
+    image, mask, allowed = _flat_scene(0)
+    result = composite_instances(
+        image,
+        mask,
+        [_mast_boat((255, 255, 255), (0, 0, 0), has_context=True)],
+        allowed=allowed,
+        placement=PlacementRule(min_visible_pixels=16),
+        blending=_single(mode, edge_sigma_px=16.0),
+        seed=SEED,
     )
-    assert feather.records[0].anchor == hard.records[0].anchor
-    hard_footprint = hard.pasted.numpy()
-    soft_footprint = feather.pasted.numpy()
-    assert np.mean(hard_footprint != soft_footprint) < 0.002
-    image, _mask, _allowed = _scene()
-    changed = np.any(feather.image.numpy() != image, axis=-1)
-    assert np.sum(changed & ~soft_footprint) > 0
-    assert dict(feather.records[0].blending)["feather_sigma_px"] == pytest.approx(1.0)
+    weight_at_least_half = result.image.numpy()[..., 0] >= 128
+    np.testing.assert_array_equal(result.pasted.numpy(), weight_at_least_half)
+    assert result.records[0].visible_pixels == weight_at_least_half.sum() > 100
 
 
-def test_poisson_blending_changes_only_its_region():
-    image, _mask, _allowed = _scene()
-    result = _composite([_boat()], blending=BlendingRule(mode="poisson"))
-    (record,) = result.records
-    top, left, bottom, right = record.box
-    changed = np.any(result.image.numpy() != image, axis=-1)
-    outside = np.ones_like(changed)
-    outside[top - 1 : bottom + 1, left - 1 : right + 1] = False
-    assert changed.any() and not changed[outside].any()
-
-
-def test_harmonization_moves_instance_colour_toward_the_background():
-    image, _mask, _allowed = _scene()
-    bright = _boat()
-    bright = Instance(
-        image=np.full_like(bright.image, 250),
-        alpha=bright.alpha,
-        class_id=BOAT,
-        source_id="bright",
-        anchor_row_fraction=0.75,
+@pytest.mark.parametrize(("has_context", "bleeds"), [(False, False), (True, True)])
+def test_soft_edges_stay_near_the_object_and_use_context_only_when_declared(
+    has_context, bleeds
+):
+    image, mask, allowed = _flat_scene(0)
+    result = composite_instances(
+        image,
+        mask,
+        [_mast_boat((128, 128, 128), (255, 0, 255), has_context=has_context)],
+        allowed=allowed,
+        placement=PlacementRule(min_visible_pixels=16),
+        blending=_single("soft_edge", edge_sigma_px=16.0),
+        seed=SEED,
     )
-    plain = _composite([bright])
-    harmonized = _composite([bright], blending=BlendingRule(harmonization_strength=1.0))
-    footprint = plain.pasted.numpy()
-    # The ring is 8 px at width 1024, so one pixel at this width.
-    padded = np.pad(footprint, 1)
-    dilated = np.zeros_like(footprint)
-    for dy in range(3):
-        for dx in range(3):
-            dilated |= padded[dy : dy + HEIGHT, dx : dx + WIDTH]
+    output = result.image.numpy().astype(int)
+    top, left, bottom, right = result.records[0].box
+    reach = 6  # three edge sigmas: 16 px at width 1024 is 2 px here
+    near = np.zeros([HEIGHT, WIDTH], bool)
+    near[top - reach : bottom + reach, left - reach : right + reach] = True
+    assert not np.any(output[~near])
+    magenta = output[..., 0] - output[..., 1]
+    assert (magenta.max() > 2) == bleeds
 
-    def lab_mean(pixels):
-        return rgb_to_lab(pixels.astype(np.float32) / 255.0).numpy().mean(axis=0)
 
-    ring_mean = lab_mean(image[dilated & ~footprint])
-    plain_mean = lab_mean(plain.image.numpy()[footprint])
-    harmonized_mean = lab_mean(harmonized.image.numpy()[footprint])
-    np.testing.assert_allclose(harmonized_mean, ring_mean, atol=1.0)
-    assert np.abs(plain_mean - ring_mean).max() > 20
-    assert dict(harmonized.records[0].blending)["harmonized"] is True
+def _linear(srgb_uint8):
+    return srgb_to_linear(np.asarray(srgb_uint8, np.float32) / 255.0).numpy()
+
+
+def _textured_mast_boat(context_rgb, **kwargs):
+    boat = _mast_boat((0, 0, 0), context_rgb, **kwargs)
+    texture = np.random.default_rng(3).integers(120, 200, size=boat.image.shape)
+    image = np.where(boat.alpha[..., None], texture, boat.image).astype(np.uint8)
+    return replace(boat, image=image)
+
+
+def _paste_on(image, boat, mode="harmonized", strength=1.0):
+    mask = np.zeros([HEIGHT, WIDTH], np.uint8)
+    return composite_instances(
+        image,
+        mask,
+        [boat],
+        allowed=np.ones([HEIGHT, WIDTH], bool),
+        placement=PlacementRule(min_visible_pixels=16),
+        blending=_single(mode, harmonization_strength=strength),
+        seed=SEED,
+    )
+
+
+def _pasted_object(result, boat):
+    top, left, bottom, right = result.records[0].box
+    return result.image.numpy()[top:bottom, left:right][boat.alpha]
+
+
+@pytest.mark.parametrize("strength", [1.0, 0.5])
+def test_harmonized_applies_the_ratio_of_frame_illuminants(strength):
+    image, _mask, _allowed = _scene()
+    destination = estimate_illuminant(image / 255.0).numpy()
+    warmer_and_brighter = destination * np.array([2.5, 2.0, 1.5], np.float32)
+    boat = _textured_mast_boat(
+        (0, 0, 0), source_illuminant=tuple(warmer_and_brighter.tolist())
+    )
+    result = _paste_on(image, boat, strength=strength)
+    gains = (destination / warmer_and_brighter) ** strength
+    expected = linear_to_srgb(_linear(boat.image[boat.alpha]) * gains).numpy() * 255
+    np.testing.assert_allclose(_pasted_object(result, boat), expected, atol=1.0)
+    recorded = dict(result.records[0].blending)["gains"]
+    np.testing.assert_allclose(recorded, gains, rtol=1e-5)
+
+
+def test_harmonized_ignores_the_surroundings_of_the_object():
+    # Under the same light, the object keeps its colours whatever the water
+    # around it looks like in either frame.
+    image, _mask, _allowed = _scene()
+    light = tuple(estimate_illuminant(image / 255.0).numpy().tolist())
+    boat = _textured_mast_boat(
+        (100, 100, 100), has_context=True, source_illuminant=light
+    )
+    rows, columns = np.nonzero(boat.alpha)
+    interior = (rows >= 12) & (columns >= 6) & (columns < 18)
+    harmonized = _pasted_object(_paste_on(image, boat), boat)
+    np.testing.assert_allclose(
+        harmonized[interior], boat.image[boat.alpha][interior], atol=1.0
+    )
+
+    without_light = replace(boat, source_illuminant=None)
+    plain = _paste_on(image, without_light)
+    soft = _paste_on(image, without_light, mode="soft_edge")
+    np.testing.assert_array_equal(plain.image.numpy(), soft.image.numpy())
+    assert dict(plain.records[0].blending)["gains"] is None
+
+
+def test_estimate_illuminant_follows_light_and_exposure_not_resolution():
+    coarse = np.random.default_rng(5).uniform(0.0, 0.75, size=(12, 16, 3))
+    scene = tf.image.resize(coarse.astype(np.float32), [96, 128]).numpy()
+    plain = estimate_illuminant(linear_to_srgb(scene)).numpy()
+    gains = np.array([1.2, 0.9, 0.6], np.float32)
+    lit = estimate_illuminant(linear_to_srgb(scene * gains)).numpy()
+    np.testing.assert_allclose(lit / plain, gains, rtol=1e-4)
+    larger = tf.image.resize(coarse.astype(np.float32), [192, 256]).numpy()
+    np.testing.assert_allclose(
+        estimate_illuminant(linear_to_srgb(larger)).numpy(), plain, rtol=0.1
+    )
+    with pytest.raises(tf.errors.InvalidArgumentError, match="edges"):
+        estimate_illuminant(np.full([16, 16, 3], 0.5, np.float32))
+
+
+@pytest.mark.parametrize(
+    "illuminant", [(1.0, 1.0), (1.0, 0.0, 1.0), (1.0, float("nan"), 1.0)]
+)
+def test_instance_rejects_invalid_source_illuminants(illuminant):
+    with pytest.raises(ValueError, match="source_illuminant"):
+        _composite([_boat(source_illuminant=illuminant)])
+
+
+def test_each_paste_draws_its_mode_from_the_mix():
+    rule = BlendingRule(mix=(("hard", 1.0), ("soft_edge", 1.0), ("harmonized", 2.0)))
+    assert [rule.draw_mode(d) for d in (0.0, 0.24, 0.26, 0.49, 0.51, 0.99)] == [
+        "hard",
+        "hard",
+        "soft_edge",
+        "soft_edge",
+        "harmonized",
+        "harmonized",
+    ]
+    instances = [_boat(source_id=str(i), size=(4, 6)) for i in range(24)]
+    placement = PlacementRule(min_visible_pixels=4, allow_overlap=True)
+    first = _composite(instances, placement=placement, blending=rule)
+    again = _composite(instances, placement=placement, blending=rule)
+    modes = [dict(record.blending)["mode"] for record in first.records]
+    assert set(modes) == set(BLENDING_MODES)
+    assert modes == [dict(record.blending)["mode"] for record in again.records]
+
+
+def test_horizon_scaling_places_crops_only_where_their_scale_fits():
+    horizon = Horizon(HORIZON_ROW, HORIZON_ROW)
+    placement = PlacementRule(
+        scale="horizon", min_scale=0.8, max_scale=1.2, min_visible_pixels=4
+    )
+    fits = [
+        _boat(source_id=f"fits{i}", source_horizon_offset_px=30.0) for i in range(4)
+    ]
+    too_far = _boat(source_id="too_far", source_horizon_offset_px=100.0)
+    result = _composite(fits + [too_far], placement=placement, horizon=horizon)
+    placed = [record for record in result.records if record.status == "placed"]
+    assert len(placed) == 4
+    assert all(0.8 <= record.scale <= 1.2 for record in placed)
+    rejected = result.records[-1]
+    assert (rejected.reason, rejected.attempts) == ("scale_out_of_range", 1)
+
+    keep_row = _composite(
+        [_boat()], placement=PlacementRule(min_scale=1.5, max_scale=2.0)
+    )
+    assert keep_row.records[0].reason == "scale_out_of_range"
 
 
 def test_composite_identity_follows_the_rules():
     first = CompositeDescriptor(PlacementRule(), BlendingRule())
-    second = CompositeDescriptor(PlacementRule(), BlendingRule(mode="feather"))
-    assert first.identity.startswith("composite@1.0.0:sha256:")
+    second = CompositeDescriptor(PlacementRule(), _single("soft_edge"))
+    assert first.identity.startswith("composite@2.0.0:sha256:")
     assert first.identity != second.identity
     assert (
         _composite([_boat()]).identity
@@ -259,6 +399,35 @@ def test_composite_identity_follows_the_rules():
             PlacementRule(min_visible_pixels=16), BlendingRule()
         ).identity
     )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"mix": ()},
+        {"mix": (("poisson", 1.0),)},
+        {"mix": (("hard", 1.0), ("hard", 2.0))},
+        {"mix": (("hard", 0.0),)},
+        {"edge_sigma_px": 0.0},
+        {"harmonization_strength": 1.5},
+    ],
+)
+def test_blending_rule_rejects_invalid_settings(kwargs):
+    with pytest.raises(ValueError, match="BlendingRule|edge_sigma|harmonization"):
+        BlendingRule(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"min_scale": 2.0, "max_scale": 1.0},
+        {"max_scale": float("inf")},
+        {"max_scale": 0.0},
+    ],
+)
+def test_placement_rule_rejects_invalid_scale_ranges(kwargs):
+    with pytest.raises(ValueError, match="min_scale"):
+        PlacementRule(**kwargs)
 
 
 @pytest.mark.parametrize(

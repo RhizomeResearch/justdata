@@ -2,9 +2,13 @@
 
 sRGB follows IEC 61966-2-1 with the D65 white point; CIELAB uses the same
 white, so ``lab_to_rgb(rgb_to_lab(x))`` returns ``x`` up to float32 rounding.
+``estimate_illuminant`` gives a frame's illuminant colour for chromatic
+adaptation between frames.
 """
 
 import tensorflow as tf
+
+from justdata.vision.filters import gaussian_blur_hwc
 
 _RGB_TO_XYZ = (
     (0.4124564, 0.3575761, 0.1804375),
@@ -14,6 +18,10 @@ _RGB_TO_XYZ = (
 _D65_WHITE_XYZ = (0.95047, 1.0, 1.08883)
 _LAB_EPSILON = 216.0 / 24389.0
 _LAB_KAPPA = 24389.0 / 27.0
+MINKOWSKI_ORDER = 6
+# Grey-Edge smoothing in pixels per 1024 pixels of image width.
+GREY_EDGE_SIGMA_PER_1024_PX = 1.0
+_CLIPPED_LEVEL = 254.0 / 255.0
 
 
 def srgb_to_linear(image: tf.Tensor) -> tf.Tensor:
@@ -68,4 +76,58 @@ def lab_to_rgb(lab: tf.Tensor) -> tf.Tensor:
     return tf.clip_by_value(linear_to_srgb(linear), 0.0, 1.0)
 
 
-__all__ = ["lab_to_rgb", "linear_to_srgb", "rgb_to_lab", "srgb_to_linear"]
+def estimate_illuminant(image: tf.Tensor, valid: tf.Tensor | None = None) -> tf.Tensor:
+    """Linear-RGB illuminant of an sRGB image in ``[0, 1]``, colour and level.
+
+    First-order Grey-Edge with Minkowski order 6 (van de Weijer, Gevers and
+    Gijsenij, "Edge-Based Color Constancy", IEEE TIP 2007): the Minkowski mean
+    of gradient magnitudes of the image smoothed by a Gaussian of
+    ``width / 1024`` pixels, with gradients per ``width / 1024`` pixels so the
+    level does not depend on resolution. Gradients make large uniform regions,
+    such as open water or sky, count little, so the estimate follows the light
+    and exposure rather than the dominant surface colour and brightness. Clipped pixels (a channel at or above 254/255)
+    and their 3 x 3 neighbours, as in the authors' reference code, border
+    pixels, and pixels outside the optional bool ``valid`` map are left out;
+    excluding the whole smoothing reach instead drops the bright cloud and glare
+    edges that carry most of the light's colour. A diagonal (von Kries) change of
+    illumination or exposure scales the estimate by the same per-channel
+    factors, so the ratio of two frames' estimates adapts colours from one frame
+    to the other.
+    """
+    image = tf.cast(image, tf.float32)
+    if image.shape.rank != 3 or image.shape[1] is None:
+        raise ValueError("estimate_illuminant needs an HWC image with a static width.")
+    pixels_per_reference = image.shape[1] / 1024.0
+    sigma = GREY_EDGE_SIGMA_PER_1024_PX * pixels_per_reference
+    smooth = gaussian_blur_hwc(srgb_to_linear(image), sigma, sigma)
+    half_step = 0.5 * pixels_per_reference
+    gradient_y = half_step * (smooth[2:, 1:-1] - smooth[:-2, 1:-1])
+    gradient_x = half_step * (smooth[1:-1, 2:] - smooth[1:-1, :-2])
+    magnitude = tf.sqrt(tf.square(gradient_x) + tf.square(gradient_y))
+
+    clipped = tf.cast(tf.reduce_max(image, axis=-1) >= _CLIPPED_LEVEL, tf.float32)
+    near_clipped = tf.nn.max_pool2d(
+        clipped[tf.newaxis, :, :, tf.newaxis], ksize=3, strides=1, padding="SAME"
+    )[0, 1:-1, 1:-1, 0]
+    keep = near_clipped == 0.0
+    if valid is not None:
+        keep &= tf.cast(valid, tf.bool)[1:-1, 1:-1]
+    edges = tf.boolean_mask(magnitude, keep)
+    tf.debugging.assert_positive(
+        tf.size(edges), message="estimate_illuminant needs unclipped valid pixels."
+    )
+    order = float(MINKOWSKI_ORDER)
+    estimate = tf.pow(tf.reduce_mean(tf.pow(edges, order), axis=0), 1.0 / order)
+    tf.debugging.assert_positive(
+        estimate, message="estimate_illuminant needs edges in every channel."
+    )
+    return estimate
+
+
+__all__ = [
+    "estimate_illuminant",
+    "lab_to_rgb",
+    "linear_to_srgb",
+    "rgb_to_lab",
+    "srgb_to_linear",
+]

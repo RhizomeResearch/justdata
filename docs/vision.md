@@ -959,12 +959,14 @@ overrides alongside those values.
 ## 16. Compositing annotated instances
 
 `justdata.vision.compositing.composite_instances` pastes annotated object crops into a frame and updates its dense
-labels. It runs eagerly, outside `tf.function`, and is meant for offline rendering.
+labels. It runs eagerly, outside `tf.function`, and is meant for offline rendering. This section describes compositor
+version 2.0.0.
 
 ```python
 import numpy as np
 import tensorflow as tf
 
+from justdata.vision.colorspace import estimate_illuminant
 from justdata.vision.compositing import (
     BlendingRule,
     Instance,
@@ -980,14 +982,16 @@ boat = Instance(
     source_id="frame_0412/instance_7",
     anchor_row_fraction=0.71,  # waterline row / source image height
     source_horizon_offset_px=88.0,  # source horizon to waterline; for horizon scaling
+    has_context=True,  # pixels outside the alpha are the source frame's real surroundings
+    source_illuminant=tuple(estimate_illuminant(source_frame_uint8 / 255).numpy()),
 )
 result = composite_instances(
     frame_uint8,
     class_map,
     [boat],
     allowed=water_map,  # where anchors may fall, chosen by the caller
-    placement=PlacementRule(scale="horizon", min_visible_pixels=64, border_margin_px=8),
-    blending=BlendingRule(mode="feather", harmonization_strength=0.5),
+    placement=PlacementRule(scale="horizon", max_scale=2.0, min_visible_pixels=64, border_margin_px=8),
+    blending=BlendingRule(mix=(("hard", 1.0), ("soft_edge", 1.0), ("harmonized", 2.0))),
     seed=tf.constant([frame_index, 3], tf.int32),
     horizon=Horizon(612.0, 640.0),
     instance_map=instance_ids,  # optional
@@ -996,27 +1000,66 @@ result = composite_instances(
 ```
 
 - **Placement.** The anchor is the bottom centre of the crop. `keep_row` pastes at scale 1 with the anchor on row
-  `int(anchor_row_fraction * height)`. `horizon` draws the anchor among all `allowed` pixels and scales by the anchor's
-  distance below the target horizon divided by `source_horizon_offset_px`. An attempt fails with the reason
-  `no_allowed_anchor`, `above_horizon`, `outside_margin`, `outside_allowed` (more than `max_outside_allowed_share` of
-  the label footprint on non-allowed pixels), `overlap` (unless `allow_overlap`), `too_small` (fewer than
-  `min_visible_pixels`), or `no_null_source`. After `max_attempts`, or at once when no anchor exists, the instance is
-  rejected. Its record keeps the count per reason; nothing is substituted.
-- **Blending.** `hard` uses the alpha thresholded at 0.5. `feather` blurs it with a Gaussian of `feather_sigma_px`.
-  `poisson` follows OpenCV's `seamlessClone(NORMAL_CLONE)` through `justdata.vision.poisson.seamless_clone`, which
-  changes the footprint's bounding box plus one pixel and truncates like OpenCV. Harmonization moves the instance's
-  CIELAB mean and standard deviation toward a background ring of `harmonization_ring_px` by `harmonization_strength`.
+  `int(anchor_row_fraction * height)`. `horizon` scales by the anchor's distance below the target horizon divided by
+  `source_horizon_offset_px`, and draws anchors only among the `allowed` pixels where that scale lies in
+  `[min_scale, max_scale]` (default `[0, 2]`), so each crop goes where it fits rather than being stretched. An attempt
+  fails with the reason `outside_margin`, `outside_allowed` (more than `max_outside_allowed_share` of the label
+  footprint on non-allowed pixels), `overlap` (unless `allow_overlap`), `too_small` (fewer than `min_visible_pixels`),
+  or `no_null_source`. After `max_attempts` the instance is rejected; it is rejected at once with `no_allowed_anchor`
+  when no anchor exists, or `scale_out_of_range` when no anchor gives a scale in range (for `keep_row`, when 1 is out of
+  range). Its record keeps the count per reason; nothing is substituted.
+
+- **Blending.** Each paste draws one mode from `mix`, weighted `(mode, weight)` pairs, because mixing modes keeps a
+  model from learning one mode's seams (Dwibedi et al., ICCV 2017). Every mode composites
+  `background * (1 - alpha) + object * alpha`:
+
+  - `hard`: the alpha thresholded at 0.5.
+
+  - `soft_edge`: that binary alpha blurred by a Gaussian of `edge_sigma_px` (default 1), centred on the edge. It hides
+    jagged edges without fading the object or pulling in much of the crop's surroundings.
+
+  - `harmonized`: `soft_edge` plus a correction for the change of light and exposure between the source and destination
+    frames: per-channel (von Kries) gains in linear light, the ratio of the destination's illuminant to the instance's
+    `source_illuminant`, raised to `harmonization_strength` (default 1), so 0.5 applies half of each change in stops.
+    Without `source_illuminant` it equals `soft_edge`. `justdata.vision.colorspace.estimate_illuminant` gives both
+    illuminants with first-order Grey-Edge (van de Weijer et al., IEEE TIP 2007; Minkowski order 6, smoothing and
+    gradient step of `width / 1024` px), leaving out clipped and invalid pixels. Its colour and level both count, so one
+    gain vector carries the colour cast and the exposure.
+
+    The gains come from whole frames, never from the pixels around the object. Water reflects its surroundings and has
+    its own colour, so its local brightness and colour do not measure the light falling on the object: matching them, as
+    Poisson cloning does, tinted objects blue over deep water and pushed white boards toward black over water reflecting
+    dark trees. Gradients make open water and sky count little; on MULTIAQUA frames of one lake and day, Grey-Edge put
+    every channel's gain within a third of a stop of 1, where Shades-of-Gray reached 1.43 on blue; pasted into a river
+    frame, crops darkened by 0.4 stops or less, against 1.45 stops when matched to the surrounding water. The estimate
+    still depends somewhat on scene contrast: a crop from a hazy frame can come out up to about half a stop brighter.
+    Shadows cast on the object at its new place are not modelled.
+
   Pixel sizes refer to a 1024-pixel-wide image and scale with the width.
-- **Labels.** The class (and a new instance ID, counting up from the map's maximum plus one) is written where the final
-  alpha is at least 0.5 and `valid` holds; `pasted` marks exactly those pixels, and no other label changes. Pixels
-  outside `valid` are never written.
+
+- **Context.** With `has_context=False` (the default), the crop's pixels outside the 0.5 alpha are replaced by the
+  nearest object colours before resampling, so whatever they held never reaches the output. With `has_context=True` they
+  are the source frame's surroundings, and a soft edge shows a little of them.
+
+- **Labels.** The class (and a new instance ID, counting up from the map's maximum plus one) is written on the object's
+  pixels whose final alpha is at least 0.5 and where `valid` holds; `pasted` marks exactly those pixels, and no other
+  label changes. A label therefore always covers a pixel rendered at least half from the object: a part thinner than the
+  soft edge is drawn faintly and left unlabelled. Pixels outside `valid` are never written.
+
 - **Null pastes.** An instance with `class_id=None` takes background from another allowed location of the same original
   frame whose box does not intersect the destination box. It goes through the same placement and blending, writes no
   label, and marks `null_pasted`. A null paste over an earlier paste restores the original labels there.
+
 - **Records.** `result.records` has one `PasteRecord` per requested instance, in order. Each has its status, its
   reasons, and the attempt count. A placed instance also has its box, anchor, null source anchor, scale, visible pixels
-  in the final maps, instance ID, and resolved blending. `result.identity` digests the `CompositeDescriptor` of both
-  rules and the fixed conventions.
+  in the final maps, instance ID, and resolved blending: the mode, the edge sigma in pixels, the harmonization strength,
+  and the per-channel gains applied (or `None`). `result.identity` digests the `CompositeDescriptor` of both rules and
+  the fixed conventions.
 
-Draws use `stateless_fold_in(stateless_fold_in(seed, instance_index), attempt)` with Philox, so the same inputs and seed
+Placement draws use `stateless_fold_in(stateless_fold_in(seed, instance_index), attempt)` and the mode draw uses
+`stateless_fold_in(stateless_fold_in(seed, instance_index), 0x424C4E44)`, all with Philox, so the same inputs and seed
 give the same result.
+
+`justdata.vision.poisson.seamless_clone` still reproduces OpenCV's `seamlessClone(NORMAL_CLONE)` for callers who want
+it, but compositing no longer uses it: its 3-pixel mask erosion removes parts thinner than about 7 pixels while their
+labels would remain.

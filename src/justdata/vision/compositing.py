@@ -2,16 +2,19 @@
 
 ``composite_instances`` places each requested instance by its anchor (the
 bottom centre of its crop, at the waterline), checks the placement constraints,
-blends it, and writes its class where the final alpha is at least 0.5. Every
-instance is either placed or rejected with counted reasons; nothing is
-substituted. An instance without a class is a null paste: it takes background
-pixels from another allowed location of the same frame, goes through the same
-placement and blending, and writes no label, which measures how much a model
-reacts to compositing seams alone (Dwibedi et al., ICCV 2017; Blum et al.,
-Fishyscapes, IJCV 2021).
+blends it, and writes its class on the object's pixels whose rendered weight
+(the final alpha) is at least 0.5. Every blending mode composites with an
+explicit alpha, so labels describe the pixels that were rendered. Every instance is either
+placed or rejected with counted reasons; nothing is substituted. An instance
+without a class is a null paste: it takes background pixels from another allowed
+location of the same frame, goes through the same placement and blending, and
+writes no label, which measures how much a model reacts to compositing seams
+alone (Dwibedi et al., ICCV 2017; Blum et al., Fishyscapes, IJCV 2021).
 
-Placement draws use stateless Philox seeds folded from ``seed``, the instance
-index, and the attempt index. Compositing runs eagerly.
+Each paste draws its blending mode from the rule's weighted mix, because mixing
+modes keeps a model from learning any one mode's seams (Dwibedi et al.). Draws
+use stateless Philox seeds folded from ``seed`` and the instance index, then
+from the attempt index or a fixed salt for the mode. Compositing runs eagerly.
 """
 
 from __future__ import annotations
@@ -26,19 +29,23 @@ from typing import Any
 import numpy as np
 import tensorflow as tf
 
-from justdata.vision.colorspace import lab_to_rgb, rgb_to_lab
+from justdata.vision.colorspace import (
+    estimate_illuminant,
+    linear_to_srgb,
+    srgb_to_linear,
+)
 from justdata.vision.corruptions.registry import draw_seed
 from justdata.vision.filters import gaussian_blur_hwc
 from justdata.vision.horizon import Horizon, horizon_coordinates
-from justdata.vision.poisson import clone_bounds, clone_region
 
-COMPOSITE_VERSION = "1.0.0"
+COMPOSITE_VERSION = "2.0.0"
 LABEL_ALPHA_THRESHOLD = 0.5
 REFERENCE_WIDTH = 1024
 PLACEMENT_SCALES = ("keep_row", "horizon")
-BLENDING_MODES = ("hard", "feather", "poisson")
+BLENDING_MODES = ("hard", "soft_edge", "harmonized")
+_BLENDING_DRAW = 0x424C4E44
 _NO_ANCHOR = "no_allowed_anchor"
-_FLAT_LAB_STD = 1e-3
+_SCALE_OUT_OF_RANGE = "scale_out_of_range"
 
 
 @dataclass(frozen=True, eq=False)
@@ -50,6 +57,12 @@ class Instance:
     ``anchor_row_fraction`` of the source image height. ``class_id=None`` makes
     a null paste. ``source_horizon_offset_px`` is the distance in source pixels
     from the source horizon down to the waterline, needed for horizon scaling.
+    ``has_context`` states that the crop's pixels where alpha is below 0.5 are
+    the real surroundings from the source frame, which soft edges may then
+    show. Without context those pixels are replaced by the nearest object
+    colours before any resampling or blending, so they never reach the output.
+    ``source_illuminant`` is ``estimate_illuminant`` of the source frame;
+    harmonized blending adapts the object from it to the destination frame's.
     """
 
     image: Any
@@ -58,6 +71,8 @@ class Instance:
     source_id: str
     anchor_row_fraction: float
     source_horizon_offset_px: float | None = None
+    has_context: bool = False
+    source_illuminant: tuple[float, float, float] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,8 +81,13 @@ class PlacementRule:
 
     ``keep_row`` pastes at scale 1 with the anchor on the row at the instance's
     source row fraction. ``horizon`` scales by the ratio of the anchor's
-    distance below the target horizon to ``source_horizon_offset_px``. A
-    placement is rejected when more than ``max_outside_allowed_share`` of its
+    distance below the target horizon to ``source_horizon_offset_px`` and draws
+    anchors only where that scale lies in ``[min_scale, max_scale]``, so a crop
+    is placed where it fits instead of being stretched; upscaling past about 2
+    visibly softens a crop. An instance is rejected at once with
+    ``scale_out_of_range`` when no anchor fits (or, for ``keep_row``, when 1 is
+    outside the range). A placement is rejected when more than
+    ``max_outside_allowed_share`` of its
     label footprint covers non-allowed pixels, when it shows fewer than
     ``min_visible_pixels``, when it overlaps an earlier paste (unless
     ``allow_overlap``), or when its box comes closer than ``border_margin_px``
@@ -80,10 +100,22 @@ class PlacementRule:
     allow_overlap: bool = False
     border_margin_px: int = 0
     max_attempts: int = 50
+    min_scale: float = 0.0
+    max_scale: float = 2.0
 
     def __post_init__(self) -> None:
         if self.scale not in PLACEMENT_SCALES:
             raise ValueError(f"PlacementRule scale must be one of {PLACEMENT_SCALES}.")
+        if not (
+            math.isfinite(self.min_scale)
+            and math.isfinite(self.max_scale)
+            and 0.0 <= self.min_scale <= self.max_scale
+            and self.max_scale > 0.0
+        ):
+            raise ValueError(
+                "PlacementRule needs finite 0 <= min_scale <= max_scale with "
+                "max_scale > 0."
+            )
         if not 0.0 <= self.max_outside_allowed_share <= 1.0:
             raise ValueError("max_outside_allowed_share must be in [0, 1].")
         if self.min_visible_pixels < 1 or self.border_margin_px < 0:
@@ -101,42 +133,74 @@ class PlacementRule:
             "allow_overlap": self.allow_overlap,
             "border_margin_px": self.border_margin_px,
             "max_attempts": self.max_attempts,
+            "min_scale": self.min_scale,
+            "max_scale": self.max_scale,
         }
 
 
 @dataclass(frozen=True, slots=True)
 class BlendingRule:
-    """How a placed instance is blended.
+    """How placed instances are blended.
 
-    ``hard`` uses the binary alpha, ``feather`` blurs it with a Gaussian of
-    ``feather_sigma_px``, and ``poisson`` clones its gradients like OpenCV's
-    ``seamlessClone(NORMAL_CLONE)``. Independently, harmonization moves the
-    instance's CIELAB mean and standard deviation toward those of a background
-    ring ``harmonization_ring_px`` wide, by ``harmonization_strength``. Pixel
-    sizes refer to an image 1024 pixels wide and scale with the image width.
+    Each paste draws one mode from ``mix``, ``(mode, weight)`` pairs with
+    positive weights. Every mode composites ``output = background * (1 - alpha)
+    + object * alpha``:
+
+    - ``hard``: alpha is the instance's alpha thresholded at 0.5.
+    - ``soft_edge``: that binary alpha blurred by a Gaussian of
+      ``edge_sigma_px``, centred on the edge; it hides jagged edges without
+      fading the object or pulling in much of what surrounds it.
+    - ``harmonized``: ``soft_edge`` plus a correction of the object for the
+      change of illumination and exposure between frames: per-channel
+      (von Kries) gains in linear light, the ratio of the destination's
+      Grey-Edge illuminant to the instance's ``source_illuminant``, raised to
+      ``harmonization_strength``. Without ``source_illuminant`` it is
+      ``soft_edge``. The gains come from whole frames, not from the pixels
+      around the object: water reflects its surroundings and has its own
+      colour, so its local brightness and colour do not measure the light
+      falling on the object, and matching them tinted objects and pushed
+      white ones toward black.
+
+    Pixel sizes refer to an image 1024 pixels wide and scale with the width.
     """
 
-    mode: str = "hard"
-    feather_sigma_px: float = 2.0
-    harmonization_strength: float = 0.0
-    harmonization_ring_px: float = 8.0
+    mix: tuple[tuple[str, float], ...] = (("hard", 1.0),)
+    edge_sigma_px: float = 1.0
+    harmonization_strength: float = 1.0
 
     def __post_init__(self) -> None:
-        if self.mode not in BLENDING_MODES:
-            raise ValueError(f"BlendingRule mode must be one of {BLENDING_MODES}.")
-        if self.feather_sigma_px <= 0 or self.harmonization_ring_px <= 0:
-            raise ValueError(
-                "feather_sigma_px and harmonization_ring_px must be positive."
-            )
+        mix = tuple((str(mode), float(weight)) for mode, weight in self.mix)
+        object.__setattr__(self, "mix", mix)
+        modes = [mode for mode, _weight in mix]
+        if not mix or len(set(modes)) != len(modes):
+            raise ValueError("BlendingRule mix needs at least one mode, each once.")
+        for mode, weight in mix:
+            if mode not in BLENDING_MODES:
+                raise ValueError(f"BlendingRule modes must be in {BLENDING_MODES}.")
+            if not (math.isfinite(weight) and weight > 0.0):
+                raise ValueError(
+                    "BlendingRule mix weights must be finite and positive."
+                )
+        if not self.edge_sigma_px > 0:
+            raise ValueError("edge_sigma_px must be positive.")
         if not 0.0 <= self.harmonization_strength <= 1.0:
             raise ValueError("harmonization_strength must be in [0, 1].")
 
+    def draw_mode(self, draw: float) -> str:
+        """The mode whose share of the total weight contains ``draw`` in [0, 1)."""
+        total = sum(weight for _mode, weight in self.mix)
+        cumulative = 0.0
+        for mode, weight in self.mix:
+            cumulative += weight / total
+            if draw < cumulative:
+                return mode
+        return self.mix[-1][0]
+
     def to_dict(self) -> dict[str, Any]:
         return {
-            "mode": self.mode,
-            "feather_sigma_px": self.feather_sigma_px,
+            "mix": [[mode, weight] for mode, weight in self.mix],
+            "edge_sigma_px": self.edge_sigma_px,
             "harmonization_strength": self.harmonization_strength,
-            "harmonization_ring_px": self.harmonization_ring_px,
         }
 
 
@@ -157,11 +221,21 @@ class CompositeDescriptor:
             "reference_width": REFERENCE_WIDTH,
             "anchor": "crop_bottom_row_and_centre_column",
             "draws": "stateless_fold_in_seed_instance_then_attempt_philox",
+            "mode_draw": f"stateless_fold_in_seed_instance_then_{_BLENDING_DRAW}",
+            "scale_limits": "anchors_restricted_to_scale_range",
             "resize": "bilinear_antialias_round_size",
-            "feather": "gaussian_blur_reflect_101_of_binary_alpha",
-            "poisson": "opencv_normal_clone_dst1_float64_clip_truncate",
-            "harmonization": "cielab_mean_std_toward_square_dilation_ring",
-            "label_write": "final_alpha_at_least_threshold_and_valid",
+            "without_context": "outside_alpha_filled_from_nearest_object_pixels",
+            "soft_edge": "gaussian_blur_reflect_101_of_binary_alpha",
+            "harmonization": (
+                "linear_light_von_kries_gains_of_frame_illuminant_ratio_"
+                "strength_as_exponent"
+            ),
+            "illuminant_estimate": (
+                "grey_edge_order_1_minkowski_6_sigma_width_over_1024_"
+                "gradients_per_reference_pixel"
+            ),
+            "composite": "background_times_one_minus_alpha_plus_object_times_alpha",
+            "label_write": "object_pixels_with_final_alpha_at_least_threshold_and_valid",
         }
 
     @property
@@ -236,11 +310,24 @@ class _Placement:
     alpha: np.ndarray
     footprint: np.ndarray
     rgb: np.ndarray
+    source_illuminant: np.ndarray | None
+    mode: str
     null_source_anchor: tuple[int, int] | None
 
 
 class _Scene:
     """Mutable state of one compositing call."""
+
+    @property
+    def illuminant(self) -> np.ndarray:
+        """Grey-Edge estimate of the original frame, computed once when needed."""
+        if self._illuminant is None:
+            self._illuminant = (
+                estimate_illuminant(self.original / 255.0, self.valid)
+                .numpy()
+                .astype(np.float64)
+            )
+        return self._illuminant
 
     def __init__(self, image, mask, allowed, valid, instance_map, horizon):
         self.original = image.astype(np.float32)
@@ -259,6 +346,16 @@ class _Scene:
         self.occupied = np.zeros_like(allowed)
         self.owner = np.full(mask.shape, -1, np.int64)
         self.anchors = np.argwhere(allowed)
+        self._illuminant = None
+        self.anchor_below = None
+        if horizon is not None and self.anchors.size:
+            below, _along = horizon_coordinates(
+                tf.constant([horizon.left_row, horizon.right_row]),
+                self.width,
+                tf.constant(self.anchors[:, 1] + 0.5),
+                tf.constant(self.anchors[:, 0] + 0.5),
+            )
+            self.anchor_below = below.numpy().astype(np.float64)
         self.next_instance_id = (
             None if instance_map is None else int(instance_map.max()) + 1
         )
@@ -366,13 +463,50 @@ def _instance_arrays(instance: Instance, mask_dtype) -> tuple[np.ndarray, np.nda
         raise ValueError(
             f"Instance '{instance.source_id}' anchor_row_fraction must be in [0, 1]."
         )
+    if instance.source_illuminant is not None:
+        illuminant = np.asarray(instance.source_illuminant, np.float64)
+        if illuminant.shape != (3,) or not np.all(
+            np.isfinite(illuminant) & (illuminant > 0)
+        ):
+            raise ValueError(
+                f"Instance '{instance.source_id}' source_illuminant must be three "
+                "positive finite numbers."
+            )
     if instance.class_id is not None:
         limits = np.iinfo(mask_dtype)
         if not limits.min <= instance.class_id <= limits.max:
             raise ValueError(
                 f"Instance '{instance.source_id}' class_id does not fit the mask."
             )
-    return rgb.astype(np.float32), alpha
+    rgb = rgb.astype(np.float32)
+    if not instance.has_context:
+        rgb = _extend_object_colours(rgb, alpha >= LABEL_ALPHA_THRESHOLD)
+    return rgb, alpha
+
+
+def _extend_object_colours(rgb: np.ndarray, inside: np.ndarray) -> np.ndarray:
+    """Replace pixels outside the object, ring by ring, with their object neighbours' mean."""
+    rgb = rgb.copy()
+    known = inside.copy()
+    if not known.any():
+        return rgb
+    while not known.all():
+        padded_known = np.pad(known, 1).astype(np.float32)
+        padded_rgb = np.pad(rgb * known[..., None], [(1, 1), (1, 1), (0, 0)])
+        count = np.zeros(known.shape, np.float32)
+        total = np.zeros(rgb.shape, np.float32)
+        for dy in range(3):
+            for dx in range(3):
+                window = (
+                    slice(dy, dy + known.shape[0]),
+                    slice(dx, dx + known.shape[1]),
+                )
+                count += padded_known[window]
+                total += padded_rgb[window]
+        frontier = ~known & (count > 0)
+        rgb[frontier] = total[frontier] / count[frontier][:, None]
+        known |= frontier
+    return rgb
 
 
 def _paste(scene, index, instance, placement, blending, instance_seed) -> PasteRecord:
@@ -385,6 +519,10 @@ def _paste(scene, index, instance, placement, blending, instance_seed) -> PasteR
             f"Instance '{instance.source_id}' needs a positive source_horizon_offset_px "
             "for horizon scaling."
         )
+    mode_draw = tf.random.stateless_uniform(
+        [], seed=draw_seed(instance_seed, _BLENDING_DRAW), alg="philox"
+    )
+    mode = blending.draw_mode(float(mode_draw))
     rejections: Counter[str] = Counter()
     attempts = 0
     for attempt in range(placement.max_attempts):
@@ -392,10 +530,12 @@ def _paste(scene, index, instance, placement, blending, instance_seed) -> PasteR
         draws = tf.random.stateless_uniform(
             [2], seed=draw_seed(instance_seed, attempt), alg="philox"
         ).numpy()
-        proposal = _propose(scene, instance, rgb, alpha, placement, blending, draws)
+        proposal = _propose(
+            scene, instance, rgb, alpha, placement, blending, mode, draws
+        )
         if isinstance(proposal, str):
             rejections[proposal] += 1
-            if proposal == _NO_ANCHOR:
+            if proposal in (_NO_ANCHOR, _SCALE_OUT_OF_RANGE):
                 break
             continue
         resolved = _blend(scene, proposal, blending)
@@ -432,9 +572,11 @@ def _paste(scene, index, instance, placement, blending, instance_seed) -> PasteR
     )
 
 
-def _propose(scene, instance, rgb, alpha, placement, blending, draws):
+def _propose(scene, instance, rgb, alpha, placement, blending, mode, draws):
     """A checked placement, or the reason this attempt failed."""
     if placement.scale == "keep_row":
+        if not placement.min_scale <= 1.0 <= placement.max_scale:
+            return _SCALE_OUT_OF_RANGE
         row = min(scene.height - 1, int(instance.anchor_row_fraction * scene.height))
         columns = np.flatnonzero(scene.allowed[row])
         if columns.size == 0:
@@ -447,17 +589,19 @@ def _propose(scene, instance, rgb, alpha, placement, blending, draws):
     else:
         if scene.anchors.size == 0:
             return _NO_ANCHOR
-        anchor = _pick(scene.anchors, draws[0])
-        assert scene.horizon is not None and instance.source_horizon_offset_px
-        below, _along = horizon_coordinates(
-            tf.constant([scene.horizon.left_row, scene.horizon.right_row]),
-            scene.width,
-            tf.constant(anchor[1] + 0.5),
-            tf.constant(anchor[0] + 0.5),
+        assert scene.anchor_below is not None and instance.source_horizon_offset_px
+        offset_px = instance.source_horizon_offset_px
+        below = scene.anchor_below
+        fits = np.flatnonzero(
+            (below > 0.0)
+            & (below >= placement.min_scale * offset_px)
+            & (below <= placement.max_scale * offset_px)
         )
-        if float(below) <= 0.0:
-            return "above_horizon"
-        scale = float(below) / instance.source_horizon_offset_px
+        if fits.size == 0:
+            return _SCALE_OUT_OF_RANGE
+        chosen = fits[min(int(draws[0] * fits.size), fits.size - 1)]
+        anchor = (int(scene.anchors[chosen][0]), int(scene.anchors[chosen][1]))
+        scale = float(below[chosen]) / offset_px
 
     height = max(1, round(scale * alpha.shape[0]))
     width = max(1, round(scale * alpha.shape[1]))
@@ -473,7 +617,7 @@ def _propose(scene, instance, rgb, alpha, placement, blending, draws):
         return "outside_margin"
 
     scaled_rgb, scaled_alpha = _resized(rgb, alpha, (height, width))
-    pad = _canvas_pad(blending, scene.pixel_scale)
+    pad = _canvas_pad(blending, mode, scene.pixel_scale)
     canvas = (
         max(0, top - pad),
         max(0, left - pad),
@@ -486,14 +630,16 @@ def _propose(scene, instance, rgb, alpha, placement, blending, draws):
     binary[offset[0] : offset[0] + height, offset[1] : offset[1] + width] = (
         scaled_alpha >= LABEL_ALPHA_THRESHOLD
     )
-    if blending.mode == "feather":
-        sigma = blending.feather_sigma_px * scene.pixel_scale
-        final_alpha = gaussian_blur_hwc(binary[..., None], sigma, sigma).numpy()[..., 0]
-    else:
+    if mode == "hard":
         final_alpha = binary
+    else:
+        sigma = blending.edge_sigma_px * scene.pixel_scale
+        final_alpha = gaussian_blur_hwc(binary[..., None], sigma, sigma).numpy()[..., 0]
     window = (slice(canvas[0], canvas[2]), slice(canvas[1], canvas[3]))
     final_alpha = final_alpha * scene.valid[window]
-    footprint = final_alpha >= LABEL_ALPHA_THRESHOLD
+    # A soft edge can reach half weight just outside the object, at concave
+    # corners; those pixels show the crop's surroundings, not the object.
+    footprint = (final_alpha >= LABEL_ALPHA_THRESHOLD) & (binary > 0)
 
     covered = int(footprint.sum())
     if covered == 0:
@@ -533,6 +679,13 @@ def _propose(scene, instance, rgb, alpha, placement, blending, draws):
         alpha=final_alpha,
         footprint=footprint,
         rgb=canvas_rgb,
+        # A null paste comes from this frame, under the same illuminant.
+        source_illuminant=(
+            None
+            if instance.class_id is None or instance.source_illuminant is None
+            else np.asarray(instance.source_illuminant, np.float64)
+        ),
+        mode=mode,
         null_source_anchor=null_source_anchor,
     )
 
@@ -550,12 +703,10 @@ def _resized(rgb, alpha, size) -> tuple[np.ndarray, np.ndarray]:
     return resized[..., :3], np.clip(resized[..., 3], 0.0, 1.0)
 
 
-def _canvas_pad(blending: BlendingRule, pixel_scale: float) -> int:
-    if blending.mode == "feather":
-        return math.ceil(3.0 * blending.feather_sigma_px * pixel_scale)
-    if blending.mode == "poisson":
-        return 1
-    return 0
+def _canvas_pad(blending: BlendingRule, mode: str, pixel_scale: float) -> int:
+    if mode == "hard":
+        return 0
+    return max(1, math.ceil(3.0 * blending.edge_sigma_px * pixel_scale))
 
 
 def _null_source(scene, anchor, source_anchor, canvas, box) -> np.ndarray | None:
@@ -591,89 +742,28 @@ def _blend(
         slice(proposal.canvas[0], proposal.canvas[2]),
         slice(proposal.canvas[1], proposal.canvas[3]),
     )
-    rgb = proposal.rgb
-    ring_px = None
-    harmonized = False
-    if blending.harmonization_strength > 0:
-        ring_px = max(1, math.ceil(blending.harmonization_ring_px * scene.pixel_scale))
-        harmonized_rgb = _harmonize(
-            scene, proposal, ring_px, blending.harmonization_strength
-        )
-        if harmonized_rgb is not None:
-            rgb, harmonized = harmonized_rgb, True
-
     current = scene.canvas[window]
-    if blending.mode == "poisson":
-        blended = _poisson(current, rgb, proposal.footprint)
-        blended = np.where(scene.valid[window][..., None], blended, current)
-    else:
-        alpha = proposal.alpha[..., None]
-        blended = current * (1.0 - alpha) + rgb * alpha
-    scene.canvas[window] = blended
+    rgb = proposal.rgb
+    gains = None
+    strength = blending.harmonization_strength
+    if proposal.mode == "harmonized" and proposal.source_illuminant is not None:
+        gains = np.power(scene.illuminant / proposal.source_illuminant, strength)
+        linear = srgb_to_linear(rgb / 255.0).numpy().astype(np.float64) * gains
+        rgb = linear_to_srgb(np.clip(linear, 0.0, 1.0)).numpy() * 255.0
+
+    alpha = proposal.alpha[..., None]
+    scene.canvas[window] = current * (1.0 - alpha) + np.clip(rgb, 0.0, 255.0) * alpha
     return (
-        ("mode", blending.mode),
+        ("mode", proposal.mode),
         (
-            "feather_sigma_px",
-            blending.feather_sigma_px * scene.pixel_scale
-            if blending.mode == "feather"
-            else None,
+            "edge_sigma_px",
+            None
+            if proposal.mode == "hard"
+            else blending.edge_sigma_px * scene.pixel_scale,
         ),
-        ("harmonization_strength", blending.harmonization_strength),
-        ("harmonization_ring_px", ring_px),
-        ("harmonized", harmonized),
+        ("harmonization_strength", strength if proposal.mode == "harmonized" else None),
+        ("gains", None if gains is None else [float(g) for g in gains]),
     )
-
-
-def _poisson(current: np.ndarray, rgb: np.ndarray, footprint: np.ndarray) -> np.ndarray:
-    bounds = clone_bounds(footprint)
-    if bounds is None:
-        return current
-    top, left, bottom, right = bounds
-    solution = clone_region(
-        tf.constant(current[top:bottom, left:right]),
-        tf.constant(rgb[top:bottom, left:right]),
-        tf.constant(footprint[top:bottom, left:right]),
-    ).numpy()
-    blended = current.copy()
-    blended[top:bottom, left:right] = np.floor(np.clip(solution, 0.0, 255.0))
-    return blended
-
-
-def _harmonize(scene, proposal: _Placement, ring_px: int, strength: float):
-    """Instance RGB shifted in CIELAB toward the background ring, or None without ring."""
-    top = max(0, proposal.canvas[0] - ring_px)
-    left = max(0, proposal.canvas[1] - ring_px)
-    bottom = min(scene.height, proposal.canvas[2] + ring_px)
-    right = min(scene.width, proposal.canvas[3] + ring_px)
-    footprint = np.zeros((bottom - top, right - left), np.float32)
-    inner = (proposal.canvas[0] - top, proposal.canvas[1] - left)
-    footprint[
-        inner[0] : inner[0] + proposal.footprint.shape[0],
-        inner[1] : inner[1] + proposal.footprint.shape[1],
-    ] = proposal.footprint
-    dilated = tf.nn.max_pool2d(
-        footprint[None, :, :, None], ksize=2 * ring_px + 1, strides=1, padding="SAME"
-    ).numpy()[0, :, :, 0]
-    ring = (dilated > 0) & (footprint == 0) & scene.valid[top:bottom, left:right]
-    if not ring.any():
-        return None
-
-    background = rgb_to_lab(scene.canvas[top:bottom, left:right][ring] / 255.0).numpy()
-    lab = rgb_to_lab(proposal.rgb / 255.0).numpy()
-    inside = lab[proposal.footprint]
-    instance_mean, instance_std = inside.mean(axis=0), inside.std(axis=0)
-    ring_mean, ring_std = background.mean(axis=0), background.std(axis=0)
-    # Float32 Lab of a flat instance has a spread of ~1e-6, not 0; dividing by it
-    # would amplify rounding noise instead of leaving a flat instance flat.
-    flat = instance_std < _FLAT_LAB_STD
-    ratio = np.divide(ring_std, instance_std, out=np.ones(3), where=~flat)
-    gain = 1.0 + strength * (ratio - 1.0)
-    shifted = (
-        (lab - instance_mean) * gain
-        + instance_mean
-        + strength * (ring_mean - instance_mean)
-    )
-    return lab_to_rgb(shifted).numpy() * 255.0
 
 
 def _write_labels(scene, index, instance: Instance, proposal: _Placement) -> int | None:

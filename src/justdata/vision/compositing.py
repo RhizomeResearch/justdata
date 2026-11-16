@@ -7,9 +7,10 @@ blends it, and writes its class on the object's pixels whose rendered weight
 explicit alpha, so labels describe the pixels that were rendered. Every instance is either
 placed or rejected with counted reasons; nothing is substituted. An instance
 without a class is a null paste: it takes background pixels from another allowed
-location of the same frame, goes through the same placement and blending, and
-writes no label, which measures how much a model reacts to compositing seams
-alone (Dwibedi et al., ICCV 2017; Blum et al., Fishyscapes, IJCV 2021).
+location of the same frame at about the same depth, checked like a destination,
+goes through the same placement and blending, and writes no label, which
+measures how much a model reacts to compositing seams alone (Dwibedi et al.,
+ICCV 2017; Blum et al., Fishyscapes, IJCV 2021).
 
 Each paste draws its blending mode from the rule's weighted mix, because mixing
 modes keeps a model from learning any one mode's seams (Dwibedi et al.). Draws
@@ -38,7 +39,7 @@ from justdata.vision.corruptions.registry import draw_seed
 from justdata.vision.filters import gaussian_blur_hwc
 from justdata.vision.horizon import Horizon, horizon_coordinates
 
-COMPOSITE_VERSION = "2.0.0"
+COMPOSITE_VERSION = "2.1.0"
 LABEL_ALPHA_THRESHOLD = 0.5
 REFERENCE_WIDTH = 1024
 PLACEMENT_SCALES = ("keep_row", "horizon")
@@ -92,6 +93,19 @@ class PlacementRule:
     ``min_visible_pixels``, when it overlaps an earlier paste (unless
     ``allow_overlap``), or when its box comes closer than ``border_margin_px``
     to the image border.
+
+    A null paste copies its background from a source window: the destination
+    canvas shifted to a source anchor drawn uniformly among the allowed anchors
+    whose depth (distance below the horizon, or row without one) differs from
+    the destination anchor's by at most ``null_source_max_shift`` paste heights
+    (``None`` for any depth), whose window fits in the image, and whose box
+    stays clear of the destination box. Water at another depth has another
+    texture scale and perspective, which a model can see apart from any seam.
+    At most ``max_outside_allowed_share`` of what the null paste draws, weighted
+    by its final alpha so a soft edge counts as faintly as it is drawn, may come
+    from non-allowed pixels, and no pixel drawn with any weight may come from
+    outside ``valid``; otherwise the attempt fails. For ``hard`` blending the
+    weighted share is the share of the label footprint, as for the destination.
     """
 
     scale: str = "keep_row"
@@ -102,6 +116,7 @@ class PlacementRule:
     max_attempts: int = 50
     min_scale: float = 0.0
     max_scale: float = 2.0
+    null_source_max_shift: float | None = 0.5
 
     def __post_init__(self) -> None:
         if self.scale not in PLACEMENT_SCALES:
@@ -124,6 +139,11 @@ class PlacementRule:
             )
         if self.max_attempts < 1:
             raise ValueError("max_attempts must be positive.")
+        if self.null_source_max_shift is not None and not (
+            math.isfinite(self.null_source_max_shift)
+            and self.null_source_max_shift >= 0.0
+        ):
+            raise ValueError("null_source_max_shift must be None or finite and >= 0.")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -135,6 +155,7 @@ class PlacementRule:
             "max_attempts": self.max_attempts,
             "min_scale": self.min_scale,
             "max_scale": self.max_scale,
+            "null_source_max_shift": self.null_source_max_shift,
         }
 
 
@@ -223,6 +244,14 @@ class CompositeDescriptor:
             "draws": "stateless_fold_in_seed_instance_then_attempt_philox",
             "mode_draw": f"stateless_fold_in_seed_instance_then_{_BLENDING_DRAW}",
             "scale_limits": "anchors_restricted_to_scale_range",
+            "null_source": (
+                "uniform_over_allowed_anchors_in_depth_band_window_in_image_"
+                "box_clear_of_destination"
+            ),
+            "null_source_depth": "distance_below_horizon_else_row",
+            "null_source_checks": (
+                "alpha_weighted_outside_allowed_share_and_no_drawn_pixel_outside_valid"
+            ),
             "resize": "bilinear_antialias_round_size",
             "without_context": "outside_alpha_filled_from_nearest_object_pixels",
             "soft_edge": "gaussian_blur_reflect_101_of_binary_alpha",
@@ -251,7 +280,10 @@ class PasteRecord:
 
     ``box`` is ``(top, left, bottom, right)`` with exclusive ends;
     ``visible_pixels`` counts the instance's pixels in the final label (or null)
-    map; ``rejections`` counts failed attempts by reason.
+    map; ``rejections`` counts failed attempts by reason. For a placed null
+    paste, ``null_source_box`` is the box its background was copied from and
+    ``null_source_outside_allowed_share`` the alpha-weighted share of what it
+    drew from non-allowed pixels.
     """
 
     source_id: str
@@ -263,6 +295,8 @@ class PasteRecord:
     box: tuple[int, int, int, int] | None
     anchor: tuple[int, int] | None
     null_source_anchor: tuple[int, int] | None
+    null_source_box: tuple[int, int, int, int] | None
+    null_source_outside_allowed_share: float | None
     scale: float | None
     visible_pixels: int
     instance_id: int | None
@@ -283,6 +317,10 @@ class PasteRecord:
                 if self.null_source_anchor is None
                 else list(self.null_source_anchor)
             ),
+            "null_source_box": (
+                None if self.null_source_box is None else list(self.null_source_box)
+            ),
+            "null_source_outside_allowed_share": self.null_source_outside_allowed_share,
             "scale": self.scale,
             "visible_pixels": self.visible_pixels,
             "instance_id": self.instance_id,
@@ -312,7 +350,14 @@ class _Placement:
     rgb: np.ndarray
     source_illuminant: np.ndarray | None
     mode: str
-    null_source_anchor: tuple[int, int] | None
+    null_source: _NullSource | None
+
+
+@dataclass(frozen=True)
+class _NullSource:
+    anchor: tuple[int, int]
+    box: tuple[int, int, int, int]
+    outside_allowed_share: float
 
 
 class _Scene:
@@ -328,6 +373,18 @@ class _Scene:
                 .astype(np.float64)
             )
         return self._illuminant
+
+    def depth(self, row: int, column: int) -> float:
+        """Distance of a pixel centre below the horizon, or its row without one."""
+        if self.horizon is None:
+            return row + 0.5
+        below, _along = horizon_coordinates(
+            tf.constant([self.horizon.left_row, self.horizon.right_row]),
+            self.width,
+            tf.constant(column + 0.5),
+            tf.constant(row + 0.5),
+        )
+        return float(below)
 
     def __init__(self, image, mask, allowed, valid, instance_map, horizon):
         self.original = image.astype(np.float32)
@@ -356,6 +413,9 @@ class _Scene:
                 tf.constant(self.anchors[:, 0] + 0.5),
             )
             self.anchor_below = below.numpy().astype(np.float64)
+        self.anchor_depth = (
+            self.anchors[:, 0] + 0.5 if self.anchor_below is None else self.anchor_below
+        )
         self.next_instance_id = (
             None if instance_map is None else int(instance_map.max()) + 1
         )
@@ -540,6 +600,7 @@ def _paste(scene, index, instance, placement, blending, instance_seed) -> PasteR
             continue
         resolved = _blend(scene, proposal, blending)
         instance_id = _write_labels(scene, index, instance, proposal)
+        null = proposal.null_source
         return PasteRecord(
             source_id=instance.source_id,
             class_id=instance.class_id,
@@ -549,7 +610,11 @@ def _paste(scene, index, instance, placement, blending, instance_seed) -> PasteR
             rejections=tuple(sorted(rejections.items())),
             box=proposal.box,
             anchor=proposal.anchor,
-            null_source_anchor=proposal.null_source_anchor,
+            null_source_anchor=None if null is None else null.anchor,
+            null_source_box=None if null is None else null.box,
+            null_source_outside_allowed_share=(
+                None if null is None else null.outside_allowed_share
+            ),
             scale=proposal.scale,
             visible_pixels=0,
             instance_id=instance_id,
@@ -565,6 +630,8 @@ def _paste(scene, index, instance, placement, blending, instance_seed) -> PasteR
         box=None,
         anchor=None,
         null_source_anchor=None,
+        null_source_box=None,
+        null_source_outside_allowed_share=None,
         scale=None,
         visible_pixels=0,
         instance_id=None,
@@ -652,15 +719,14 @@ def _propose(scene, instance, rgb, alpha, placement, blending, mode, draws):
     if covered < placement.min_visible_pixels:
         return "too_small"
 
-    null_source_anchor = None
+    null_source = None
     if instance.class_id is None:
-        null_source_anchor = (
-            _pick(scene.anchors, draws[1]) if scene.anchors.size else None
+        drawn = _null_source(
+            scene, placement, anchor, box, canvas, final_alpha, draws[1]
         )
-        source = _null_source(scene, anchor, null_source_anchor, canvas, box)
-        if source is None:
-            return "no_null_source"
-        canvas_rgb = source
+        if isinstance(drawn, str):
+            return drawn
+        null_source, canvas_rgb = drawn
     else:
         canvas_rgb = np.pad(
             scaled_rgb,
@@ -686,13 +752,8 @@ def _propose(scene, instance, rgb, alpha, placement, blending, mode, draws):
             else np.asarray(instance.source_illuminant, np.float64)
         ),
         mode=mode,
-        null_source_anchor=null_source_anchor,
+        null_source=null_source,
     )
-
-
-def _pick(anchors: np.ndarray, draw: float) -> tuple[int, int]:
-    row, column = anchors[min(int(draw * len(anchors)), len(anchors) - 1)]
-    return int(row), int(column)
 
 
 def _resized(rgb, alpha, size) -> tuple[np.ndarray, np.ndarray]:
@@ -709,30 +770,50 @@ def _canvas_pad(blending: BlendingRule, mode: str, pixel_scale: float) -> int:
     return max(1, math.ceil(3.0 * blending.edge_sigma_px * pixel_scale))
 
 
-def _null_source(scene, anchor, source_anchor, canvas, box) -> np.ndarray | None:
-    """Original background under the canvas shifted to ``source_anchor``, if usable."""
-    if source_anchor is None:
-        return None
-    shift = (source_anchor[0] - anchor[0], source_anchor[1] - anchor[1])
-    top, left = canvas[0] + shift[0], canvas[1] + shift[1]
-    bottom, right = canvas[2] + shift[0], canvas[3] + shift[1]
-    if top < 0 or left < 0 or bottom > scene.height or right > scene.width:
-        return None
-    source_box = (
-        box[0] + shift[0],
-        box[1] + shift[1],
-        box[2] + shift[0],
-        box[3] + shift[1],
+def _null_source(
+    scene, placement, anchor, box, canvas, final_alpha, draw
+) -> str | tuple[_NullSource, np.ndarray]:
+    """The source and original background of a null paste, or why none qualifies."""
+    height, width = box[2] - box[0], box[3] - box[1]
+    candidates = np.ones(len(scene.anchors), bool)
+    if placement.null_source_max_shift is not None:
+        depth = scene.depth(*anchor)
+        band = placement.null_source_max_shift * height
+        candidates = np.abs(scene.anchor_depth - depth) <= band
+    shifts = scene.anchors - np.asarray(anchor)
+    candidates &= (
+        (canvas[0] + shifts[:, 0] >= 0)
+        & (canvas[1] + shifts[:, 1] >= 0)
+        & (canvas[2] + shifts[:, 0] <= scene.height)
+        & (canvas[3] + shifts[:, 1] <= scene.width)
     )
-    disjoint = (
-        source_box[2] <= box[0]
-        or box[2] <= source_box[0]
-        or source_box[3] <= box[1]
-        or box[3] <= source_box[1]
+    # Boxes of one size are disjoint when shifted by a full height or width.
+    candidates &= (np.abs(shifts[:, 0]) >= height) | (np.abs(shifts[:, 1]) >= width)
+    indices = np.flatnonzero(candidates)
+    if indices.size == 0:
+        return "no_null_source"
+    chosen = indices[min(int(draw * indices.size), indices.size - 1)]
+    shift_row, shift_column = (int(value) for value in shifts[chosen])
+    window = (
+        slice(canvas[0] + shift_row, canvas[2] + shift_row),
+        slice(canvas[1] + shift_column, canvas[3] + shift_column),
     )
-    if not disjoint:
-        return None
-    return scene.original[top:bottom, left:right].copy()
+    if np.any((final_alpha > 0.0) & ~scene.valid[window]):
+        return "null_source_outside_valid"
+    outside = float(np.sum(final_alpha * ~scene.allowed[window]) / np.sum(final_alpha))
+    if outside > placement.max_outside_allowed_share:
+        return "null_source_outside_allowed"
+    source = _NullSource(
+        anchor=(anchor[0] + shift_row, anchor[1] + shift_column),
+        box=(
+            box[0] + shift_row,
+            box[1] + shift_column,
+            box[2] + shift_row,
+            box[3] + shift_column,
+        ),
+        outside_allowed_share=outside,
+    )
+    return source, scene.original[window].copy()
 
 
 def _blend(

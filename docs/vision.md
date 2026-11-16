@@ -960,7 +960,7 @@ overrides alongside those values.
 
 `justdata.vision.compositing.composite_instances` pastes annotated object crops into a frame and updates its dense
 labels. It runs eagerly, outside `tf.function`, and is meant for offline rendering. This section describes compositor
-version 2.0.0.
+version 2.1.0.
 
 ```python
 import numpy as np
@@ -1005,9 +1005,10 @@ result = composite_instances(
   `[min_scale, max_scale]` (default `[0, 2]`), so each crop goes where it fits rather than being stretched. An attempt
   fails with the reason `outside_margin`, `outside_allowed` (more than `max_outside_allowed_share` of the label
   footprint on non-allowed pixels), `overlap` (unless `allow_overlap`), `too_small` (fewer than `min_visible_pixels`),
-  or `no_null_source`. After `max_attempts` the instance is rejected; it is rejected at once with `no_allowed_anchor`
-  when no anchor exists, or `scale_out_of_range` when no anchor gives a scale in range (for `keep_row`, when 1 is out of
-  range). Its record keeps the count per reason; nothing is substituted.
+  or, for null pastes, `no_null_source`, `null_source_outside_allowed`, or `null_source_outside_valid`. After
+  `max_attempts` the instance is rejected; it is rejected at once with `no_allowed_anchor` when no anchor exists, or
+  `scale_out_of_range` when no anchor gives a scale in range (for `keep_row`, when 1 is out of range). Its record keeps
+  the count per reason; nothing is substituted.
 
 - **Blending.** Each paste draws one mode from `mix`, weighted `(mode, weight)` pairs, because mixing modes keeps a
   model from learning one mode's seams (Dwibedi et al., ICCV 2017). Every mode composites
@@ -1046,15 +1047,25 @@ result = composite_instances(
   label changes. A label therefore always covers a pixel rendered at least half from the object: a part thinner than the
   soft edge is drawn faintly and left unlabelled. Pixels outside `valid` are never written.
 
-- **Null pastes.** An instance with `class_id=None` takes background from another allowed location of the same original
-  frame whose box does not intersect the destination box. It goes through the same placement and blending, writes no
-  label, and marks `null_pasted`. A null paste over an earlier paste restores the original labels there.
+- **Null pastes.** An instance with `class_id=None` takes background from a source window of the same original frame:
+  the destination canvas shifted to a source anchor. The source anchor is drawn uniformly among the `allowed` anchors
+  whose depth differs from the destination anchor's by at most `null_source_max_shift` paste heights (default 0.5;
+  `None` for any depth), whose window fits in the image, and whose box does not intersect the destination box; none left
+  is `no_null_source`. Depth is the distance below the horizon when one is given, so the band follows a tilted horizon,
+  and the row otherwise. Water at another depth has another texture scale and perspective, which a model can tell apart
+  from the seam that a null paste is meant to measure. At most `max_outside_allowed_share` of what the null paste draws
+  may come from outside `allowed` (`null_source_outside_allowed`), weighted by the final alpha, so a soft edge counts as
+  faintly as it is drawn and a `hard` paste counts its label footprint, as the destination does. No pixel drawn with any
+  weight may come from outside `valid` (`null_source_outside_valid`). Otherwise a null paste could carry shore, ignore
+  regions, or real obstacles that the labels say are absent. A null paste goes through the same placement and blending,
+  writes no label, and marks `null_pasted`. A null paste over an earlier paste restores the original labels there.
 
 - **Records.** `result.records` has one `PasteRecord` per requested instance, in order. Each has its status, its
-  reasons, and the attempt count. A placed instance also has its box, anchor, null source anchor, scale, visible pixels
-  in the final maps, instance ID, and resolved blending: the mode, the edge sigma in pixels, the harmonization strength,
-  and the per-channel gains applied (or `None`). `result.identity` digests the `CompositeDescriptor` of both rules and
-  the fixed conventions.
+  reasons, and the attempt count. A placed instance also has its box, anchor, scale, visible pixels in the final maps,
+  instance ID, and resolved blending: the mode, the edge sigma in pixels, the harmonization strength, and the
+  per-channel gains applied (or `None`). A placed null paste also has its source anchor, source box, and the
+  alpha-weighted share of what it drew from outside `allowed`. `result.identity` digests the `CompositeDescriptor` of
+  both rules and the fixed conventions.
 
 Placement draws use `stateless_fold_in(stateless_fold_in(seed, instance_index), attempt)` and the mode draw uses
 `stateless_fold_in(stateless_fold_in(seed, instance_index), 0x424C4E44)`, all with Philox, so the same inputs and seed

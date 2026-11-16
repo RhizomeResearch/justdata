@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+This release makes null pastes measure compositing seams alone: their background now comes from checked windows at the
+paste's depth.
+
+### Fixed
+
+- A null paste's background window is now checked. At most `max_outside_allowed_share` of what it draws, weighted by its
+  final alpha so soft edges count as faintly as they are drawn, may come from outside `allowed`, and no pixel it draws
+  may come from outside `valid`; failing sources are rejected as `null_source_outside_allowed` or
+  `null_source_outside_valid`. Only the source anchor was checked before, so a null paste could copy shore, ignore
+  regions, or real obstacles into the frame without a label.
+
+### Changed
+
+- Compositing is version 2.1.0. Null pastes draw their source among the allowed anchors within
+  `PlacementRule.null_source_max_shift` paste heights of the destination's depth (default 0.5), measured below the
+  horizon when one is given and by row otherwise. They drew from the whole frame, where the water has another texture
+  scale and perspective. Sources whose window leaves the image or whose box meets the destination box are excluded
+  before the draw instead of failing the attempt.
+
+### Added
+
+- `PlacementRule.null_source_max_shift`; `None` keeps whole-frame draws.
+- `PasteRecord.null_source_box` and `PasteRecord.null_source_outside_allowed_share` record what a null paste copied.
+
+### Compatibility
+
+- Null pastes render differently under the default rule, and composite identities change to `composite@2.1.0`. Real
+  pastes draw exactly as before, but a later real paste can land elsewhere when an earlier null paste moved or was
+  rejected, because the overlap check sees different occupied pixels.
+
 ## 1.6.0 — 2026-11-16
 
 This release makes composited labels match the rendered pixels in every blending mode.

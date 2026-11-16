@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 from dataclasses import replace
 
 import numpy as np
@@ -18,7 +19,7 @@ from justdata.vision.compositing import (
     PlacementRule,
     composite_instances,
 )
-from justdata.vision.horizon import Horizon
+from justdata.vision.horizon import Horizon, horizon_coordinates
 from justdata.vision.poisson import seamless_clone, solve_poisson_dirichlet
 
 HEIGHT, WIDTH = 96, 128
@@ -151,10 +152,142 @@ def test_null_paste_moves_background_and_writes_no_label():
     null = result.null_pasted.numpy()
     assert null.sum() == record.visible_pixels > 0
     shift = np.subtract(record.null_source_anchor, record.anchor)
+    np.testing.assert_array_equal(
+        record.null_source_box, np.add(record.box, [*shift, *shift])
+    )
+    assert record.null_source_outside_allowed_share == 0.0
     rows, columns = np.nonzero(null)
     np.testing.assert_array_equal(
         result.image.numpy()[rows, columns], image[rows + shift[0], columns + shift[1]]
     )
+    saved = json.loads(json.dumps(record.to_dict()))
+    assert saved["null_source_box"] == list(record.null_source_box)
+
+
+def _depth(horizon, rows, columns):
+    below, _along = horizon_coordinates(
+        tf.constant([horizon.left_row, horizon.right_row]),
+        WIDTH,
+        tf.constant(columns + 0.5, tf.float32),
+        tf.constant(rows + 0.5, tf.float32),
+    )
+    return below.numpy()
+
+
+@pytest.mark.parametrize("horizon", [Horizon(40.0, 40.0), Horizon(20.0, 60.0)])
+def test_null_sources_lie_within_the_depth_band(horizon):
+    # Each pixel stores its own row and column, so a copied pixel shows its source.
+    rows, columns = np.mgrid[:HEIGHT, :WIDTH]
+    image = np.stack([rows, columns, np.zeros_like(rows)], axis=-1).astype(np.uint8)
+    mask = np.zeros([HEIGHT, WIDTH], np.uint8)
+    allowed = _depth(horizon, rows, columns) > 0
+
+    def shifts_in_paste_heights(max_shift):
+        shifts = []
+        for seed in range(12):
+            result = composite_instances(
+                image,
+                mask,
+                [_boat(class_id=None, source_id="null")],
+                allowed=allowed,
+                placement=PlacementRule(
+                    min_visible_pixels=16, null_source_max_shift=max_shift
+                ),
+                blending=BlendingRule(),
+                seed=tf.constant([seed, 1], tf.int32),
+                horizon=horizon,
+            )
+            (record,) = result.records
+            assert record.status == "placed"
+            target_rows, target_columns = np.nonzero(result.null_pasted.numpy())
+            source = result.image.numpy()[target_rows, target_columns].astype(int)
+            depth_shift = _depth(horizon, source[:, 0], source[:, 1]) - _depth(
+                horizon, target_rows, target_columns
+            )
+            height = record.box[2] - record.box[0]
+            shifts.append(
+                (
+                    np.abs(depth_shift).max() / height,
+                    np.abs(source[:, 0] - target_rows).max() / height,
+                )
+            )
+        return np.array(shifts)
+
+    banded = shifts_in_paste_heights(0.5)
+    assert banded[:, 0].max() <= 0.5 + 1e-4
+    assert shifts_in_paste_heights(None)[:, 0].max() > 0.5
+    if horizon.left_row != horizon.right_row:
+        # Along a tilted horizon, the same depth lies on other rows.
+        assert banded[:, 1].max() > 0.5
+
+
+@pytest.mark.parametrize(
+    ("blocked", "share", "mode"),
+    [
+        ("allowed", 0.0, "hard"),
+        ("allowed", 0.3, "hard"),
+        ("allowed", 0.0, "soft_edge"),
+        ("valid", 1.0, "hard"),
+        ("valid", 1.0, "soft_edge"),
+    ],
+)
+def test_null_sources_obey_the_allowed_share_and_never_copy_invalid_pixels(
+    blocked, share, mode
+):
+    image, mask, allowed = _scene()
+    posts = np.zeros([HEIGHT, WIDTH], bool)
+    for column in (30, 70, 100):
+        posts[HORIZON_ROW:, column : column + 4] = True
+    valid = np.ones([HEIGHT, WIDTH], bool)
+    if blocked == "allowed":
+        allowed = allowed & ~posts
+    else:
+        valid = ~posts
+    copied_shares = []
+    rejections = Counter()
+    for seed in range(20):
+        result = composite_instances(
+            image,
+            mask,
+            [_boat(class_id=None, source_id="null")],
+            allowed=allowed,
+            valid=valid,
+            placement=PlacementRule(
+                min_visible_pixels=16, max_outside_allowed_share=share
+            ),
+            # 16 px at width 1024 is a 2-pixel sigma here, drawn 6 pixels out.
+            blending=_single(mode, edge_sigma_px=16.0),
+            seed=tf.constant([seed, 2], tf.int32),
+            horizon=Horizon(HORIZON_ROW, HORIZON_ROW),
+        )
+        (record,) = result.records
+        rejections.update(dict(record.rejections))
+        if record.status != "placed":
+            continue
+        np.testing.assert_array_equal(result.mask.numpy(), mask)
+        shift = np.subtract(record.null_source_box[:2], record.box[:2])
+        # Every changed pixel, soft edge included, shows its source pixel.
+        rows, columns = np.nonzero(np.any(result.image.numpy() != image, axis=-1))
+        drawn_from = (rows + shift[0], columns + shift[1])
+        assert valid[drawn_from].all()
+        if share == 0.0:
+            assert allowed[drawn_from].all()
+        if mode == "hard":
+            # A hard paste draws exactly its footprint, at full weight.
+            rows, columns = np.nonzero(result.null_pasted.numpy())
+            copied = ~allowed[rows + shift[0], columns + shift[1]]
+            share_copied = float(np.mean(copied))
+            assert share_copied == pytest.approx(
+                record.null_source_outside_allowed_share
+            )
+            copied_shares.append(share_copied)
+    if mode == "hard":
+        assert copied_shares and max(copied_shares) <= share
+    if blocked == "allowed" and share > 0:
+        # A positive share admits partly blocked sources, up to the bound.
+        assert max(copied_shares) > 0
+    else:
+        assert rejections[f"null_source_outside_{blocked}"] > 0
 
 
 def test_null_paste_over_an_earlier_paste_restores_its_labels():
@@ -193,11 +326,13 @@ def test_invalid_pixels_are_never_written():
 
 def test_compositing_is_deterministic_for_a_seed():
     instances = [_boat(source_id=str(i)) for i in range(3)]
+    instances.append(_boat(class_id=None, source_id="null", size=(8, 10)))
     first = _composite(instances)
     second = _composite(instances)
     other = _composite(instances, seed=SEED + 1)
     np.testing.assert_array_equal(first.image.numpy(), second.image.numpy())
-    assert [r.anchor for r in first.records] == [r.anchor for r in second.records]
+    np.testing.assert_array_equal(first.mask.numpy(), second.mask.numpy())
+    assert [r.to_dict() for r in first.records] == [r.to_dict() for r in second.records]
     assert [r.anchor for r in first.records] != [r.anchor for r in other.records]
 
 
@@ -391,8 +526,12 @@ def test_horizon_scaling_places_crops_only_where_their_scale_fits():
 def test_composite_identity_follows_the_rules():
     first = CompositeDescriptor(PlacementRule(), BlendingRule())
     second = CompositeDescriptor(PlacementRule(), _single("soft_edge"))
-    assert first.identity.startswith("composite@2.0.0:sha256:")
+    any_depth = CompositeDescriptor(
+        PlacementRule(null_source_max_shift=None), BlendingRule()
+    )
+    assert first.identity.startswith("composite@2.1.0:sha256:")
     assert first.identity != second.identity
+    assert first.identity != any_depth.identity
     assert (
         _composite([_boat()]).identity
         == CompositeDescriptor(
@@ -423,10 +562,12 @@ def test_blending_rule_rejects_invalid_settings(kwargs):
         {"min_scale": 2.0, "max_scale": 1.0},
         {"max_scale": float("inf")},
         {"max_scale": 0.0},
+        {"null_source_max_shift": -0.5},
+        {"null_source_max_shift": float("nan")},
     ],
 )
-def test_placement_rule_rejects_invalid_scale_ranges(kwargs):
-    with pytest.raises(ValueError, match="min_scale"):
+def test_placement_rule_rejects_invalid_ranges(kwargs):
+    with pytest.raises(ValueError, match="min_scale|null_source_max_shift"):
         PlacementRule(**kwargs)
 
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.0 — 2026-11-16
 
 This release makes null pastes measure compositing seams alone: their background now comes from checked windows at the
 paste's depth.

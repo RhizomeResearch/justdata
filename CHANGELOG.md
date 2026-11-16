@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.6.0 — 2026-11-16
 
 This release makes composited labels match the rendered pixels in every blending mode.
 
